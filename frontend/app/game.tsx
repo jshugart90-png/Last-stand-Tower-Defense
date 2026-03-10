@@ -8,16 +8,18 @@ import {
   Modal,
   Alert,
   ScrollView,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useGameStore, PlacedTower, GameSpeed } from '../src/stores/gameStore';
+import { useGameStore, PlacedTower } from '../src/stores/gameStore';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, 
-  TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats 
+  TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
+  GameSpeed, SPEED_UNLOCK_PRICES
 } from '../src/constants/game';
 import { gameApi, analyticsApi, rewardApi } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
@@ -38,6 +40,8 @@ const getTowerIcon = (type: TowerType, size = 20) => {
       return <MaterialCommunityIcons name="snowflake" {...iconProps} />;
     case 'missile':
       return <MaterialCommunityIcons name="rocket-launch" {...iconProps} />;
+    case 'laser':
+      return <MaterialCommunityIcons name="flashlight" {...iconProps} />;
     default:
       return <Ionicons name="help" {...iconProps} />;
   }
@@ -49,14 +53,12 @@ const TowerPanel = ({
   selectedType, 
   coins, 
   unlockedTowers,
-  currentWave,
   getTowerCost,
 }: {
   onSelect: (type: TowerType | null) => void;
   selectedType: TowerType | null;
   coins: number;
   unlockedTowers: TowerType[];
-  currentWave: number;
   getTowerCost: (type: TowerType) => number;
 }) => {
   return (
@@ -69,7 +71,6 @@ const TowerPanel = ({
       {(Object.keys(TOWERS) as TowerType[]).map((type) => {
         const tower = TOWERS[type];
         const isUnlocked = unlockedTowers.includes(type);
-        const willUnlock = tower.unlockWave <= currentWave + 1;
         const cost = getTowerCost(type);
         const canAfford = coins >= cost;
         const isSelected = selectedType === type;
@@ -94,11 +95,8 @@ const TowerPanel = ({
               {getTowerIcon(type)}
             </View>
             <Text style={styles.towerName} numberOfLines={1}>{tower.name}</Text>
-            <Text style={[
-              styles.towerCost,
-              !canAfford && styles.towerCostRed
-            ]}>
-              {isUnlocked ? `${cost}` : `Wave ${tower.unlockWave}`}
+            <Text style={[styles.towerCost, !canAfford && styles.towerCostRed]}>
+              {isUnlocked ? `${cost}` : 'Locked'}
             </Text>
           </TouchableOpacity>
         );
@@ -107,38 +105,70 @@ const TowerPanel = ({
   );
 };
 
-// Speed control buttons
+// Speed control buttons with purchase functionality
 const SpeedControls = ({ 
   currentSpeed, 
-  onSpeedChange 
+  onSpeedChange,
+  unlockedSpeeds,
+  onPurchaseSpeed,
+  coins,
 }: { 
   currentSpeed: GameSpeed; 
   onSpeedChange: (speed: GameSpeed) => void;
+  unlockedSpeeds: GameSpeed[];
+  onPurchaseSpeed: (speed: GameSpeed) => void;
+  coins: number;
 }) => {
+  const speeds: GameSpeed[] = [1, 2, 3, 5, 10];
+  
   return (
     <View style={styles.speedControls}>
-      {([1, 2, 3] as GameSpeed[]).map(speed => (
-        <TouchableOpacity
-          key={speed}
-          style={[
-            styles.speedButton,
-            currentSpeed === speed && styles.speedButtonActive,
-          ]}
-          onPress={() => onSpeedChange(speed)}
-        >
-          <Text style={[
-            styles.speedButtonText,
-            currentSpeed === speed && styles.speedButtonTextActive,
-          ]}>
-            {speed}x
-          </Text>
-        </TouchableOpacity>
-      ))}
+      {speeds.map(speed => {
+        const isUnlocked = unlockedSpeeds.includes(speed);
+        const price = SPEED_UNLOCK_PRICES[speed];
+        const canAfford = coins >= price;
+        
+        return (
+          <TouchableOpacity
+            key={speed}
+            style={[
+              styles.speedButton,
+              currentSpeed === speed && styles.speedButtonActive,
+              !isUnlocked && styles.speedButtonLocked,
+            ]}
+            onPress={() => {
+              if (isUnlocked) {
+                onSpeedChange(speed);
+              } else if (canAfford) {
+                Alert.alert(
+                  `Unlock ${speed}x Speed`,
+                  `Purchase ${speed}x speed for ${price} coins?`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Buy', onPress: () => onPurchaseSpeed(speed) },
+                  ]
+                );
+              } else {
+                Alert.alert('Not enough coins', `Need ${price} coins to unlock ${speed}x speed`);
+              }
+            }}
+          >
+            <Text style={[
+              styles.speedButtonText,
+              currentSpeed === speed && styles.speedButtonTextActive,
+              !isUnlocked && styles.speedButtonTextLocked,
+            ]}>
+              {speed}x
+              {!isUnlocked && <Text style={styles.lockIcon}> 🔒</Text>}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 };
 
-// Tower options panel (shown when a placed tower is selected)
+// Tower options panel
 const TowerOptionsPanel = ({
   tower,
   onUpgrade,
@@ -148,6 +178,7 @@ const TowerOptionsPanel = ({
   coins,
   getUpgradeCost,
   getSellValue,
+  shopUpgradeLevel,
 }: {
   tower: PlacedTower;
   onUpgrade: () => void;
@@ -157,34 +188,47 @@ const TowerOptionsPanel = ({
   coins: number;
   getUpgradeCost: (tower: PlacedTower) => number;
   getSellValue: (tower: PlacedTower) => number;
+  shopUpgradeLevel: number;
 }) => {
   const towerDef = TOWERS[tower.type];
   const upgradeCost = getUpgradeCost(tower);
   const sellValue = getSellValue(tower);
   const canUpgrade = coins >= upgradeCost;
-  const stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+  
+  // Apply both in-game and shop upgrades
+  let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+  if (shopUpgradeLevel > 0) {
+    const shopMultiplier = Math.pow(1.05, shopUpgradeLevel);
+    stats = {
+      ...stats,
+      damage: Math.floor(stats.damage * shopMultiplier),
+      range: stats.range * (1 + shopUpgradeLevel * 0.02),
+    };
+  }
 
   return (
     <View style={styles.towerOptionsPanel}>
-      {/* Header */}
       <View style={styles.towerOptionHeader}>
         <View style={[styles.towerOptionIcon, { backgroundColor: towerDef.color }]}>
           {getTowerIcon(tower.type, 16)}
         </View>
-        <Text style={styles.towerOptionTitle}>{towerDef.name} Lv.{tower.level + 1}</Text>
+        <View style={styles.towerTitleContainer}>
+          <Text style={styles.towerOptionTitle}>{towerDef.name} Lv.{tower.level + 1}</Text>
+          {shopUpgradeLevel > 0 && (
+            <Text style={styles.shopUpgradeBadge}>+{shopUpgradeLevel} Shop</Text>
+          )}
+        </View>
         <TouchableOpacity onPress={onClose} style={styles.closeButton}>
           <Ionicons name="close" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* Stats */}
       <View style={styles.towerStatsRow}>
         <Text style={styles.towerStatText}>DMG: {stats.damage}</Text>
         <Text style={styles.towerStatText}>RNG: {stats.range.toFixed(1)}</Text>
         <Text style={styles.towerStatText}>SPD: {(1000 / stats.fireRate).toFixed(1)}/s</Text>
       </View>
 
-      {/* Targeting Mode */}
       <Text style={styles.targetingLabel}>Target:</Text>
       <View style={styles.targetingRow}>
         {TARGETING_MODES.map(mode => (
@@ -206,7 +250,6 @@ const TowerOptionsPanel = ({
         ))}
       </View>
 
-      {/* Actions */}
       <View style={styles.towerActionsRow}>
         <TouchableOpacity
           style={[styles.upgradeButton, !canUpgrade && styles.disabledButton]}
@@ -225,7 +268,7 @@ const TowerOptionsPanel = ({
   );
 };
 
-// Game board component
+// Game board component with laser beam rendering
 const GameBoard = ({ 
   onCellPress, 
   scale,
@@ -236,9 +279,9 @@ const GameBoard = ({
   zoomLevel: number;
 }) => {
   const { 
-    towers, enemies, projectiles, gridCols, gridRows, cellSize, 
+    towers, enemies, projectiles, laserBeams, gridCols, gridRows, cellSize, 
     getTowerColor, selectedTowerType, canPlaceTower, spawnPoint, basePosition,
-    selectedPlacedTower,
+    selectedPlacedTower, towerUpgradeLevels,
   } = useGameStore();
   
   const finalScale = scale * zoomLevel;
@@ -246,7 +289,6 @@ const GameBoard = ({
   const boardWidth = gridCols * scaledCellSize;
   const boardHeight = gridRows * scaledCellSize;
 
-  // Calculate current path for display
   const blockedCells = new Set(towers.map(t => `${t.position.x},${t.position.y}`));
   const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
   const pathSet = new Set((currentPath || []).map(p => `${p.x},${p.y}`));
@@ -258,8 +300,6 @@ const GameBoard = ({
       horizontal
       showsHorizontalScrollIndicator={false}
       showsVerticalScrollIndicator={false}
-      maximumZoomScale={2}
-      minimumZoomScale={0.5}
     >
       <ScrollView 
         showsVerticalScrollIndicator={false}
@@ -273,7 +313,6 @@ const GameBoard = ({
               const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
               const isBase = col === basePosition.x && row === basePosition.y;
               const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
-              const hasTower = towers.some(t => t.position.x === col && t.position.y === row);
               
               return (
                 <TouchableOpacity
@@ -298,16 +337,52 @@ const GameBoard = ({
             })
           )}
 
+          {/* Laser beams */}
+          {laserBeams.map((beam, idx) => {
+            const tower = towers.find(t => t.id === beam.towerId);
+            const enemy = enemies.find(e => e.id === beam.targetId);
+            if (!tower || !enemy) return null;
+            
+            const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
+            const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
+            const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
+            const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
+            
+            const dx = endX - startX;
+            const dy = endY - startY;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+            
+            return (
+              <View
+                key={`laser-${idx}`}
+                style={[
+                  styles.laserBeam,
+                  {
+                    left: startX,
+                    top: startY - 2,
+                    width: length,
+                    transform: [{ rotate: `${angle}deg` }],
+                    transformOrigin: 'left center',
+                  },
+                ]}
+              />
+            );
+          })}
+
           {/* Towers */}
           {towers.map((tower) => {
             const towerDef = TOWERS[tower.type];
-            const stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+            const shopBonus = towerUpgradeLevels[tower.type] || 0;
+            let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+            if (shopBonus > 0) {
+              stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
+            }
             const rangeRadius = stats.range * scaledCellSize;
             const isSelected = selectedPlacedTower?.id === tower.id;
             
             return (
               <React.Fragment key={tower.id}>
-                {/* Range indicator (only for selected) */}
                 {isSelected && (
                   <View
                     style={[
@@ -322,7 +397,6 @@ const GameBoard = ({
                     ]}
                   />
                 )}
-                {/* Tower */}
                 <View
                   style={[
                     styles.tower,
@@ -465,12 +539,48 @@ const GameOverModal = ({
   );
 };
 
+// Exit Warning Modal
+const ExitWarningModal = ({ 
+  visible, 
+  onConfirm, 
+  onCancel 
+}: {
+  visible: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) => {
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.exitWarningModal}>
+          <Ionicons name="warning" size={48} color="#F39C12" />
+          <Text style={styles.exitWarningTitle}>End Round?</Text>
+          <Text style={styles.exitWarningText}>
+            Exiting now will end your current round.{'\n'}
+            Your coins will be saved.
+          </Text>
+          
+          <View style={styles.exitWarningButtons}>
+            <TouchableOpacity style={styles.cancelExitButton} onPress={onCancel}>
+              <Text style={styles.cancelExitText}>Stay</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.confirmExitButton} onPress={onConfirm}>
+              <Text style={styles.confirmExitText}>Exit</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 export default function GameScreen() {
   const router = useRouter();
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number>(Date.now());
   const spawnTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spawningCompleteRef = useRef<boolean>(false);
+  const [showExitWarning, setShowExitWarning] = useState(false);
   
   const playerStore = usePlayerStore();
   const gameStore = useGameStore();
@@ -486,10 +596,11 @@ export default function GameScreen() {
     score,
     enemiesKilled,
     towersPlaced,
-    comboCount,
     enemies,
     towers,
     unlockedTowers,
+    unlockedSpeeds,
+    towerUpgradeLevels,
     selectedTowerType,
     selectedPlacedTower,
     gameStartTime,
@@ -523,9 +634,9 @@ export default function GameScreen() {
     useRevive,
     grantRevive,
     canUseAdRevive,
+    getCurrentCoins,
   } = gameStore;
 
-  // Calculate scale for the board
   const boardWidth = gridCols * cellSize;
   const boardHeight = gridRows * cellSize;
   const scale = Math.min(
@@ -535,7 +646,13 @@ export default function GameScreen() {
 
   // Initialize game on mount
   useEffect(() => {
-    startGame(playerStore.equippedSkins, playerStore.arenaExpansions);
+    startGame(
+      playerStore.unlockedTowers,
+      playerStore.unlockedSpeeds,
+      playerStore.towerUpgradeLevels,
+      playerStore.equippedSkins, 
+      playerStore.arenaExpansions
+    );
     
     if (playerStore.playerId) {
       analyticsApi.log({
@@ -549,6 +666,19 @@ export default function GameScreen() {
       spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
+
+  // Handle back button (Android)
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isPlaying && !isGameOver) {
+        setShowExitWarning(true);
+        return true;
+      }
+      return false;
+    });
+
+    return () => backHandler.remove();
+  }, [isPlaying, isGameOver]);
 
   // Game loop
   useEffect(() => {
@@ -569,12 +699,10 @@ export default function GameScreen() {
 
       gameStore.gameTick(deltaTime);
       
-      // Check wave completion
       const state = useGameStore.getState();
       if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
         endWave();
         spawningCompleteRef.current = false;
-        // Save coins after each wave
         handleSaveCoins(state.coins);
       }
     }, 33);
@@ -618,13 +746,13 @@ export default function GameScreen() {
     };
   }, [waveInProgress, currentWave, isPlaying, gameSpeed]);
 
-  // Save coins to backend
+  // Save coins to backend and player store
   const handleSaveCoins = async (currentCoins: number) => {
+    playerStore.setCoins(currentCoins);
+    playerStore.setCurrentGameProgress(currentWave, currentCoins);
+    
     if (!playerStore.playerId) return;
     try {
-      // Update local store
-      playerStore.setCoins(currentCoins);
-      // Sync to backend (simplified - you may want a dedicated endpoint)
       await gameApi.endGame({
         player_id: playerStore.playerId,
         wave_reached: currentWave,
@@ -638,7 +766,41 @@ export default function GameScreen() {
     }
   };
 
-  // Handle manual wave start
+  // Handle exit with warning
+  const handleExitAttempt = useCallback(() => {
+    if (isPlaying && !isGameOver && currentWave > 0) {
+      pauseGame();
+      setShowExitWarning(true);
+    } else {
+      router.back();
+    }
+  }, [isPlaying, isGameOver, currentWave, pauseGame, router]);
+
+  const handleConfirmExit = useCallback(async () => {
+    setShowExitWarning(false);
+    // Save progress before exiting
+    await handleSaveCoins(getCurrentCoins());
+    playerStore.recordGame(currentWave);
+    router.back();
+  }, [getCurrentCoins, currentWave, router]);
+
+  const handleCancelExit = useCallback(() => {
+    setShowExitWarning(false);
+    resumeGame();
+  }, [resumeGame]);
+
+  // Handle speed purchase
+  const handlePurchaseSpeed = useCallback((speed: GameSpeed) => {
+    const success = playerStore.purchaseSpeed(speed);
+    if (success) {
+      // Update game store with new unlocked speeds
+      useGameStore.setState({ 
+        unlockedSpeeds: [...playerStore.unlockedSpeeds, speed].sort((a, b) => a - b) as GameSpeed[]
+      });
+      setGameSpeed(speed);
+    }
+  }, [playerStore, setGameSpeed]);
+
   const handleStartWave = useCallback(() => {
     if (playerStore.hapticEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -647,7 +809,6 @@ export default function GameScreen() {
     startWave();
   }, [startWave, playerStore.hapticEnabled]);
 
-  // Handle cell press
   const handleCellPress = useCallback((x: number, y: number) => {
     if (playerStore.hapticEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -663,14 +824,12 @@ export default function GameScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } else {
-      // Deselect if clicking empty space
       if (selectedPlacedTower) {
         selectPlacedTower(null);
       }
     }
   }, [selectedTowerType, selectedPlacedTower, getTowerAt, canPlaceTower, placeTower, selectPlacedTower, playerStore.hapticEnabled]);
 
-  // Handle upgrade
   const handleUpgrade = useCallback(() => {
     if (selectedPlacedTower) {
       const success = upgradeTower(selectedPlacedTower.id);
@@ -680,7 +839,6 @@ export default function GameScreen() {
     }
   }, [selectedPlacedTower, upgradeTower, playerStore.hapticEnabled]);
 
-  // Handle sell
   const handleSell = useCallback(() => {
     if (selectedPlacedTower) {
       sellTower(selectedPlacedTower.id);
@@ -690,14 +848,12 @@ export default function GameScreen() {
     }
   }, [selectedPlacedTower, sellTower, playerStore.hapticEnabled]);
 
-  // Handle targeting change
   const handleTargetingChange = useCallback((mode: TargetingMode) => {
     if (selectedPlacedTower) {
       setTowerTargeting(selectedPlacedTower.id, mode);
     }
   }, [selectedPlacedTower, setTowerTargeting]);
 
-  // Handle game over
   const handleGameEnd = useCallback(async () => {
     if (!playerStore.playerId) return;
 
@@ -720,6 +876,7 @@ export default function GameScreen() {
 
       playerStore.recordGame(currentWave);
       playerStore.incrementGamesPlayedSinceAd();
+      playerStore.clearCurrentGameProgress();
     } catch (error) {
       console.error('Error saving game:', error);
     }
@@ -731,7 +888,6 @@ export default function GameScreen() {
     }
   }, [isGameOver]);
 
-  // Handle watch ad for revive (limited to 1 per game)
   const handleWatchAdForRevive = useCallback(async () => {
     Alert.alert(
       'Watch Ad',
@@ -766,10 +922,10 @@ export default function GameScreen() {
   }, [restartGame]);
 
   const handleExit = useCallback(() => {
+    playerStore.clearCurrentGameProgress();
     router.back();
   }, [router]);
 
-  // Format timer display
   const formatTimer = (ms: number) => {
     const seconds = Math.ceil(ms / 1000);
     return `${seconds}s`;
@@ -779,7 +935,7 @@ export default function GameScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleExit} style={styles.headerButton}>
+        <TouchableOpacity onPress={handleExitAttempt} style={styles.headerButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
         
@@ -798,8 +954,6 @@ export default function GameScreen() {
           </View>
         </View>
 
-        <SpeedControls currentSpeed={gameSpeed} onSpeedChange={setGameSpeed} />
-
         <TouchableOpacity 
           onPress={isPaused ? resumeGame : pauseGame} 
           style={styles.headerButton}
@@ -808,7 +962,16 @@ export default function GameScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Wave info bar - shows when not in wave, allows starting next wave */}
+      {/* Speed Controls */}
+      <SpeedControls 
+        currentSpeed={gameSpeed} 
+        onSpeedChange={setGameSpeed}
+        unlockedSpeeds={unlockedSpeeds}
+        onPurchaseSpeed={handlePurchaseSpeed}
+        coins={coins}
+      />
+
+      {/* Wave info bar */}
       {!waveInProgress && !isGameOver && isPlaying && (
         <View style={styles.waveInfoBar}>
           <Text style={styles.waveInfoText}>
@@ -822,14 +985,7 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Combo indicator */}
-      {comboCount > 1 && (
-        <View style={styles.comboIndicator}>
-          <Text style={styles.comboText}>COMBO x{comboCount}!</Text>
-        </View>
-      )}
-
-      {/* Zoom controls (only if arena expanded) */}
+      {/* Zoom controls */}
       {arenaExpansions > 0 && (
         <View style={styles.zoomControls}>
           <TouchableOpacity 
@@ -853,7 +1009,7 @@ export default function GameScreen() {
         <GameBoard onCellPress={handleCellPress} scale={scale} zoomLevel={zoomLevel} />
       </View>
 
-      {/* Tower options panel (when a placed tower is selected) */}
+      {/* Tower options panel */}
       {selectedPlacedTower && (
         <TowerOptionsPanel
           tower={selectedPlacedTower}
@@ -864,17 +1020,17 @@ export default function GameScreen() {
           coins={coins}
           getUpgradeCost={getUpgradeCost}
           getSellValue={getSellValue}
+          shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
         />
       )}
 
-      {/* Tower selection panel (when no tower is selected) */}
+      {/* Tower selection panel */}
       {!selectedPlacedTower && (
         <TowerPanel
           onSelect={selectTower}
           selectedType={selectedTowerType}
           coins={coins}
           unlockedTowers={unlockedTowers}
-          currentWave={currentWave}
           getTowerCost={getTowerCost}
         />
       )}
@@ -899,8 +1055,15 @@ export default function GameScreen() {
         canWatchAd={canUseAdRevive()}
       />
 
+      {/* Exit warning modal */}
+      <ExitWarningModal
+        visible={showExitWarning}
+        onConfirm={handleConfirmExit}
+        onCancel={handleCancelExit}
+      />
+
       {/* Pause overlay */}
-      {isPaused && !isGameOver && (
+      {isPaused && !isGameOver && !showExitWarning && (
         <View style={styles.pauseOverlay}>
           <Text style={styles.pauseText}>PAUSED</Text>
           <TouchableOpacity style={styles.resumeButton} onPress={resumeGame}>
@@ -944,24 +1107,42 @@ const styles = StyleSheet.create({
   },
   speedControls: {
     flexDirection: 'row',
+    justifyContent: 'center',
     gap: 4,
+    paddingVertical: 6,
+    backgroundColor: '#16213e',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
   },
   speedButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 4,
     backgroundColor: '#2a2a4e',
+    minWidth: 48,
+    alignItems: 'center',
   },
   speedButtonActive: {
     backgroundColor: '#4A90D9',
   },
+  speedButtonLocked: {
+    backgroundColor: '#1a1a2e',
+    borderWidth: 1,
+    borderColor: '#444',
+  },
   speedButtonText: {
-    color: '#888',
+    color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
   },
   speedButtonTextActive: {
     color: '#fff',
+  },
+  speedButtonTextLocked: {
+    color: '#888',
+  },
+  lockIcon: {
+    fontSize: 10,
   },
   waveInfoBar: {
     flexDirection: 'row',
@@ -988,21 +1169,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
-  },
-  comboIndicator: {
-    position: 'absolute',
-    top: 120,
-    alignSelf: 'center',
-    backgroundColor: '#FFD700',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    zIndex: 100,
-  },
-  comboText: {
-    color: '#1a1a2e',
-    fontWeight: 'bold',
-    fontSize: 16,
   },
   zoomControls: {
     flexDirection: 'row',
@@ -1070,6 +1236,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(74, 144, 217, 0.15)',
     borderWidth: 2,
     borderColor: 'rgba(74, 144, 217, 0.4)',
+  },
+  laserBeam: {
+    position: 'absolute',
+    height: 4,
+    backgroundColor: '#FF00FF',
+    zIndex: 20,
+    shadowColor: '#FF00FF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
   },
   tower: {
     position: 'absolute',
@@ -1186,7 +1362,6 @@ const styles = StyleSheet.create({
   towerCostRed: {
     color: '#E74C3C',
   },
-  // Tower options panel styles
   towerOptionsPanel: {
     backgroundColor: '#16213e',
     padding: 12,
@@ -1206,11 +1381,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 8,
   },
+  towerTitleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   towerOptionTitle: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-    flex: 1,
+  },
+  shopUpgradeBadge: {
+    color: '#00FF88',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   closeButton: {
     padding: 4,
@@ -1363,6 +1548,56 @@ const styles = StyleSheet.create({
   exitText: {
     color: '#aaa',
     fontSize: 14,
+  },
+  exitWarningModal: {
+    backgroundColor: '#16213e',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '85%',
+    maxWidth: 320,
+  },
+  exitWarningTitle: {
+    color: '#F39C12',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  exitWarningText: {
+    color: '#aaa',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  exitWarningButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  cancelExitButton: {
+    flex: 1,
+    backgroundColor: '#4A90D9',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelExitText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  confirmExitButton: {
+    flex: 1,
+    backgroundColor: '#E74C3C',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  confirmExitText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   pauseOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, EnemyType, 
-  SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getTowersUnlockedByWave,
-  getInfiniteUpgradeStats, getInfiniteUpgradeCost, TargetingMode
+  SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getInfiniteUpgradeStats, 
+  getInfiniteUpgradeCost, TargetingMode, GameSpeed
 } from '../constants/game';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
 
@@ -19,7 +19,10 @@ export interface PlacedTower {
   lastFireTime: number;
   skin: string;
   targetingMode: TargetingMode;
-  totalCostSpent: number; // Track total coins spent on this tower
+  totalCostSpent: number;
+  // Laser tower specific
+  currentTargetId: string | null;
+  damageAccumulator: number; // For laser ramping damage
 }
 
 export interface Enemy {
@@ -32,8 +35,8 @@ export interface Enemy {
   pathIndex: number;
   slowedUntil: number;
   coinReward: number;
-  spawnTime: number; // For "last" targeting
-  path: Position[]; // Individual path for each enemy
+  spawnTime: number;
+  path: Position[];
 }
 
 export interface Projectile {
@@ -51,7 +54,11 @@ export interface Projectile {
   slowDuration?: number;
 }
 
-export type GameSpeed = 1 | 2 | 3;
+export interface LaserBeam {
+  towerId: string;
+  targetId: string;
+  damage: number;
+}
 
 export interface GameState {
   // Game status
@@ -68,14 +75,11 @@ export interface GameState {
   enemiesKilled: number;
   towersPlaced: number;
   
-  // Combo system
-  comboCount: number;
-  lastKillTime: number;
-  
   // Game entities
   towers: PlacedTower[];
   enemies: Enemy[];
   projectiles: Projectile[];
+  laserBeams: LaserBeam[];
   
   // Map configuration
   gridCols: number;
@@ -84,24 +88,26 @@ export interface GameState {
   spawnPoint: Position;
   basePosition: Position;
   
-  // Player progression
+  // Player progression (from playerStore)
   unlockedTowers: TowerType[];
+  unlockedSpeeds: GameSpeed[];
+  towerUpgradeLevels: Record<TowerType, number>;
   equippedSkins: Record<string, string>;
   arenaExpansions: number;
   
-  // Tower purchase tracking (for cost increases)
+  // Tower purchase tracking
   towerPurchaseCount: Record<TowerType, number>;
   
   // Power-ups
   doubleDamageUntil: number;
   hasRevive: boolean;
-  adReviveUsed: boolean; // Track if ad revive already used this game
+  adReviveUsed: boolean;
   
   // Game timing
   gameStartTime: number;
   gameSpeed: GameSpeed;
-  waveEndTime: number; // For auto-start timer
-  autoWaveTimer: number; // Countdown in ms
+  waveEndTime: number;
+  autoWaveTimer: number;
   
   // UI State
   selectedTowerType: TowerType | null;
@@ -113,7 +119,13 @@ export interface GameState {
 
 interface GameActions {
   // Game flow
-  startGame: (equippedSkins: Record<string, string>, arenaExpansions: number) => void;
+  startGame: (
+    unlockedTowers: TowerType[],
+    unlockedSpeeds: GameSpeed[],
+    towerUpgradeLevels: Record<TowerType, number>,
+    equippedSkins: Record<string, string>, 
+    arenaExpansions: number
+  ) => void;
   pauseGame: () => void;
   resumeGame: () => void;
   endGame: () => void;
@@ -166,13 +178,12 @@ interface GameActions {
   // Zoom
   setZoomLevel: (level: number) => void;
   
-  // Save coins to player store callback
-  onCoinsEarned?: (coins: number) => void;
+  // Get current coins (for saving)
+  getCurrentCoins: () => number;
 }
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// Get blocked cells from towers
 const getBlockedCells = (towers: PlacedTower[]): Set<string> => {
   const blocked = new Set<string>();
   for (const tower of towers) {
@@ -193,17 +204,25 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   score: 0,
   enemiesKilled: 0,
   towersPlaced: 0,
-  comboCount: 0,
-  lastKillTime: 0,
   towers: [],
   enemies: [],
   projectiles: [],
+  laserBeams: [],
   gridCols: GAME_CONFIG.GRID_COLS,
   gridRows: GAME_CONFIG.GRID_ROWS,
   cellSize: GAME_CONFIG.CELL_SIZE,
   spawnPoint: { ...SPAWN_POINT },
   basePosition: { ...BASE_POSITION },
   unlockedTowers: ['machine_gun'],
+  unlockedSpeeds: [1],
+  towerUpgradeLevels: {
+    machine_gun: 0,
+    sniper: 0,
+    splash: 0,
+    freeze: 0,
+    missile: 0,
+    laser: 0,
+  },
   equippedSkins: {},
   arenaExpansions: 0,
   towerPurchaseCount: {
@@ -212,6 +231,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     splash: 0,
     freeze: 0,
     missile: 0,
+    laser: 0,
   },
   doubleDamageUntil: 0,
   hasRevive: false,
@@ -225,13 +245,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   zoomLevel: 1,
 
   // Game flow
-  startGame: (equippedSkins, arenaExpansions) => {
+  startGame: (unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions) => {
     const baseConfig = GAME_CONFIG;
     const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
     const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
     const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
     
-    // Adjust spawn and base for expansions
     const spawnPoint = { x: arenaExpansions, y: arenaExpansions };
     const basePosition = { 
       x: gridCols - 1 - arenaExpansions, 
@@ -249,17 +268,18 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       score: 0,
       enemiesKilled: 0,
       towersPlaced: 0,
-      comboCount: 0,
-      lastKillTime: 0,
       towers: [],
       enemies: [],
       projectiles: [],
+      laserBeams: [],
       gridCols,
       gridRows,
       cellSize,
       spawnPoint,
       basePosition,
-      unlockedTowers: ['machine_gun'], // Start with only machine gun
+      unlockedTowers,
+      unlockedSpeeds,
+      towerUpgradeLevels,
       equippedSkins,
       arenaExpansions,
       towerPurchaseCount: {
@@ -268,6 +288,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         splash: 0,
         freeze: 0,
         missile: 0,
+        laser: 0,
       },
       doubleDamageUntil: 0,
       hasRevive: false,
@@ -275,7 +296,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       gameStartTime: Date.now(),
       gameSpeed: 1,
       waveEndTime: 0,
-      autoWaveTimer: 0, // Start at 0 - player must manually start first wave
+      autoWaveTimer: 0,
       selectedTowerType: null,
       selectedPlacedTower: null,
       zoomLevel: 1,
@@ -287,33 +308,36 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   endGame: () => set({ isPlaying: false, isGameOver: true }),
   
   restartGame: () => {
-    const { equippedSkins, arenaExpansions } = get();
-    get().startGame(equippedSkins, arenaExpansions);
+    const { unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions } = get();
+    get().startGame(unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions);
   },
 
-  setGameSpeed: (speed) => set({ gameSpeed: speed }),
+  setGameSpeed: (speed) => {
+    const state = get();
+    if (state.unlockedSpeeds.includes(speed)) {
+      set({ gameSpeed: speed });
+    }
+  },
 
   // Wave management
   startWave: () => {
-    const state = get();
-    const newWave = state.currentWave + 1;
-    
-    // Unlock towers based on wave
-    const newUnlockedTowers = getTowersUnlockedByWave(newWave);
-    
-    set({
-      currentWave: newWave,
+    set(state => ({
+      currentWave: state.currentWave + 1,
       waveInProgress: true,
-      unlockedTowers: newUnlockedTowers,
       autoWaveTimer: 0,
-    });
+    }));
   },
 
   endWave: () => {
+    const state = get();
+    // Add wave completion bonus
+    const bonus = GAME_CONFIG.WAVE_COMPLETION_BONUS;
     set({ 
       waveInProgress: false,
       waveEndTime: Date.now(),
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      coins: state.coins + bonus,
+      score: state.score + bonus,
     });
   },
 
@@ -324,6 +348,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   placeTower: (position) => {
     const state = get();
     if (!state.selectedTowerType) return false;
+    if (!state.unlockedTowers.includes(state.selectedTowerType)) return false;
     
     const cost = state.getTowerCost(state.selectedTowerType);
     if (state.coins < cost) return false;
@@ -340,9 +365,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       skin,
       targetingMode: 'first',
       totalCostSpent: cost,
+      currentTargetId: null,
+      damageAccumulator: 0,
     };
 
-    // Update tower purchase count for cost increase
     const newPurchaseCount = {
       ...state.towerPurchaseCount,
       [state.selectedTowerType]: state.towerPurchaseCount[state.selectedTowerType] + 1,
@@ -411,7 +437,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const enemyDef = ENEMIES[type];
     
-    // Calculate path for this enemy
     const blockedCells = getBlockedCells(state.towers);
     const path = findPath(
       state.spawnPoint,
@@ -443,7 +468,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     set(s => ({ enemies: [...s.enemies, enemy] }));
   },
 
-  // Main game tick
+  // Main game tick - NO COMBO SYSTEM
   gameTick: (deltaTime) => {
     const state = get();
     if (!state.isPlaying || state.isPaused) return;
@@ -451,11 +476,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const now = Date.now();
     const adjustedDelta = deltaTime * state.gameSpeed;
 
-    // Update auto wave timer (only after wave 1 has been played)
+    // Update auto wave timer (only after wave 1)
     if (!state.waveInProgress && state.autoWaveTimer > 0 && state.currentWave > 0) {
       const newTimer = state.autoWaveTimer - adjustedDelta;
       if (newTimer <= 0) {
-        // Auto start next wave
         get().startWave();
         return;
       }
@@ -510,11 +534,34 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     // ====== TOWER FIRING ======
     let newProjectiles: Projectile[] = [];
+    let newLaserBeams: LaserBeam[] = [];
+    
+    // Get shop upgrade levels for stat boost
+    const shopUpgradeLevels = state.towerUpgradeLevels;
+    
     const updatedTowers = state.towers.map(tower => {
       const towerDef = TOWERS[tower.type];
-      const stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
       
+      // Apply both in-game upgrades and shop upgrades
+      const shopBonus = shopUpgradeLevels[tower.type] || 0;
+      let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+      
+      // Apply shop upgrade bonus (5% per level)
+      if (shopBonus > 0) {
+        const shopMultiplier = Math.pow(1.05, shopBonus);
+        stats = {
+          ...stats,
+          damage: Math.floor(stats.damage * shopMultiplier),
+          range: stats.range * (1 + shopBonus * 0.02),
+        };
+      }
+      
+      // Check cooldown
       if (now - tower.lastFireTime < stats.fireRate / state.gameSpeed) {
+        // For laser, reset damage accumulator if not firing
+        if (tower.type === 'laser') {
+          return { ...tower, currentTargetId: null, damageAccumulator: 0 };
+        }
         return tower;
       }
       
@@ -527,31 +574,32 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         return dist <= stats.range;
       });
       
-      if (enemiesInRange.length === 0) return tower;
+      if (enemiesInRange.length === 0) {
+        if (tower.type === 'laser') {
+          return { ...tower, currentTargetId: null, damageAccumulator: 0 };
+        }
+        return tower;
+      }
       
       // Select target based on targeting mode
       let target: typeof enemiesInRange[0];
       switch (tower.targetingMode) {
         case 'first':
-          // Furthest along their path (closest to base)
           target = enemiesInRange.reduce((a, b) => 
             (a.pathIndex / a.path.length) > (b.pathIndex / b.path.length) ? a : b
           );
           break;
         case 'last':
-          // Most recently spawned
           target = enemiesInRange.reduce((a, b) => 
             a.spawnTime > b.spawnTime ? a : b
           );
           break;
         case 'strongest':
-          // Most health
           target = enemiesInRange.reduce((a, b) => 
             a.health > b.health ? a : b
           );
           break;
         case 'closest':
-          // Nearest to tower
           target = enemiesInRange.reduce((a, b) => {
             const distA = Math.sqrt(
               Math.pow(a.position.x - tower.position.x, 2) +
@@ -568,7 +616,38 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           target = enemiesInRange[0];
       }
       
-      // Create projectile
+      // Handle laser tower specially
+      if (tower.type === 'laser') {
+        const laserStats = stats as any;
+        let newDamageAccumulator = tower.damageAccumulator;
+        
+        // If same target, increase damage
+        if (tower.currentTargetId === target.id) {
+          newDamageAccumulator += laserStats.damageRampUp || 0.5;
+        } else {
+          newDamageAccumulator = 0;
+        }
+        
+        // Cap the damage multiplier
+        const maxMultiplier = laserStats.maxDamageMultiplier || 10;
+        const damageMultiplier = Math.min(1 + newDamageAccumulator, maxMultiplier);
+        const laserDamage = Math.floor(stats.damage * damageMultiplier);
+        
+        newLaserBeams.push({
+          towerId: tower.id,
+          targetId: target.id,
+          damage: laserDamage,
+        });
+        
+        return { 
+          ...tower, 
+          lastFireTime: now,
+          currentTargetId: target.id,
+          damageAccumulator: newDamageAccumulator,
+        };
+      }
+      
+      // Create projectile for non-laser towers
       const projectile: Projectile = {
         id: generateId(),
         position: { x: tower.position.x, y: tower.position.y },
@@ -588,9 +667,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return { ...tower, lastFireTime: now };
     });
 
+    // ====== PROCESS LASER BEAMS (instant damage) ======
+    let laserDamage: { id: string; damage: number }[] = [];
+    newLaserBeams.forEach(beam => {
+      laserDamage.push({ id: beam.targetId, damage: beam.damage });
+    });
+
     // ====== MOVE PROJECTILES ======
     let projectilesToRemove: string[] = [];
-    let enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [];
+    let enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [...laserDamage];
 
     const updatedProjectiles = [...state.projectiles, ...newProjectiles].map(proj => {
       const target = updatedEnemies.find(e => e.id === proj.targetId);
@@ -638,7 +723,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
     });
 
-    // ====== APPLY DAMAGE ======
+    // ====== APPLY DAMAGE (NO COMBO) ======
     let enemiesKilledThisTick = 0;
     let coinsEarned = 0;
     const doubleDamage = now < state.doubleDamageUntil;
@@ -675,32 +760,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
     const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
 
-    // Combo system
-    let newComboCount = state.comboCount;
-    let newLastKillTime = state.lastKillTime;
-    if (enemiesKilledThisTick > 0) {
-      const isCombo = now - state.lastKillTime < GAME_CONFIG.COMBO_WINDOW;
-      if (isCombo) {
-        newComboCount += enemiesKilledThisTick;
-        coinsEarned += Math.floor(coinsEarned * newComboCount * GAME_CONFIG.COMBO_BONUS_MULTIPLIER);
-      } else {
-        newComboCount = enemiesKilledThisTick;
-      }
-      newLastKillTime = now;
-    }
-
     set({
       enemies: finalEnemies,
       towers: updatedTowers,
       projectiles: updatedProjectiles.filter(p => !projectilesToRemove.includes(p.id)),
+      laserBeams: newLaserBeams,
       baseHealth: newBaseHealth,
       isGameOver,
       isPlaying: !isGameOver,
       coins: state.coins + coinsEarned,
       score: state.score + coinsEarned,
       enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
-      comboCount: newComboCount,
-      lastKillTime: newLastKillTime,
     });
   },
 
@@ -753,24 +823,18 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   canPlaceTower: (position) => {
     const state = get();
     
-    // Check bounds
     if (position.x < 0 || position.x >= state.gridCols) return false;
     if (position.y < 0 || position.y >= state.gridRows) return false;
     
-    // Can't place on spawn point
     if (position.x === state.spawnPoint.x && position.y === state.spawnPoint.y) return false;
-    
-    // Can't place on base
     if (position.x === state.basePosition.x && position.y === state.basePosition.y) return false;
 
-    // Check if position already has tower
     const hasTower = state.towers.some(
       t => Math.floor(t.position.x) === Math.floor(position.x) && 
            Math.floor(t.position.y) === Math.floor(position.y)
     );
     if (hasTower) return false;
 
-    // Check if placing here would block all paths
     const towerPositions = state.towers.map(t => t.position);
     if (wouldBlockPath(
       position,
@@ -805,7 +869,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const baseCost = TOWERS[type].baseCost;
     const purchaseCount = state.towerPurchaseCount[type];
-    // Each purchase increases cost by 15%
     return Math.floor(baseCost * Math.pow(GAME_CONFIG.TOWER_COST_INCREASE, purchaseCount));
   },
 
@@ -814,7 +877,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
 
   getSellValue: (tower) => {
-    return Math.floor(tower.totalCostSpent * 0.6); // 60% return
+    return Math.floor(tower.totalCostSpent * 0.6);
   },
 
   getTowerColor: (tower) => {
@@ -834,4 +897,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
 
   setZoomLevel: (level) => set({ zoomLevel: Math.max(0.5, Math.min(2, level)) }),
+  
+  getCurrentCoins: () => get().coins,
 }));

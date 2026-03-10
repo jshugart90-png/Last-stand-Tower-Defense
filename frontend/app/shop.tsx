@@ -11,9 +11,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { usePlayerStore, TOWER_PRICES, ARENA_EXPANSION_PRICE_USD, IAP_PRODUCT_IDS } from '../src/stores/playerStore';
+import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
 import { skinsApi, rewardApi } from '../src/hooks/useApi';
-import { TOWERS, TowerType, SKIN_COLORS } from '../src/constants/game';
+import { 
+  TOWERS, TowerType, SKIN_COLORS, TOWER_UNLOCK_PRICES, 
+  SPEED_UNLOCK_PRICES, GameSpeed, getShopUpgradeCost 
+} from '../src/constants/game';
 
 interface Skin {
   id: string;
@@ -23,12 +26,32 @@ interface Skin {
   color: string;
 }
 
+// Tower icon helper
+const getTowerIcon = (type: TowerType, size = 20, color = '#fff') => {
+  switch (type) {
+    case 'machine_gun':
+      return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
+    case 'sniper':
+      return <MaterialCommunityIcons name="crosshairs-gps" size={size} color={color} />;
+    case 'splash':
+      return <MaterialCommunityIcons name="bomb" size={size} color={color} />;
+    case 'freeze':
+      return <MaterialCommunityIcons name="snowflake" size={size} color={color} />;
+    case 'missile':
+      return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
+    case 'laser':
+      return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
+    default:
+      return <Ionicons name="help" size={size} color={color} />;
+  }
+};
+
 export default function ShopScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTower, setSelectedTower] = useState<TowerType>('machine_gun');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'arena' | 'skins'>('towers');
 
   useEffect(() => {
     loadSkins();
@@ -45,11 +68,12 @@ export default function ShopScreen() {
     }
   };
 
+  // Handle tower unlock purchase
   const handlePurchaseTower = (towerType: TowerType) => {
-    const price = TOWER_PRICES[towerType];
+    const price = TOWER_UNLOCK_PRICES[towerType];
     const towerDef = TOWERS[towerType];
     
-    if (playerStore.unlockedTowers.includes(towerType)) {
+    if (playerStore.isTowerUnlocked(towerType)) {
       Alert.alert('Already Owned', `You already own the ${towerDef.name}!`);
       return;
     }
@@ -57,7 +81,7 @@ export default function ShopScreen() {
     if (playerStore.coins < price) {
       Alert.alert(
         'Not Enough Coins',
-        `You need ${price - playerStore.coins} more coins. Watch an ad to earn coins?`,
+        `You need ${price - playerStore.coins} more coins.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Watch Ad', onPress: handleWatchAdForCoins },
@@ -67,12 +91,12 @@ export default function ShopScreen() {
     }
     
     Alert.alert(
-      'Purchase Tower',
-      `Buy ${towerDef.name} for ${price} coins?`,
+      'Unlock Tower',
+      `Unlock ${towerDef.name} for ${price} coins?\n\n${towerDef.description}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Buy',
+          text: 'Unlock',
           onPress: () => {
             const success = playerStore.purchaseTower(towerType);
             if (success) {
@@ -84,8 +108,82 @@ export default function ShopScreen() {
     );
   };
 
+  // Handle tower upgrade purchase (permanent stat boost)
+  const handleUpgradeTower = (towerType: TowerType) => {
+    const towerDef = TOWERS[towerType];
+    const currentLevel = playerStore.getTowerUpgradeLevel(towerType);
+    const price = playerStore.getTowerUpgradePrice(towerType);
+    
+    if (!playerStore.isTowerUnlocked(towerType)) {
+      Alert.alert('Tower Locked', `You need to unlock ${towerDef.name} first!`);
+      return;
+    }
+    
+    if (playerStore.coins < price) {
+      Alert.alert(
+        'Not Enough Coins',
+        `You need ${price - playerStore.coins} more coins.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    Alert.alert(
+      'Upgrade Tower',
+      `Upgrade ${towerDef.name} to Level ${currentLevel + 2}?\n\nCost: ${price} coins\n\n+5% damage and +2% range permanently for all ${towerDef.name} towers!`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Upgrade',
+          onPress: () => {
+            const success = playerStore.purchaseTowerUpgrade(towerType);
+            if (success) {
+              Alert.alert('Success!', `${towerDef.name} upgraded to Level ${currentLevel + 2}!`);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle speed unlock purchase
+  const handlePurchaseSpeed = (speed: GameSpeed) => {
+    const price = SPEED_UNLOCK_PRICES[speed];
+    
+    if (playerStore.isSpeedUnlocked(speed)) {
+      Alert.alert('Already Owned', `You already have ${speed}x speed unlocked!`);
+      return;
+    }
+    
+    if (playerStore.coins < price) {
+      Alert.alert(
+        'Not Enough Coins',
+        `You need ${price - playerStore.coins} more coins.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    Alert.alert(
+      'Unlock Speed',
+      `Unlock ${speed}x game speed for ${price} coins?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unlock',
+          onPress: () => {
+            const success = playerStore.purchaseSpeed(speed);
+            if (success) {
+              Alert.alert('Success!', `${speed}x speed unlocked!`);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle arena expansion (real money)
   const handlePurchaseArenaExpansion = () => {
-    // Arena expansion is a REAL MONEY purchase - $2.99
     Alert.alert(
       'Arena Expansion - $2.99',
       `Purchase arena expansion for $${ARENA_EXPANSION_PRICE_USD}?\n\nThis will add 1 row of cells to each side of your battlefield.\n\nCurrent expansions: ${playerStore.arenaExpansions}`,
@@ -94,120 +192,52 @@ export default function ShopScreen() {
         {
           text: `Buy for $${ARENA_EXPANSION_PRICE_USD}`,
           onPress: async () => {
-            // In production, this will trigger the IAP flow via expo-iap
-            // For now, we simulate the purchase success
-            // TODO: Integrate with expo-iap for real purchases
-            try {
-              // Simulated IAP success - in production this would validate receipt with backend
-              Alert.alert(
-                'Purchase Processing',
-                'In production, this would open the App Store/Google Play payment sheet.\n\nFor testing, the expansion will be granted.',
-                [
-                  {
-                    text: 'Simulate Purchase',
-                    onPress: () => {
-                      // Grant the expansion (in production, only after receipt validation)
-                      playerStore.syncFromServer({
-                        arenaExpansions: playerStore.arenaExpansions + 1
-                      });
-                      Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}\n\nNew grid size: ${10 + (playerStore.arenaExpansions + 1) * 2} x ${14 + (playerStore.arenaExpansions + 1) * 2}`);
-                    }
-                  },
-                  { text: 'Cancel', style: 'cancel' }
-                ]
-              );
-            } catch (error) {
-              Alert.alert('Purchase Failed', 'Unable to complete purchase. Please try again.');
-            }
+            // In production, this triggers IAP flow
+            Alert.alert(
+              'Purchase Processing',
+              'In production, this would open the App Store/Google Play payment sheet.\n\nFor testing, the expansion will be granted.',
+              [
+                {
+                  text: 'Simulate Purchase',
+                  onPress: () => {
+                    playerStore.addArenaExpansion();
+                    Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
+                  }
+                },
+                { text: 'Cancel', style: 'cancel' }
+              ]
+            );
           },
         },
       ]
     );
   };
 
-  const handlePurchaseSkin = async (skin: Skin) => {
-    if (playerStore.unlockedSkins.includes(skin.id)) {
-      handleEquipSkin(skin.id);
-      return;
-    }
-
-    if (skin.price_type === 'premium') {
-      Alert.alert('Premium Skin', 'This skin requires a premium purchase.');
-      return;
-    }
-
-    if (playerStore.coins < skin.price) {
-      Alert.alert(
-        'Not Enough Coins',
-        `You need ${skin.price - playerStore.coins} more coins.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Watch Ad', onPress: handleWatchAdForCoins },
-        ]
-      );
-      return;
-    }
-
-    Alert.alert(
-      'Purchase Skin',
-      `Buy ${skin.name} for ${skin.price} coins?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Buy',
-          onPress: async () => {
-            try {
-              const response = await skinsApi.purchase(playerStore.playerId!, skin.id);
-              if (response.data.success) {
-                playerStore.setCoins(response.data.new_balance);
-                playerStore.unlockSkin(skin.id);
-                Alert.alert('Success', `${skin.name} skin unlocked!`);
-              }
-            } catch (e) {
-              // Local purchase
-              playerStore.setCoins(playerStore.coins - skin.price);
-              playerStore.unlockSkin(skin.id);
-              Alert.alert('Success', `${skin.name} skin unlocked!`);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleEquipSkin = async (skinId: string) => {
-    playerStore.equipSkin(selectedTower, skinId);
-    Alert.alert('Equipped!', 'Skin equipped successfully.');
-  };
-
+  // Handle watch ad for coins
   const handleWatchAdForCoins = async () => {
     Alert.alert(
       'Watch Ad',
-      'Watch a short video to earn 50 coins?',
+      'Watch a short ad to earn 25 coins?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Watch',
           onPress: async () => {
+            // Simulate ad watching
+            playerStore.addCoins(25);
+            Alert.alert('Reward!', 'You earned 25 coins!');
+            
             if (playerStore.playerId) {
               try {
-                const response = await rewardApi.claim({
+                await rewardApi.claim({
                   player_id: playerStore.playerId,
                   reward_type: 'coins',
                   ad_type: 'rewarded',
+                  amount: 25,
                 });
-                if (response.data.success) {
-                  playerStore.setCoins(response.data.new_balance);
-                  Alert.alert('Reward!', `You earned ${response.data.coins_granted} coins!`);
-                }
               } catch (e) {
-                // Local reward
-                playerStore.addCoins(50);
-                Alert.alert('Reward!', 'You earned 50 coins!');
+                console.error('Error claiming reward:', e);
               }
-            } else {
-              playerStore.addCoins(50);
-              Alert.alert('Reward!', 'You earned 50 coins!');
             }
           },
         },
@@ -215,32 +245,92 @@ export default function ShopScreen() {
     );
   };
 
-  const handlePurchasePremium = () => {
-    Alert.alert(
-      'Premium Upgrade',
-      'Remove all ads and get exclusive skins for $4.99?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Purchase',
-          onPress: () => {
-            playerStore.setPremium(true);
-            Alert.alert('Success', 'Premium unlocked! Ad-free experience enabled.');
-          },
-        },
-      ]
+  // Render tower unlock/upgrade card
+  const renderTowerCard = (towerType: TowerType) => {
+    const tower = TOWERS[towerType];
+    const isUnlocked = playerStore.isTowerUnlocked(towerType);
+    const unlockPrice = TOWER_UNLOCK_PRICES[towerType];
+    const upgradeLevel = playerStore.getTowerUpgradeLevel(towerType);
+    const upgradePrice = playerStore.getTowerUpgradePrice(towerType);
+    const canAffordUnlock = playerStore.coins >= unlockPrice;
+    const canAffordUpgrade = playerStore.coins >= upgradePrice;
+
+    return (
+      <View key={towerType} style={styles.towerCard}>
+        <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
+          {getTowerIcon(towerType, 28)}
+        </View>
+        
+        <View style={styles.towerInfo}>
+          <Text style={styles.towerName}>{tower.name}</Text>
+          <Text style={styles.towerDesc} numberOfLines={1}>{tower.description}</Text>
+          {isUnlocked && (
+            <Text style={styles.upgradeLevel}>Shop Level: {upgradeLevel + 1}</Text>
+          )}
+        </View>
+        
+        <View style={styles.towerActions}>
+          {!isUnlocked ? (
+            <TouchableOpacity
+              style={[styles.unlockButton, !canAffordUnlock && styles.disabledButton]}
+              onPress={() => handlePurchaseTower(towerType)}
+            >
+              <FontAwesome5 name="coins" size={12} color="#FFD700" />
+              <Text style={styles.buttonText}>{unlockPrice}</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.upgradeButton, !canAffordUpgrade && styles.disabledButton]}
+              onPress={() => handleUpgradeTower(towerType)}
+            >
+              <Ionicons name="arrow-up" size={14} color="#fff" />
+              <Text style={styles.buttonText}>{upgradePrice}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
     );
   };
 
-  if (loading) {
+  // Render speed unlock card
+  const renderSpeedCard = (speed: GameSpeed) => {
+    const price = SPEED_UNLOCK_PRICES[speed];
+    const isUnlocked = playerStore.isSpeedUnlocked(speed);
+    const canAfford = playerStore.coins >= price;
+
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4A90D9" />
+      <View key={speed} style={styles.speedCard}>
+        <View style={[styles.speedIcon, isUnlocked && styles.speedIconUnlocked]}>
+          <Text style={styles.speedText}>{speed}x</Text>
         </View>
-      </SafeAreaView>
+        
+        <View style={styles.speedInfo}>
+          <Text style={styles.speedTitle}>{speed}x Speed</Text>
+          <Text style={styles.speedDesc}>
+            {speed === 1 ? 'Normal speed' : `${speed} times faster gameplay`}
+          </Text>
+        </View>
+        
+        {price === 0 ? (
+          <View style={styles.freeTag}>
+            <Text style={styles.freeText}>FREE</Text>
+          </View>
+        ) : isUnlocked ? (
+          <View style={styles.ownedTag}>
+            <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.buySpeedButton, !canAfford && styles.disabledButton]}
+            onPress={() => handlePurchaseSpeed(speed)}
+          >
+            <FontAwesome5 name="coins" size={12} color="#FFD700" />
+            <Text style={styles.buttonText}>{price}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     );
-  }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -249,201 +339,163 @@ export default function ShopScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>Shop</Text>
-        <View style={styles.coinsContainer}>
+        <Text style={styles.headerTitle}>Shop</Text>
+        <View style={styles.coinsDisplay}>
           <FontAwesome5 name="coins" size={16} color="#FFD700" />
           <Text style={styles.coinsText}>{playerStore.coins}</Text>
         </View>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Tower Unlocks Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Unlock Towers</Text>
-          <Text style={styles.sectionSubtitle}>Purchase new tower types with coins</Text>
-          
-          {(Object.keys(TOWERS) as TowerType[]).map((type) => {
-            const tower = TOWERS[type];
-            const price = TOWER_PRICES[type];
-            const isOwned = playerStore.unlockedTowers.includes(type);
-            const canAfford = playerStore.coins >= price;
+      {/* Tabs */}
+      <View style={styles.tabs}>
+        <TouchableOpacity
+          style={[styles.tab, selectedTab === 'towers' && styles.tabActive]}
+          onPress={() => setSelectedTab('towers')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'towers' && styles.tabTextActive]}>
+            Towers
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, selectedTab === 'speeds' && styles.tabActive]}
+          onPress={() => setSelectedTab('speeds')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'speeds' && styles.tabTextActive]}>
+            Speed
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, selectedTab === 'arena' && styles.tabActive]}
+          onPress={() => setSelectedTab('arena')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'arena' && styles.tabTextActive]}>
+            Arena
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, selectedTab === 'skins' && styles.tabActive]}
+          onPress={() => setSelectedTab('skins')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'skins' && styles.tabTextActive]}>
+            Skins
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-            return (
-              <TouchableOpacity
-                key={type}
-                style={[styles.towerCard, isOwned && styles.ownedCard]}
-                onPress={() => handlePurchaseTower(type)}
-                disabled={isOwned}
-              >
-                <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
-                  <MaterialCommunityIcons 
-                    name={type === 'machine_gun' ? 'pistol' : 
-                          type === 'sniper' ? 'crosshairs-gps' : 
-                          type === 'splash' ? 'bomb' : 
-                          type === 'freeze' ? 'snowflake' : 'rocket-launch'} 
-                    size={24} 
-                    color="#fff" 
-                  />
-                </View>
-                <View style={styles.towerInfo}>
-                  <Text style={styles.towerName}>{tower.name}</Text>
-                  <Text style={styles.towerDescription}>{tower.description}</Text>
-                </View>
-                <View style={styles.priceTag}>
-                  {isOwned ? (
-                    <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
-                  ) : price === 0 ? (
-                    <Text style={styles.freeText}>FREE</Text>
-                  ) : (
-                    <View style={styles.coinPrice}>
-                      <FontAwesome5 name="coins" size={14} color={canAfford ? '#FFD700' : '#E74C3C'} />
-                      <Text style={[styles.priceText, !canAfford && styles.cantAffordText]}>{price}</Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Arena Expansion Section - REAL MONEY PURCHASE */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Arena Expansion</Text>
-          <Text style={styles.sectionSubtitle}>Expand your battlefield for more tower space</Text>
-          
-          <View style={styles.expansionCard}>
-            <View style={styles.expansionInfo}>
-              <MaterialCommunityIcons name="arrow-expand-all" size={40} color="#9B59B6" />
-              <View style={styles.expansionText}>
-                <Text style={styles.expansionTitle}>Add Row to Each Side</Text>
-                <Text style={styles.expansionDesc}>
-                  Current expansions: {playerStore.arenaExpansions}
-                </Text>
-                <Text style={styles.expansionDesc}>
-                  Grid size: {10 + playerStore.arenaExpansions * 2} x {14 + playerStore.arenaExpansions * 2}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity 
-              style={styles.expandButtonReal}
-              onPress={handlePurchaseArenaExpansion}
-            >
-              <Text style={styles.dollarPriceSmall}>${ARENA_EXPANSION_PRICE_USD}</Text>
-            </TouchableOpacity>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Towers Tab */}
+        {selectedTab === 'towers' && (
+          <View>
+            <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
+            <Text style={styles.sectionSubtitle}>
+              Unlock new towers and permanently upgrade their stats
+            </Text>
+            
+            {(Object.keys(TOWERS) as TowerType[]).map(renderTowerCard)}
           </View>
-        </View>
+        )}
 
-        {/* Premium Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Premium</Text>
-          
-          <TouchableOpacity
-            style={[styles.premiumCard, playerStore.premium && styles.purchasedCard]}
-            onPress={handlePurchasePremium}
-            disabled={playerStore.premium}
-          >
-            <Ionicons name="star" size={32} color="#FFD700" />
-            <View style={styles.premiumInfo}>
-              <Text style={styles.premiumTitle}>Premium Upgrade</Text>
-              <Text style={styles.premiumDescription}>
-                Remove all ads + exclusive skins
+        {/* Speed Tab */}
+        {selectedTab === 'speeds' && (
+          <View>
+            <Text style={styles.sectionTitle}>Game Speed</Text>
+            <Text style={styles.sectionSubtitle}>
+              Unlock faster game speeds for quicker gameplay
+            </Text>
+            
+            {([1, 2, 3, 5, 10] as GameSpeed[]).map(renderSpeedCard)}
+          </View>
+        )}
+
+        {/* Arena Tab */}
+        {selectedTab === 'arena' && (
+          <View>
+            <Text style={styles.sectionTitle}>Arena Expansion</Text>
+            <Text style={styles.sectionSubtitle}>
+              Expand your battlefield for more tower placement options
+            </Text>
+            
+            <View style={styles.arenaCard}>
+              <View style={styles.arenaInfo}>
+                <MaterialCommunityIcons name="arrow-expand-all" size={48} color="#9B59B6" />
+                <View style={styles.arenaDetails}>
+                  <Text style={styles.arenaTitle}>Expand Arena</Text>
+                  <Text style={styles.arenaDesc}>
+                    Current expansions: {playerStore.arenaExpansions}
+                  </Text>
+                  <Text style={styles.arenaDesc}>
+                    Grid size: {10 + playerStore.arenaExpansions * 2} x {14 + playerStore.arenaExpansions * 2}
+                  </Text>
+                </View>
+              </View>
+              
+              <TouchableOpacity
+                style={styles.arenaButton}
+                onPress={handlePurchaseArenaExpansion}
+              >
+                <Text style={styles.arenaPriceText}>${ARENA_EXPANSION_PRICE_USD}</Text>
+              </TouchableOpacity>
+              
+              <Text style={styles.realMoneyNote}>
+                * Real money purchase (In-App Purchase)
               </Text>
             </View>
-            <View style={styles.priceTag}>
-              {playerStore.premium ? (
-                <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
-              ) : (
-                <Text style={styles.dollarPrice}>$4.99</Text>
-              )}
+            
+            {/* Premium upgrade */}
+            <View style={styles.premiumCard}>
+              <Ionicons name="star" size={32} color="#FFD700" />
+              <View style={styles.premiumInfo}>
+                <Text style={styles.premiumTitle}>Premium Upgrade</Text>
+                <Text style={styles.premiumDesc}>Remove all ads permanently</Text>
+              </View>
+              <TouchableOpacity style={styles.premiumButton}>
+                <Text style={styles.premiumPriceText}>$4.99</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Tower Skins Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Tower Skins</Text>
-          
-          {/* Tower selector */}
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.towerSelector}
-            contentContainerStyle={styles.towerSelectorContent}
-          >
-            {(Object.keys(TOWERS) as TowerType[]).map((type) => {
-              const tower = TOWERS[type];
-              const isUnlocked = playerStore.unlockedTowers.includes(type);
-              const isSelected = selectedTower === type;
-
-              return (
-                <TouchableOpacity
-                  key={type}
-                  style={[
-                    styles.towerTab,
-                    isSelected && styles.towerTabSelected,
-                    !isUnlocked && styles.towerTabLocked,
-                  ]}
-                  onPress={() => setSelectedTower(type)}
-                  disabled={!isUnlocked}
-                >
-                  <View style={[styles.towerIconSmall, { backgroundColor: tower.color }]} />
-                  <Text style={styles.towerTabText}>{tower.name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* Skins grid */}
-          <View style={styles.skinsGrid}>
-            {skins.map((skin) => {
-              const isOwned = playerStore.unlockedSkins.includes(skin.id);
-              const isEquipped = playerStore.equippedSkins[selectedTower] === skin.id;
-
-              return (
-                <TouchableOpacity
-                  key={skin.id}
-                  style={[
-                    styles.skinCard,
-                    isEquipped && styles.skinCardEquipped,
-                  ]}
-                  onPress={() => handlePurchaseSkin(skin)}
-                >
-                  <View style={[styles.skinPreview, { backgroundColor: skin.color }]} />
-                  <Text style={styles.skinName}>{skin.name}</Text>
-                  
-                  {isEquipped ? (
-                    <View style={styles.equippedBadge}>
-                      <Text style={styles.equippedText}>Equipped</Text>
-                    </View>
-                  ) : isOwned ? (
-                    <Text style={styles.ownedText}>Tap to equip</Text>
-                  ) : skin.price_type === 'free' ? (
-                    <Text style={styles.freeText}>Free</Text>
-                  ) : skin.price_type === 'premium' ? (
-                    <Text style={styles.premiumPriceText}>Premium</Text>
-                  ) : (
-                    <View style={styles.coinPriceSmall}>
-                      <FontAwesome5 name="coins" size={12} color="#FFD700" />
-                      <Text style={styles.coinPriceText}>{skin.price}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
           </View>
-        </View>
+        )}
 
-        {/* Earn Coins Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Earn Coins</Text>
-          
-          <TouchableOpacity style={styles.earnCard} onPress={handleWatchAdForCoins}>
-            <Ionicons name="videocam" size={32} color="#9B59B6" />
-            <View style={styles.earnInfo}>
-              <Text style={styles.earnTitle}>Watch Ad</Text>
-              <Text style={styles.earnDescription}>Earn 50 coins</Text>
-            </View>
-            <Ionicons name="play-circle" size={32} color="#2ECC71" />
+        {/* Skins Tab */}
+        {selectedTab === 'skins' && (
+          <View>
+            <Text style={styles.sectionTitle}>Tower Skins</Text>
+            <Text style={styles.sectionSubtitle}>
+              Customize your towers with unique colors
+            </Text>
+            
+            {loading ? (
+              <ActivityIndicator size="large" color="#4A90D9" style={styles.loader} />
+            ) : (
+              <View style={styles.skinsGrid}>
+                {skins.map((skin) => {
+                  const isOwned = playerStore.unlockedSkins.includes(skin.id);
+                  return (
+                    <View key={skin.id} style={styles.skinCard}>
+                      <View style={[styles.skinPreview, { backgroundColor: skin.color }]} />
+                      <Text style={styles.skinName}>{skin.name}</Text>
+                      {isOwned ? (
+                        <View style={styles.ownedBadge}>
+                          <Text style={styles.ownedText}>Owned</Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity style={styles.skinBuyButton}>
+                          <FontAwesome5 name="coins" size={10} color="#FFD700" />
+                          <Text style={styles.skinPrice}>{skin.price}</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Watch Ad for Coins */}
+        <View style={styles.adSection}>
+          <TouchableOpacity style={styles.watchAdButton} onPress={handleWatchAdForCoins}>
+            <Ionicons name="videocam" size={24} color="#fff" />
+            <Text style={styles.watchAdText}>Watch Ad for 25 Coins</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -456,36 +508,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#1a1a2e',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    backgroundColor: '#16213e',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a4e',
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 4,
   },
-  title: {
+  headerTitle: {
     color: '#fff',
     fontSize: 20,
     fontWeight: 'bold',
   },
-  coinsContainer: {
+  coinsDisplay: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#16213e',
+    backgroundColor: '#2a2a4e',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
@@ -495,13 +540,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: '#16213e',
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabActive: {
+    backgroundColor: '#4A90D9',
+  },
+  tabText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  tabTextActive: {
+    color: '#fff',
+  },
   content: {
     flex: 1,
   },
-  section: {
+  contentContainer: {
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    paddingBottom: 32,
   },
   sectionTitle: {
     color: '#fff',
@@ -510,20 +577,18 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sectionSubtitle: {
-    color: '#666',
+    color: '#888',
     fontSize: 14,
     marginBottom: 16,
   },
+  // Tower cards
   towerCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#16213e',
-    borderRadius: 12,
     padding: 12,
-    marginBottom: 8,
-  },
-  ownedCard: {
-    opacity: 0.7,
+    borderRadius: 12,
+    marginBottom: 10,
   },
   towerIconLarge: {
     width: 48,
@@ -541,142 +606,183 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  towerDescription: {
+  towerDesc: {
     color: '#888',
     fontSize: 12,
+  },
+  upgradeLevel: {
+    color: '#00FF88',
+    fontSize: 12,
+    fontWeight: 'bold',
     marginTop: 2,
   },
-  priceTag: {
+  towerActions: {
     marginLeft: 8,
   },
-  freeText: {
-    color: '#2ECC71',
+  unlockButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#9B59B6',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  upgradeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4A90D9',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  buttonText: {
+    color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
   },
-  coinPrice: {
+  // Speed cards
+  speedCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    backgroundColor: '#16213e',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
   },
-  priceText: {
-    color: '#FFD700',
+  speedIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#2a2a4e',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  speedIconUnlocked: {
+    backgroundColor: '#4A90D9',
+  },
+  speedText: {
+    color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  cantAffordText: {
-    color: '#E74C3C',
+  speedInfo: {
+    flex: 1,
+    marginLeft: 12,
   },
-  expansionCard: {
+  speedTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  speedDesc: {
+    color: '#888',
+    fontSize: 12,
+  },
+  freeTag: {
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  freeText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  ownedTag: {
+    paddingHorizontal: 8,
+  },
+  buySpeedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#9B59B6',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  // Arena
+  arenaCard: {
     backgroundColor: '#16213e',
-    borderRadius: 12,
     padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
   },
-  expansionInfo: {
+  arenaInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
   },
-  expansionText: {
+  arenaDetails: {
     marginLeft: 16,
     flex: 1,
   },
-  expansionTitle: {
+  arenaTitle: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },
-  expansionDesc: {
+  arenaDesc: {
     color: '#888',
     fontSize: 14,
-    marginTop: 4,
   },
-  expandButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#9B59B6',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 8,
-  },
-  expandButtonReal: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  arenaButton: {
     backgroundColor: '#2ECC71',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 14,
     borderRadius: 8,
+    alignItems: 'center',
   },
-  dollarPriceSmall: {
+  arenaPriceText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },
-  expandButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+  realMoneyNote: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
   },
   premiumCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#16213e',
-    borderRadius: 12,
     padding: 16,
-  },
-  purchasedCard: {
-    opacity: 0.7,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFD700',
   },
   premiumInfo: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 12,
   },
   premiumTitle: {
-    color: '#fff',
+    color: '#FFD700',
     fontSize: 16,
     fontWeight: 'bold',
   },
-  premiumDescription: {
-    color: '#666',
+  premiumDesc: {
+    color: '#888',
     fontSize: 12,
-    marginTop: 4,
   },
-  dollarPrice: {
-    color: '#2ECC71',
-    fontSize: 18,
+  premiumButton: {
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  premiumPriceText: {
+    color: '#1a1a2e',
+    fontSize: 14,
     fontWeight: 'bold',
   },
-  towerSelector: {
-    marginBottom: 16,
-  },
-  towerSelectorContent: {
-    gap: 8,
-  },
-  towerTab: {
-    alignItems: 'center',
-    backgroundColor: '#16213e',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginRight: 8,
-  },
-  towerTabSelected: {
-    borderWidth: 2,
-    borderColor: '#4A90D9',
-  },
-  towerTabLocked: {
-    opacity: 0.5,
-  },
-  towerIconSmall: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    marginBottom: 4,
-  },
-  towerTabText: {
-    color: '#fff',
-    fontSize: 12,
+  // Skins
+  loader: {
+    marginTop: 32,
   },
   skinsGrid: {
     flexDirection: 'row',
@@ -690,10 +796,6 @@ const styles = StyleSheet.create({
     padding: 12,
     alignItems: 'center',
   },
-  skinCardEquipped: {
-    borderWidth: 2,
-    borderColor: '#4A90D9',
-  },
   skinPreview: {
     width: 48,
     height: 48,
@@ -706,54 +808,50 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 4,
   },
-  equippedBadge: {
-    backgroundColor: '#4A90D9',
+  ownedBadge: {
+    backgroundColor: '#2ECC71',
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderRadius: 4,
   },
-  equippedText: {
+  ownedText: {
     color: '#fff',
     fontSize: 10,
-  },
-  ownedText: {
-    color: '#2ECC71',
-    fontSize: 10,
-  },
-  premiumPriceText: {
-    color: '#9B59B6',
-    fontSize: 12,
     fontWeight: 'bold',
   },
-  coinPriceSmall: {
+  skinBuyButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#9B59B6',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
     gap: 4,
   },
-  coinPriceText: {
-    color: '#FFD700',
+  skinPrice: {
+    color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
   },
-  earnCard: {
+  // Ad section
+  adSection: {
+    marginTop: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a4e',
+  },
+  watchAdButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
-    borderRadius: 12,
-    padding: 16,
+    justifyContent: 'center',
+    backgroundColor: '#E67E22',
+    paddingVertical: 14,
+    borderRadius: 8,
+    gap: 8,
   },
-  earnInfo: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  earnTitle: {
+  watchAdText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-  },
-  earnDescription: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 4,
   },
 });

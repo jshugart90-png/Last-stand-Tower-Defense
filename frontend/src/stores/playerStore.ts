@@ -1,19 +1,10 @@
 import { create } from 'zustand';
-import { TowerType } from '../constants/game';
+import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShopUpgradeCost } from '../constants/game';
 
-// Tower unlock prices (coins) - TRIPLED costs for slow progression
-export const TOWER_PRICES: Record<TowerType, number> = {
-  machine_gun: 0, // Free starter tower
-  sniper: 1500, // Was 500, now 1500 (3x)
-  splash: 2250, // Was 750, now 2250 (3x)
-  freeze: 1800, // Was 600, now 1800 (3x)
-  missile: 3600, // Was 1200, now 3600 (3x)
-};
-
-// Arena expansion is REAL MONEY - $2.99 per expansion (NOT COINS!)
+// Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
 
-// Product ID for in-app purchases (must match App Store / Google Play configuration)
+// Product ID for in-app purchases
 export const IAP_PRODUCT_IDS = {
   ARENA_EXPANSION: 'arena_expansion_299',
   PREMIUM_UPGRADE: 'premium_upgrade_499',
@@ -35,14 +26,22 @@ interface PlayerState {
   gamesPlayed: number;
   bestWave: number;
   
-  // Unlocks
+  // Tower unlocks (purchased in shop)
   unlockedTowers: TowerType[];
+  
+  // Tower upgrades (purchased in shop - permanent stat boosts)
+  towerUpgradeLevels: Record<TowerType, number>;
+  
+  // Speed unlocks (purchased in shop)
+  unlockedSpeeds: GameSpeed[];
+  
+  // Skins
   unlockedSkins: string[];
   equippedSkins: Record<string, string>;
   
   // Purchases
   premium: boolean;
-  arenaExpansions: number; // Number of rows expanded (each adds 1 row on each side)
+  arenaExpansions: number;
   
   // Settings
   soundEnabled: boolean;
@@ -54,6 +53,10 @@ interface PlayerState {
   
   // Tutorial
   tutorialCompleted: boolean;
+  
+  // Current game session (for saving on exit)
+  currentGameWave: number;
+  currentGameCoins: number;
 }
 
 interface PlayerActions {
@@ -72,21 +75,28 @@ interface PlayerActions {
   recordGame: (wavesReached: number) => void;
   setBestWave: (wave: number) => void;
   
-  // Unlocks
-  unlockTower: (tower: TowerType) => void;
-  setUnlockedTowers: (towers: TowerType[]) => void;
+  // Tower unlocks
+  purchaseTower: (tower: TowerType) => boolean;
+  isTowerUnlocked: (tower: TowerType) => boolean;
+  getTowerUnlockPrice: (tower: TowerType) => number;
+  
+  // Tower upgrades (shop)
+  purchaseTowerUpgrade: (tower: TowerType) => boolean;
+  getTowerUpgradeLevel: (tower: TowerType) => number;
+  getTowerUpgradePrice: (tower: TowerType) => number;
+  
+  // Speed unlocks
+  purchaseSpeed: (speed: GameSpeed) => boolean;
+  isSpeedUnlocked: (speed: GameSpeed) => boolean;
+  getSpeedUnlockPrice: (speed: GameSpeed) => number;
+  
+  // Skins
   unlockSkin: (skinId: string) => void;
   setUnlockedSkins: (skins: string[]) => void;
   equipSkin: (towerType: string, skinId: string) => void;
   
-  // Purchases
-  setPremium: (premium: boolean) => void;
-  addArenaExpansion: () => boolean; // Returns false if not enough coins
-  getArenaExpansionPrice: () => number;
-  
-  // Tower purchases
-  purchaseTower: (tower: TowerType) => boolean; // Returns false if not enough coins or already owned
-  getTowerPrice: (tower: TowerType) => number;
+  // Arena expansion (real money)
+  addArenaExpansion: () => void;
   
   // Settings
   toggleSound: () => void;
@@ -100,6 +110,10 @@ interface PlayerActions {
   
   // Tutorial
   completeTutorial: () => void;
+  
+  // Game session tracking
+  setCurrentGameProgress: (wave: number, coins: number) => void;
+  clearCurrentGameProgress: () => void;
   
   // Sync from server
   syncFromServer: (data: Partial<PlayerState>) => void;
@@ -119,6 +133,15 @@ const initialState: PlayerState = {
   gamesPlayed: 0,
   bestWave: 0,
   unlockedTowers: ['machine_gun'],
+  towerUpgradeLevels: {
+    machine_gun: 0,
+    sniper: 0,
+    splash: 0,
+    freeze: 0,
+    missile: 0,
+    laser: 0,
+  },
+  unlockedSpeeds: [1],  // 1x is free
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
@@ -128,6 +151,8 @@ const initialState: PlayerState = {
   hapticEnabled: true,
   gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
+  currentGameWave: 0,
+  currentGameCoins: 0,
 };
 
 export const usePlayerStore = create<PlayerState & PlayerActions>()(
@@ -161,14 +186,65 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
     setBestWave: (wave) => set({ bestWave: wave }),
 
-    // Unlocks
-    unlockTower: (tower) => {
-      set(state => {
-        if (state.unlockedTowers.includes(tower)) return state;
-        return { unlockedTowers: [...state.unlockedTowers, tower] };
+    // Tower unlocks
+    purchaseTower: (tower) => {
+      const state = get();
+      if (state.unlockedTowers.includes(tower)) return false;
+      const price = TOWER_UNLOCK_PRICES[tower];
+      if (state.coins < price) return false;
+      set({
+        coins: state.coins - price,
+        unlockedTowers: [...state.unlockedTowers, tower],
       });
+      return true;
     },
-    setUnlockedTowers: (towers) => set({ unlockedTowers: towers }),
+    
+    isTowerUnlocked: (tower) => get().unlockedTowers.includes(tower),
+    
+    getTowerUnlockPrice: (tower) => TOWER_UNLOCK_PRICES[tower],
+    
+    // Tower upgrades (shop - permanent stat boosts)
+    purchaseTowerUpgrade: (tower) => {
+      const state = get();
+      if (!state.unlockedTowers.includes(tower)) return false;
+      const currentLevel = state.towerUpgradeLevels[tower];
+      const price = getShopUpgradeCost(tower, currentLevel);
+      if (state.coins < price) return false;
+      set({
+        coins: state.coins - price,
+        towerUpgradeLevels: {
+          ...state.towerUpgradeLevels,
+          [tower]: currentLevel + 1,
+        },
+      });
+      return true;
+    },
+    
+    getTowerUpgradeLevel: (tower) => get().towerUpgradeLevels[tower] || 0,
+    
+    getTowerUpgradePrice: (tower) => {
+      const currentLevel = get().towerUpgradeLevels[tower] || 0;
+      return getShopUpgradeCost(tower, currentLevel);
+    },
+    
+    // Speed unlocks
+    purchaseSpeed: (speed) => {
+      const state = get();
+      if (state.unlockedSpeeds.includes(speed)) return false;
+      const price = SPEED_UNLOCK_PRICES[speed];
+      if (state.coins < price) return false;
+      set({
+        coins: state.coins - price,
+        unlockedSpeeds: [...state.unlockedSpeeds, speed].sort((a, b) => a - b) as GameSpeed[],
+      });
+      return true;
+    },
+    
+    isSpeedUnlocked: (speed) => get().unlockedSpeeds.includes(speed),
+    
+    getSpeedUnlockPrice: (speed) => SPEED_UNLOCK_PRICES[speed],
+
+    // Skins
     unlockSkin: (skinId) => {
       set(state => {
         if (state.unlockedSkins.includes(skinId)) return state;
@@ -182,36 +258,12 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       }));
     },
 
-    // Purchases
-    setPremium: (premium) => set({ premium }),
-    
-    // Arena expansion is now REAL MONEY purchase via IAP
-    // This method is only used if somehow coins are used (legacy)
+    // Arena expansion (real money IAP)
     addArenaExpansion: () => {
       set(state => ({
         arenaExpansions: state.arenaExpansions + 1,
       }));
-      return true;
     },
-    
-    getArenaExpansionPrice: () => {
-      // Arena expansion is $2.99 real money, not coins
-      return 0;
-    },
-    
-    purchaseTower: (tower) => {
-      const state = get();
-      if (state.unlockedTowers.includes(tower)) return false;
-      const price = TOWER_PRICES[tower];
-      if (state.coins < price) return false;
-      set({
-        coins: state.coins - price,
-        unlockedTowers: [...state.unlockedTowers, tower],
-      });
-      return true;
-    },
-    
-    getTowerPrice: (tower) => TOWER_PRICES[tower],
 
     // Settings
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
@@ -225,22 +277,28 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     resetGamesPlayedSinceAd: () => set({ gamesPlayedSinceAd: 0 }),
     shouldShowInterstitialAd: () => {
       const state = get();
-      // Don't show ads for premium users
       if (state.premium) return false;
-      // Show ad every 2-3 games
       return state.gamesPlayedSinceAd >= 2;
     },
 
     // Tutorial
     completeTutorial: () => set({ tutorialCompleted: true }),
 
+    // Game session tracking
+    setCurrentGameProgress: (wave, coins) => {
+      set({ currentGameWave: wave, currentGameCoins: coins });
+    },
+    clearCurrentGameProgress: () => {
+      set({ currentGameWave: 0, currentGameCoins: 0 });
+    },
+
     // Sync from server
     syncFromServer: (data) => {
       set(state => ({
         ...state,
         ...data,
-        // Ensure unlocked towers are properly typed
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
+        unlockedSpeeds: (data.unlockedSpeeds as GameSpeed[]) || state.unlockedSpeeds,
       }));
     },
 
