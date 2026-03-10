@@ -7,14 +7,14 @@ export const TOWERS = {
     baseCost: 50,
     baseStats: {
       damage: 10,
-      fireRate: 200, // ms between shots
-      range: 80,
-      projectileSpeed: 15,
+      fireRate: 300, // ms between shots
+      range: 3, // in grid cells
+      projectileSpeed: 8,
     },
     upgrades: [
-      { damage: 15, fireRate: 180, range: 90, cost: 30 },
-      { damage: 25, fireRate: 150, range: 100, cost: 50 },
-      { damage: 40, fireRate: 120, range: 120, cost: 80 },
+      { damage: 15, fireRate: 250, range: 3.5, cost: 30 },
+      { damage: 25, fireRate: 200, range: 4, cost: 50 },
+      { damage: 40, fireRate: 150, range: 4.5, cost: 80 },
     ],
     unlockLevel: 1,
     icon: 'crosshairs',
@@ -28,13 +28,13 @@ export const TOWERS = {
     baseStats: {
       damage: 50,
       fireRate: 2000,
-      range: 200,
-      projectileSpeed: 25,
+      range: 6, // in grid cells
+      projectileSpeed: 12,
     },
     upgrades: [
-      { damage: 80, fireRate: 1800, range: 220, cost: 60 },
-      { damage: 120, fireRate: 1500, range: 250, cost: 100 },
-      { damage: 200, fireRate: 1200, range: 300, cost: 150 },
+      { damage: 80, fireRate: 1800, range: 7, cost: 60 },
+      { damage: 120, fireRate: 1500, range: 8, cost: 100 },
+      { damage: 200, fireRate: 1200, range: 10, cost: 150 },
     ],
     unlockLevel: 3,
     icon: 'target',
@@ -48,14 +48,14 @@ export const TOWERS = {
     baseStats: {
       damage: 25,
       fireRate: 1500,
-      range: 100,
-      splashRadius: 40,
-      projectileSpeed: 10,
+      range: 3.5, // in grid cells
+      splashRadius: 1.5,
+      projectileSpeed: 6,
     },
     upgrades: [
-      { damage: 40, splashRadius: 50, range: 110, cost: 70 },
-      { damage: 60, splashRadius: 65, range: 120, cost: 110 },
-      { damage: 90, splashRadius: 80, range: 140, cost: 160 },
+      { damage: 40, splashRadius: 1.8, range: 4, cost: 70 },
+      { damage: 60, splashRadius: 2, range: 4.5, cost: 110 },
+      { damage: 90, splashRadius: 2.5, range: 5, cost: 160 },
     ],
     unlockLevel: 5,
     icon: 'bomb',
@@ -69,15 +69,15 @@ export const TOWERS = {
     baseStats: {
       damage: 5,
       fireRate: 1000,
-      range: 90,
+      range: 3, // in grid cells
       slowAmount: 0.5, // 50% slow
       slowDuration: 2000,
-      projectileSpeed: 12,
+      projectileSpeed: 8,
     },
     upgrades: [
-      { damage: 8, slowAmount: 0.6, slowDuration: 2500, cost: 50 },
-      { damage: 12, slowAmount: 0.7, slowDuration: 3000, cost: 80 },
-      { damage: 20, slowAmount: 0.8, slowDuration: 4000, cost: 120 },
+      { damage: 8, slowAmount: 0.6, slowDuration: 2500, range: 3.5, cost: 50 },
+      { damage: 12, slowAmount: 0.7, slowDuration: 3000, range: 4, cost: 80 },
+      { damage: 20, slowAmount: 0.8, slowDuration: 4000, range: 4.5, cost: 120 },
     ],
     unlockLevel: 8,
     icon: 'snowflake',
@@ -91,14 +91,14 @@ export const TOWERS = {
     baseStats: {
       damage: 100,
       fireRate: 3000,
-      range: 150,
-      splashRadius: 30,
-      projectileSpeed: 8,
+      range: 5, // in grid cells
+      splashRadius: 1.2,
+      projectileSpeed: 5,
     },
     upgrades: [
-      { damage: 150, splashRadius: 40, range: 170, cost: 100 },
-      { damage: 220, splashRadius: 50, range: 190, cost: 150 },
-      { damage: 350, splashRadius: 65, range: 220, cost: 220 },
+      { damage: 150, splashRadius: 1.5, range: 5.5, cost: 100 },
+      { damage: 220, splashRadius: 1.8, range: 6, cost: 150 },
+      { damage: 350, splashRadius: 2, range: 7, cost: 220 },
     ],
     unlockLevel: 12,
     icon: 'rocket',
@@ -114,37 +114,37 @@ export const ENEMIES = {
     id: 'basic',
     name: 'Basic',
     baseHealth: 30,
-    baseSpeed: 1.5,
+    baseSpeed: 0.8, // Slower
     coinReward: 5,
     color: '#E74C3C',
-    size: 12,
+    size: 14,
   },
   fast: {
     id: 'fast',
     name: 'Fast',
     baseHealth: 20,
-    baseSpeed: 3,
+    baseSpeed: 1.5, // Slower
     coinReward: 8,
     color: '#9B59B6',
-    size: 10,
+    size: 12,
   },
   tank: {
     id: 'tank',
     name: 'Tank',
     baseHealth: 100,
-    baseSpeed: 0.8,
+    baseSpeed: 0.4, // Slower
     coinReward: 15,
     color: '#2ECC71',
-    size: 18,
+    size: 20,
   },
   boss: {
     id: 'boss',
     name: 'Boss',
     baseHealth: 500,
-    baseSpeed: 0.5,
+    baseSpeed: 0.25, // Slower
     coinReward: 100,
     color: '#F39C12',
-    size: 25,
+    size: 28,
   },
 };
 
@@ -156,11 +156,11 @@ export const GAME_CONFIG = {
   GRID_ROWS: 14,
   CELL_SIZE: 32,
   BASE_HEALTH: 20,
-  STARTING_COINS: 100,
-  WAVE_DELAY: 3000, // ms between waves
-  ENEMY_SPAWN_DELAY: 800, // ms between enemy spawns
-  COMBO_WINDOW: 1500, // ms for combo kills
-  COMBO_BONUS_MULTIPLIER: 0.1, // 10% bonus per combo
+  STARTING_COINS: 150, // More starting coins
+  WAVE_DELAY: 5000, // ms between waves - longer for prep
+  ENEMY_SPAWN_DELAY: 1200, // ms between enemy spawns - slower
+  COMBO_WINDOW: 2000, // ms for combo kills
+  COMBO_BONUS_MULTIPLIER: 0.15, // 15% bonus per combo
   XP_PER_WAVE: 10,
   XP_PER_KILL: 1,
 };

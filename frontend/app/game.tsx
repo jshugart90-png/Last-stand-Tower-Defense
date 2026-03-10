@@ -94,17 +94,12 @@ const getTowerIcon = (type: TowerType) => {
 };
 
 // Game board component
-const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => void }) => {
+const GameBoard = ({ onCellPress, scale }: { onCellPress: (x: number, y: number) => void; scale: number }) => {
   const { towers, enemies, projectiles, path, gridCols, gridRows, cellSize, getTowerColor, selectedTowerType, canPlaceTower } = useGameStore();
   
-  const boardWidth = gridCols * cellSize;
-  const boardHeight = gridRows * cellSize;
-  const scale = Math.min(
-    (SCREEN_WIDTH - 20) / boardWidth,
-    (SCREEN_HEIGHT - 280) / boardHeight
-  );
-  
   const scaledCellSize = cellSize * scale;
+  const boardWidth = gridCols * scaledCellSize;
+  const boardHeight = gridRows * scaledCellSize;
 
   // Create path set for easy lookup
   const pathSet = new Set(path.map(p => `${Math.floor(p.x)},${Math.floor(p.y)}`));
@@ -112,7 +107,7 @@ const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => voi
   return (
     <View style={[
       styles.gameBoard,
-      { width: boardWidth * scale, height: boardHeight * scale }
+      { width: boardWidth, height: boardHeight }
     ]}>
       {/* Grid cells */}
       {Array.from({ length: gridRows }).map((_, row) =>
@@ -142,31 +137,55 @@ const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => voi
       )}
 
       {/* Towers */}
-      {towers.map((tower) => (
-        <View
-          key={tower.id}
-          style={[
-            styles.tower,
-            {
-              left: tower.position.x * scaledCellSize + scaledCellSize * 0.1,
-              top: tower.position.y * scaledCellSize + scaledCellSize * 0.1,
-              width: scaledCellSize * 0.8,
-              height: scaledCellSize * 0.8,
-              backgroundColor: getTowerColor(tower),
-              borderWidth: tower.level > 0 ? 2 : 0,
-              borderColor: tower.level === 1 ? '#C0C0C0' : tower.level === 2 ? '#FFD700' : tower.level >= 3 ? '#00FF88' : 'transparent',
-            },
-          ]}
-        >
-          {getTowerIcon(tower.type)}
-        </View>
-      ))}
+      {towers.map((tower) => {
+        const towerDef = TOWERS[tower.type];
+        const stats = tower.level === 0 
+          ? towerDef.baseStats 
+          : { ...towerDef.baseStats, ...towerDef.upgrades[tower.level - 1] };
+        const rangeRadius = stats.range * scaledCellSize;
+        
+        return (
+          <React.Fragment key={tower.id}>
+            {/* Range indicator */}
+            <View
+              style={[
+                styles.rangeIndicator,
+                {
+                  left: tower.position.x * scaledCellSize + scaledCellSize / 2 - rangeRadius,
+                  top: tower.position.y * scaledCellSize + scaledCellSize / 2 - rangeRadius,
+                  width: rangeRadius * 2,
+                  height: rangeRadius * 2,
+                  borderRadius: rangeRadius,
+                },
+              ]}
+            />
+            {/* Tower */}
+            <View
+              style={[
+                styles.tower,
+                {
+                  left: tower.position.x * scaledCellSize + scaledCellSize * 0.1,
+                  top: tower.position.y * scaledCellSize + scaledCellSize * 0.1,
+                  width: scaledCellSize * 0.8,
+                  height: scaledCellSize * 0.8,
+                  backgroundColor: getTowerColor(tower),
+                  borderWidth: tower.level > 0 ? 2 : 0,
+                  borderColor: tower.level === 1 ? '#C0C0C0' : tower.level === 2 ? '#FFD700' : tower.level >= 3 ? '#00FF88' : 'transparent',
+                },
+              ]}
+            >
+              {getTowerIcon(tower.type)}
+            </View>
+          </React.Fragment>
+        );
+      })}
 
       {/* Enemies */}
       {enemies.map((enemy) => {
         const enemyDef = ENEMIES[enemy.type];
         const healthPercent = enemy.health / enemy.maxHealth;
         const isSlowed = Date.now() < enemy.slowedUntil;
+        const enemySize = enemyDef.size * scale;
         
         return (
           <View
@@ -174,10 +193,10 @@ const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => voi
             style={[
               styles.enemy,
               {
-                left: enemy.position.x * scaledCellSize + (scaledCellSize - enemyDef.size * scale) / 2,
-                top: enemy.position.y * scaledCellSize + (scaledCellSize - enemyDef.size * scale) / 2,
-                width: enemyDef.size * scale,
-                height: enemyDef.size * scale,
+                left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
+                top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2,
+                width: enemySize,
+                height: enemySize,
                 backgroundColor: isSlowed ? '#00D4FF' : enemyDef.color,
               },
             ]}
@@ -200,8 +219,8 @@ const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => voi
           style={[
             styles.projectile,
             {
-              left: proj.position.x * scaledCellSize + scaledCellSize / 2 - 3,
-              top: proj.position.y * scaledCellSize + scaledCellSize / 2 - 3,
+              left: proj.position.x * scaledCellSize + scaledCellSize / 2 - 4,
+              top: proj.position.y * scaledCellSize + scaledCellSize / 2 - 4,
               backgroundColor: proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700',
             },
           ]}
@@ -219,6 +238,19 @@ const GameBoard = ({ onCellPress }: { onCellPress: (x: number, y: number) => voi
         }
       ]}>
         <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
+      </View>
+      
+      {/* Spawn point indicator */}
+      <View style={[
+        styles.spawnPoint,
+        {
+          left: path[0].x * scaledCellSize,
+          top: path[0].y * scaledCellSize,
+          width: scaledCellSize,
+          height: scaledCellSize,
+        }
+      ]}>
+        <MaterialCommunityIcons name="location-enter" size={scaledCellSize * 0.5} color="#E74C3C" />
       </View>
     </View>
   );
@@ -254,7 +286,7 @@ const TowerInfoModal = ({ tower, visible, onClose, onUpgrade, onSell }: {
           
           <View style={styles.statsContainer}>
             <Text style={styles.statText}>Damage: {currentStats.damage}</Text>
-            <Text style={styles.statText}>Range: {currentStats.range}</Text>
+            <Text style={styles.statText}>Range: {currentStats.range} cells</Text>
             <Text style={styles.statText}>Fire Rate: {(1000 / currentStats.fireRate).toFixed(1)}/s</Text>
           </View>
 
@@ -290,8 +322,6 @@ const GameOverModal = ({ visible, wave, score, onRestart, onWatchAd, onExit }: {
   onWatchAd: () => void;
   onExit: () => void;
 }) => {
-  const { hasRevive } = useGameStore();
-
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.modalOverlay}>
@@ -321,11 +351,12 @@ const GameOverModal = ({ visible, wave, score, onRestart, onWatchAd, onExit }: {
 export default function GameScreen() {
   const router = useRouter();
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
-  const waveSpawnRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number>(Date.now());
+  const spawnTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
   
   const [selectedTower, setSelectedTower] = useState<PlacedTower | null>(null);
   const [showTowerInfo, setShowTowerInfo] = useState(false);
+  const [waitingForWave, setWaitingForWave] = useState(true);
   
   const playerStore = usePlayerStore();
   const gameStore = useGameStore();
@@ -350,6 +381,9 @@ export default function GameScreen() {
     selectedTowerType,
     gameStartTime,
     path,
+    gridCols,
+    gridRows,
+    cellSize,
     selectTower,
     placeTower,
     upgradeTower,
@@ -371,6 +405,14 @@ export default function GameScreen() {
     grantRevive,
   } = gameStore;
 
+  // Calculate scale for the board
+  const boardWidth = gridCols * cellSize;
+  const boardHeight = gridRows * cellSize;
+  const scale = Math.min(
+    (SCREEN_WIDTH - 20) / boardWidth,
+    (SCREEN_HEIGHT - 320) / boardHeight
+  );
+
   // Initialize game on mount
   useEffect(() => {
     startGame(
@@ -378,6 +420,7 @@ export default function GameScreen() {
       playerStore.equippedSkins,
       playerStore.arenaExpanded
     );
+    setWaitingForWave(true);
     
     // Log analytics
     if (playerStore.playerId) {
@@ -389,7 +432,7 @@ export default function GameScreen() {
     
     return () => {
       if (gameLoopRef.current) clearInterval(gameLoopRef.current);
-      if (waveSpawnRef.current) clearTimeout(waveSpawnRef.current);
+      spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
 
@@ -403,6 +446,8 @@ export default function GameScreen() {
       return;
     }
 
+    lastUpdateRef.current = Date.now();
+    
     gameLoopRef.current = setInterval(() => {
       const now = Date.now();
       const deltaTime = Math.min(now - lastUpdateRef.current, 100);
@@ -427,12 +472,12 @@ export default function GameScreen() {
         // Check if can fire
         if (now - tower.lastFireTime < stats.fireRate) return;
         
-        // Find enemies in range
+        // Find enemies in range (range is now in grid cells)
         const enemiesInRange = currentEnemies.filter(enemy => {
           const dx = enemy.position.x - tower.position.x;
           const dy = enemy.position.y - tower.position.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          return dist * gameStore.cellSize <= stats.range;
+          return dist <= stats.range;
         });
         
         if (enemiesInRange.length > 0) {
@@ -446,7 +491,9 @@ export default function GameScreen() {
 
       // Check wave completion
       if (waveInProgress && currentEnemies.length === 0) {
+        // Check if all enemies have been spawned (by checking if we're past spawn time)
         endWave();
+        setWaitingForWave(true);
       }
     }, 33); // ~30 FPS
 
@@ -455,59 +502,48 @@ export default function GameScreen() {
         clearInterval(gameLoopRef.current);
       }
     };
-  }, [isPlaying, isPaused]);
-
-  // Auto-start first wave
-  useEffect(() => {
-    if (isPlaying && !waveInProgress && currentWave === 0 && enemies.length === 0) {
-      setTimeout(() => startWave(), 2000);
-    }
-  }, [isPlaying, waveInProgress, currentWave, enemies.length]);
+  }, [isPlaying, isPaused, waveInProgress]);
 
   // Wave spawning
   useEffect(() => {
     if (!waveInProgress || !isPlaying) return;
 
+    // Clear previous timeouts
+    spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
+    spawnTimeoutsRef.current = [];
+
     const waveConfig = getWaveConfig(currentWave);
-    let spawnQueue: { type: string; delay: number }[] = [];
-    let delay = 0;
+    let delay = 1000; // Start spawning after 1 second
 
     waveConfig.enemies.forEach(({ type, count }) => {
       for (let i = 0; i < count; i++) {
-        spawnQueue.push({ type, delay });
+        const timeoutId = setTimeout(() => {
+          if (gameStore.isPlaying && !gameStore.isPaused && gameStore.waveInProgress) {
+            spawnEnemy(
+              type as any,
+              waveConfig.healthMultiplier,
+              waveConfig.speedMultiplier
+            );
+          }
+        }, delay);
+        spawnTimeoutsRef.current.push(timeoutId);
         delay += GAME_CONFIG.ENEMY_SPAWN_DELAY;
       }
     });
 
-    spawnQueue.forEach(({ type, delay }) => {
-      const timeoutId = setTimeout(() => {
-        if (gameStore.isPlaying && !gameStore.isPaused) {
-          spawnEnemy(
-            type as any,
-            waveConfig.healthMultiplier,
-            waveConfig.speedMultiplier
-          );
-        }
-      }, delay);
-    });
-
     return () => {
-      // Cleanup timeouts on unmount
+      spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     };
-  }, [waveInProgress, currentWave]);
+  }, [waveInProgress, currentWave, isPlaying]);
 
-  // Auto-start next wave
-  useEffect(() => {
-    if (isPlaying && !waveInProgress && currentWave > 0 && enemies.length === 0) {
-      const timeout = setTimeout(() => {
-        if (gameStore.isPlaying) {
-          startWave();
-        }
-      }, GAME_CONFIG.WAVE_DELAY);
-      
-      return () => clearTimeout(timeout);
+  // Handle manual wave start
+  const handleStartWave = useCallback(() => {
+    if (playerStore.hapticEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-  }, [isPlaying, waveInProgress, enemies.length, currentWave]);
+    setWaitingForWave(false);
+    startWave();
+  }, [startWave, playerStore.hapticEnabled]);
 
   // Handle cell press
   const handleCellPress = useCallback((x: number, y: number) => {
@@ -597,7 +633,6 @@ export default function GameScreen() {
 
   // Handle watch ad for revive
   const handleWatchAdForRevive = useCallback(async () => {
-    // Simulate ad watching (in production, integrate with AdMob)
     Alert.alert(
       'Watch Ad',
       'Watch a short ad to revive with 50% health?',
@@ -606,9 +641,9 @@ export default function GameScreen() {
         {
           text: 'Watch',
           onPress: async () => {
-            // Simulate ad completion
             grantRevive();
             useRevive();
+            setWaitingForWave(true);
             
             if (playerStore.playerId) {
               try {
@@ -629,6 +664,7 @@ export default function GameScreen() {
 
   // Handle restart
   const handleRestart = useCallback(() => {
+    setWaitingForWave(true);
     restartGame();
   }, [restartGame]);
 
@@ -677,13 +713,24 @@ export default function GameScreen() {
 
       {/* Game board */}
       <View style={styles.boardContainer}>
-        <GameBoard onCellPress={handleCellPress} />
+        <GameBoard onCellPress={handleCellPress} scale={scale} />
       </View>
 
-      {/* Wave countdown */}
-      {!waveInProgress && currentWave > 0 && enemies.length === 0 && (
-        <View style={styles.waveCountdown}>
-          <Text style={styles.waveCountdownText}>Next wave incoming...</Text>
+      {/* Start Wave Button - appears above the board */}
+      {waitingForWave && !waveInProgress && !isGameOver && isPlaying && (
+        <View style={styles.startWaveContainer}>
+          <Text style={styles.wavePreviewText}>
+            {currentWave === 0 ? 'Place towers then start!' : `Wave ${currentWave} complete!`}
+          </Text>
+          <TouchableOpacity 
+            style={styles.startWaveButton} 
+            onPress={handleStartWave}
+          >
+            <MaterialCommunityIcons name="play-circle" size={28} color="#fff" />
+            <Text style={styles.startWaveButtonText}>
+              Start Wave {currentWave + 1}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -694,6 +741,15 @@ export default function GameScreen() {
         coins={coins}
         unlockedTowers={unlockedTowers}
       />
+
+      {/* Instructions */}
+      {selectedTowerType && (
+        <View style={styles.instructionBar}>
+          <Text style={styles.instructionText}>
+            Tap a cell to place {TOWERS[selectedTowerType].name}
+          </Text>
+        </View>
+      )}
 
       {/* Tower info modal */}
       <TowerInfoModal
@@ -793,25 +849,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#2a2a4e',
   },
   canPlaceCell: {
-    backgroundColor: 'rgba(74, 144, 217, 0.3)',
+    backgroundColor: 'rgba(74, 144, 217, 0.4)',
     borderColor: '#4A90D9',
+    borderWidth: 1,
+  },
+  rangeIndicator: {
+    position: 'absolute',
+    backgroundColor: 'rgba(74, 144, 217, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(74, 144, 217, 0.2)',
   },
   tower: {
     position: 'absolute',
     borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 10,
   },
   enemy: {
     position: 'absolute',
     borderRadius: 50,
+    zIndex: 5,
   },
   healthBarContainer: {
     position: 'absolute',
-    top: -6,
+    top: -8,
     left: 0,
     right: 0,
-    height: 4,
+    height: 5,
     backgroundColor: '#333',
     borderRadius: 2,
   },
@@ -822,9 +887,10 @@ const styles = StyleSheet.create({
   },
   projectile: {
     position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    zIndex: 15,
   },
   base: {
     position: 'absolute',
@@ -833,16 +899,37 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 215, 0, 0.2)',
     borderRadius: 4,
   },
-  waveCountdown: {
+  spawnPoint: {
     position: 'absolute',
-    top: '50%',
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+    borderRadius: 4,
   },
-  waveCountdownText: {
+  startWaveContainer: {
+    backgroundColor: '#16213e',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
+  },
+  wavePreviewText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  startWaveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2ECC71',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    gap: 8,
+  },
+  startWaveButtonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
@@ -896,6 +983,16 @@ const styles = StyleSheet.create({
   },
   towerCostRed: {
     color: '#E74C3C',
+  },
+  instructionBar: {
+    backgroundColor: '#4A90D9',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  instructionText: {
+    color: '#fff',
+    fontSize: 14,
+    textAlign: 'center',
   },
   modalOverlay: {
     flex: 1,
