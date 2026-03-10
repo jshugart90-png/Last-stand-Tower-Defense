@@ -357,6 +357,7 @@ export default function GameScreen() {
   const [selectedTower, setSelectedTower] = useState<PlacedTower | null>(null);
   const [showTowerInfo, setShowTowerInfo] = useState(false);
   const [waitingForWave, setWaitingForWave] = useState(true);
+  const [spawningComplete, setSpawningComplete] = useState(false);
   
   const playerStore = usePlayerStore();
   const gameStore = useGameStore();
@@ -436,7 +437,7 @@ export default function GameScreen() {
     };
   }, []);
 
-  // Game loop
+  // Game loop - uses gameTick which accesses fresh state
   useEffect(() => {
     if (!isPlaying || isPaused) {
       if (gameLoopRef.current) {
@@ -453,47 +454,15 @@ export default function GameScreen() {
       const deltaTime = Math.min(now - lastUpdateRef.current, 100);
       lastUpdateRef.current = now;
 
-      // Move enemies
-      moveEnemies(deltaTime);
-
-      // Move projectiles
-      moveProjectiles(deltaTime);
-
-      // Tower firing logic
-      const currentTowers = gameStore.towers;
-      const currentEnemies = gameStore.enemies;
+      // Call gameTick which handles everything with fresh state
+      gameStore.gameTick(deltaTime);
       
-      currentTowers.forEach(tower => {
-        const towerDef = TOWERS[tower.type];
-        const stats = tower.level === 0 
-          ? towerDef.baseStats 
-          : { ...towerDef.baseStats, ...towerDef.upgrades[tower.level - 1] };
-        
-        // Check if can fire
-        if (now - tower.lastFireTime < stats.fireRate) return;
-        
-        // Find enemies in range (range is now in grid cells)
-        const enemiesInRange = currentEnemies.filter(enemy => {
-          const dx = enemy.position.x - tower.position.x;
-          const dy = enemy.position.y - tower.position.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          return dist <= stats.range;
-        });
-        
-        if (enemiesInRange.length > 0) {
-          // Target enemy closest to base (furthest along path)
-          const target = enemiesInRange.reduce((a, b) => 
-            a.pathIndex > b.pathIndex ? a : b
-          );
-          fireProjectile(tower, target.id);
-        }
-      });
-
-      // Check wave completion
-      if (waveInProgress && currentEnemies.length === 0) {
-        // Check if all enemies have been spawned (by checking if we're past spawn time)
+      // Check wave completion - only after spawning is complete AND enemies are gone
+      const state = useGameStore.getState();
+      if (state.waveInProgress && state.enemies.length === 0 && spawningComplete) {
         endWave();
         setWaitingForWave(true);
+        setSpawningComplete(false);
       }
     }, 33); // ~30 FPS
 
@@ -502,7 +471,7 @@ export default function GameScreen() {
         clearInterval(gameLoopRef.current);
       }
     };
-  }, [isPlaying, isPaused, waveInProgress]);
+  }, [isPlaying, isPaused]);
 
   // Wave spawning
   useEffect(() => {
@@ -511,15 +480,20 @@ export default function GameScreen() {
     // Clear previous timeouts
     spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     spawnTimeoutsRef.current = [];
+    setSpawningComplete(false);
 
     const waveConfig = getWaveConfig(currentWave);
-    let delay = 1000; // Start spawning after 1 second
+    let delay = 500; // Start spawning after 0.5 second
+    let totalEnemies = 0;
 
     waveConfig.enemies.forEach(({ type, count }) => {
+      totalEnemies += count;
       for (let i = 0; i < count; i++) {
         const timeoutId = setTimeout(() => {
-          if (gameStore.isPlaying && !gameStore.isPaused && gameStore.waveInProgress) {
-            spawnEnemy(
+          // Use getState() to get fresh state - avoids stale closure!
+          const state = useGameStore.getState();
+          if (state.isPlaying && !state.isPaused && state.waveInProgress) {
+            state.spawnEnemy(
               type as any,
               waveConfig.healthMultiplier,
               waveConfig.speedMultiplier
@@ -531,8 +505,14 @@ export default function GameScreen() {
       }
     });
 
+    // Mark spawning as complete after all enemies have been scheduled to spawn
+    const completionTimeout = setTimeout(() => {
+      setSpawningComplete(true);
+    }, delay + 100); // Add small buffer
+
     return () => {
       spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
+      clearTimeout(completionTimeout);
     };
   }, [waveInProgress, currentWave, isPlaying]);
 

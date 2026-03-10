@@ -118,6 +118,9 @@ interface GameActions {
   moveProjectiles: (deltaTime: number) => void;
   removeProjectile: (projectileId: string) => void;
   
+  // Main game tick - processes all game logic with fresh state
+  gameTick: (deltaTime: number) => void;
+  
   // Damage base
   damageBase: (damage: number) => void;
   
@@ -298,6 +301,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const enemyDef = ENEMIES[type];
     const path = get().path;
     
+    console.log('Spawning enemy:', type, 'at', path[0]);
+    
     const enemy: Enemy = {
       id: generateId(),
       type,
@@ -311,6 +316,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     };
 
     set(s => ({ enemies: [...s.enemies, enemy] }));
+    console.log('Enemy spawned, total enemies:', get().enemies.length);
   },
 
   damageEnemy: (enemyId, damage) => {
@@ -520,6 +526,235 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     set(s => ({
       projectiles: s.projectiles.filter(p => p.id !== projectileId),
     }));
+  },
+
+  // Main game tick - processes all game logic with fresh state
+  gameTick: (deltaTime) => {
+    const state = get();
+    if (!state.isPlaying || state.isPaused) return;
+
+    const now = Date.now();
+    const path = state.path;
+    const cellSize = state.cellSize;
+
+    // ====== MOVE ENEMIES ======
+    let enemiesToRemove: string[] = [];
+    let baseDamage = 0;
+
+    const updatedEnemies = state.enemies.map(enemy => {
+      const isSlowed = now < enemy.slowedUntil;
+      const speedMultiplier = isSlowed ? 0.5 : 1;
+      const speed = enemy.speed * speedMultiplier;
+      
+      const targetPathPoint = path[enemy.pathIndex + 1];
+      if (!targetPathPoint) {
+        // Enemy at end of path - reached base
+        enemiesToRemove.push(enemy.id);
+        baseDamage += 1;
+        return enemy;
+      }
+
+      const targetX = targetPathPoint.x;
+      const targetY = targetPathPoint.y;
+      const dx = targetX - enemy.position.x;
+      const dy = targetY - enemy.position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      const moveAmount = speed * deltaTime * 0.001; // Convert to units per ms
+
+      if (dist < moveAmount) {
+        // Reached current waypoint
+        if (enemy.pathIndex + 2 >= path.length) {
+          // Will reach base next tick
+          enemiesToRemove.push(enemy.id);
+          baseDamage += 1;
+          return enemy;
+        }
+        return {
+          ...enemy,
+          position: { x: targetX, y: targetY },
+          pathIndex: enemy.pathIndex + 1,
+        };
+      }
+
+      return {
+        ...enemy,
+        position: {
+          x: enemy.position.x + (dx / dist) * moveAmount,
+          y: enemy.position.y + (dy / dist) * moveAmount,
+        },
+      };
+    });
+
+    // ====== TOWER FIRING ======
+    let newProjectiles: typeof state.projectiles = [];
+    const updatedTowers = state.towers.map(tower => {
+      const towerDef = TOWERS[tower.type];
+      const stats = tower.level === 0 
+        ? towerDef.baseStats 
+        : { ...towerDef.baseStats, ...towerDef.upgrades[tower.level - 1] };
+      
+      // Check if can fire (cooldown passed)
+      if (now - tower.lastFireTime < stats.fireRate) {
+        return tower;
+      }
+      
+      // Find enemies in range
+      const enemiesInRange = updatedEnemies.filter(enemy => {
+        if (enemiesToRemove.includes(enemy.id)) return false;
+        const dx = enemy.position.x - tower.position.x;
+        const dy = enemy.position.y - tower.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        return dist <= stats.range;
+      });
+      
+      if (enemiesInRange.length > 0) {
+        // Target enemy closest to base (furthest along path)
+        const target = enemiesInRange.reduce((a, b) => 
+          a.pathIndex > b.pathIndex ? a : b
+        );
+        
+        // Create projectile
+        const projectile = {
+          id: Math.random().toString(36).substr(2, 9),
+          position: { x: tower.position.x, y: tower.position.y },
+          targetId: target.id,
+          damage: stats.damage,
+          speed: stats.projectileSpeed,
+          towerId: tower.id,
+          towerType: tower.type,
+          isSplash: tower.type === 'splash' || tower.type === 'missile',
+          splashRadius: (stats as any).splashRadius,
+          isFreeze: tower.type === 'freeze',
+          slowAmount: (stats as any).slowAmount,
+          slowDuration: (stats as any).slowDuration,
+        };
+        
+        newProjectiles.push(projectile);
+        
+        return { ...tower, lastFireTime: now };
+      }
+      
+      return tower;
+    });
+
+    // ====== MOVE PROJECTILES ======
+    let projectilesToRemove: string[] = [];
+    let enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [];
+
+    const updatedProjectiles = [...state.projectiles, ...newProjectiles].map(proj => {
+      const target = updatedEnemies.find(e => e.id === proj.targetId);
+      if (!target || enemiesToRemove.includes(target.id)) {
+        projectilesToRemove.push(proj.id);
+        return proj;
+      }
+
+      const dx = target.position.x - proj.position.x;
+      const dy = target.position.y - proj.position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const moveAmount = proj.speed * deltaTime * 0.001;
+
+      if (dist < moveAmount + 0.2) {
+        // Hit target
+        projectilesToRemove.push(proj.id);
+        
+        if (proj.isSplash && proj.splashRadius) {
+          // Splash damage to all enemies in radius
+          updatedEnemies.forEach(e => {
+            const edx = e.position.x - target.position.x;
+            const edy = e.position.y - target.position.y;
+            const eDist = Math.sqrt(edx * edx + edy * edy);
+            if (eDist <= proj.splashRadius!) {
+              enemyDamage.push({ id: e.id, damage: proj.damage });
+            }
+          });
+        } else {
+          enemyDamage.push({ 
+            id: target.id, 
+            damage: proj.damage,
+            slow: proj.isFreeze && proj.slowAmount && proj.slowDuration 
+              ? { amount: proj.slowAmount, duration: proj.slowDuration }
+              : undefined
+          });
+        }
+        
+        return proj;
+      }
+
+      return {
+        ...proj,
+        position: {
+          x: proj.position.x + (dx / dist) * moveAmount,
+          y: proj.position.y + (dy / dist) * moveAmount,
+        },
+      };
+    });
+
+    // ====== APPLY DAMAGE ======
+    let enemiesKilledThisTick = 0;
+    let coinsEarned = 0;
+    const doubleDamage = now < state.doubleDamageUntil;
+
+    const finalEnemies = updatedEnemies
+      .filter(e => !enemiesToRemove.includes(e.id))
+      .map(enemy => {
+        const damageEntries = enemyDamage.filter(d => d.id === enemy.id);
+        if (damageEntries.length === 0) return enemy;
+
+        let totalDamage = damageEntries.reduce((sum, d) => sum + d.damage, 0);
+        if (doubleDamage) totalDamage *= 2;
+
+        const newHealth = enemy.health - totalDamage;
+        
+        // Apply slow effect
+        let slowedUntil = enemy.slowedUntil;
+        damageEntries.forEach(d => {
+          if (d.slow) {
+            slowedUntil = Math.max(slowedUntil, now + d.slow.duration);
+          }
+        });
+
+        if (newHealth <= 0) {
+          enemiesKilledThisTick++;
+          coinsEarned += enemy.coinReward;
+          return null; // Mark for removal
+        }
+
+        return { ...enemy, health: newHealth, slowedUntil };
+      })
+      .filter(Boolean) as Enemy[];
+
+    // ====== UPDATE STATE ======
+    const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
+    const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
+
+    // Combo system
+    let newComboCount = state.comboCount;
+    let newLastKillTime = state.lastKillTime;
+    if (enemiesKilledThisTick > 0) {
+      const isCombo = now - state.lastKillTime < GAME_CONFIG.COMBO_WINDOW;
+      if (isCombo) {
+        newComboCount += enemiesKilledThisTick;
+        coinsEarned += Math.floor(coinsEarned * newComboCount * GAME_CONFIG.COMBO_BONUS_MULTIPLIER);
+      } else {
+        newComboCount = enemiesKilledThisTick;
+      }
+      newLastKillTime = now;
+    }
+
+    set({
+      enemies: finalEnemies,
+      towers: updatedTowers,
+      projectiles: updatedProjectiles.filter(p => !projectilesToRemove.includes(p.id)),
+      baseHealth: newBaseHealth,
+      isGameOver,
+      isPlaying: !isGameOver,
+      coins: state.coins + coinsEarned,
+      score: state.score + coinsEarned,
+      enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
+      comboCount: newComboCount,
+      lastKillTime: newLastKillTime,
+    });
   },
 
   // Base damage
