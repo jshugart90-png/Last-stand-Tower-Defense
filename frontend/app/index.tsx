@@ -263,7 +263,7 @@ export default function HomeScreen() {
               unlockedSkins: response.data.unlocked_skins,
               equippedSkins: response.data.equipped_skins,
               premium: response.data.premium,
-              arenaExpanded: response.data.arena_expanded,
+              arenaExpansions: response.data.arena_expansions || 0,
             });
             setLoading(false);
             return;

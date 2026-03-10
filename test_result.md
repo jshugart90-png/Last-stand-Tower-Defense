@@ -300,3 +300,5 @@ agent_communication:
     message: "MVP implementation complete. All backend APIs and frontend screens implemented. Please test all backend endpoints to verify they work correctly. Frontend has been manually tested via screenshots."
   - agent: "testing"
     message: "BACKEND TESTING COMPLETE ✅ All 7 backend API endpoints tested successfully - 16/16 tests passed. Player APIs, Game End, Leaderboard, Rewards, Purchases, Skins, and Analytics all working correctly. Created comprehensive test suite at /app/backend_test.py. No issues found."
+  - agent: "main"
+    message: "MONETIZATION REWORK COMPLETE ✅ Implemented user requested changes: 1) Arena expansion now $2.99 real-money purchase (green button in shop), 2) Tower prices TRIPLED (Sniper: 1500, Splash: 2250, Freeze: 1800, Missile: 3600), 3) Coin rewards reduced by 75% (basic enemy: 1 coin, fast: 2, tank: 4, boss: 25). IAP flow is MOCKED - uses simulated purchase until expo-iap is integrated with real store products."

@@ -419,7 +419,7 @@ export default function GameScreen() {
     startGame(
       playerStore.unlockedTowers as TowerType[],
       playerStore.equippedSkins,
-      playerStore.arenaExpanded
+      playerStore.arenaExpansions
     );
     setWaitingForWave(true);
     
@@ -535,14 +535,16 @@ export default function GameScreen() {
     const existingTower = getTowerAt({ x, y });
     
     if (existingTower) {
+      // Show tower info without deselecting current tower type
       setSelectedTower(existingTower);
       setShowTowerInfo(true);
-      selectTower(null);
+      // DON'T deselect tower type - user can still place more after dismissing modal
     } else if (selectedTowerType && canPlaceTower({ x, y })) {
       const success = placeTower({ x, y });
       if (success && playerStore.hapticEnabled) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
+      // Tower type remains selected for placing more towers
     }
   }, [selectedTowerType, getTowerAt, canPlaceTower, placeTower, playerStore.hapticEnabled]);
 

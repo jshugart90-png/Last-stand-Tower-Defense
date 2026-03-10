@@ -108,14 +108,14 @@ export const TOWERS = {
 
 export type TowerType = keyof typeof TOWERS;
 
-// Enemy definitions
+// Enemy definitions - COIN REWARDS REDUCED BY 75% (quarter of original)
 export const ENEMIES = {
   basic: {
     id: 'basic',
     name: 'Basic',
     baseHealth: 30,
     baseSpeed: 0.8, // Slower
-    coinReward: 5,
+    coinReward: 1, // Was 5, now 1 (75% reduction)
     color: '#E74C3C',
     size: 14,
   },
@@ -124,7 +124,7 @@ export const ENEMIES = {
     name: 'Fast',
     baseHealth: 20,
     baseSpeed: 1.5, // Slower
-    coinReward: 8,
+    coinReward: 2, // Was 8, now 2 (75% reduction)
     color: '#9B59B6',
     size: 12,
   },
@@ -133,7 +133,7 @@ export const ENEMIES = {
     name: 'Tank',
     baseHealth: 100,
     baseSpeed: 0.4, // Slower
-    coinReward: 15,
+    coinReward: 4, // Was 15, now ~4 (75% reduction)
     color: '#2ECC71',
     size: 20,
   },
@@ -142,7 +142,7 @@ export const ENEMIES = {
     name: 'Boss',
     baseHealth: 500,
     baseSpeed: 0.25, // Slower
-    coinReward: 100,
+    coinReward: 25, // Was 100, now 25 (75% reduction)
     color: '#F39C12',
     size: 28,
   },

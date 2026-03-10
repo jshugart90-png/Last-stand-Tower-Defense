@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 # Backend URL from environment configuration
-BACKEND_URL = "https://wave-survivor-game.preview.emergentagent.com/api"
+BACKEND_URL = "https://tower-defense-game-22.preview.emergentagent.com/api"
 
 class GameAPITester:
     def __init__(self, base_url: str):

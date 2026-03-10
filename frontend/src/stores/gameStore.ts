@@ -75,7 +75,7 @@ export interface GameState {
   // Player progression
   unlockedTowers: TowerType[];
   equippedSkins: Record<string, string>;
-  arenaExpanded: boolean;
+  arenaExpansions: number;
   
   // Power-ups
   doubleDamageUntil: number;
@@ -90,7 +90,7 @@ export interface GameState {
 
 interface GameActions {
   // Game flow
-  startGame: (unlockedTowers: TowerType[], equippedSkins: Record<string, string>, arenaExpanded: boolean) => void;
+  startGame: (unlockedTowers: TowerType[], equippedSkins: Record<string, string>, arenaExpansions: number) => void;
   pauseGame: () => void;
   resumeGame: () => void;
   endGame: () => void;
@@ -172,15 +172,29 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   cellSize: GAME_CONFIG.CELL_SIZE,
   unlockedTowers: ['machine_gun'],
   equippedSkins: {},
-  arenaExpanded: false,
+  arenaExpansions: 0,
   doubleDamageUntil: 0,
   hasRevive: false,
   gameStartTime: 0,
   selectedTowerType: null,
 
   // Game flow
-  startGame: (unlockedTowers, equippedSkins, arenaExpanded) => {
-    const config = arenaExpanded ? EXPANDED_GAME_CONFIG : GAME_CONFIG;
+  startGame: (unlockedTowers, equippedSkins, arenaExpansions) => {
+    // Calculate grid size based on expansions
+    // Each expansion adds 1 row on top and bottom, 1 col on left and right
+    const baseConfig = GAME_CONFIG;
+    const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
+    const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
+    
+    // Adjust cell size to fit screen if needed (smaller cells for larger arenas)
+    const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    
+    // Adjust path for expansions (shift path by expansion amount)
+    const adjustedPath = DEFAULT_PATH.map(p => ({
+      x: p.x + arenaExpansions,
+      y: p.y + arenaExpansions,
+    }));
+    
     set({
       isPlaying: true,
       isPaused: false,
@@ -197,13 +211,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towers: [],
       enemies: [],
       projectiles: [],
-      path: DEFAULT_PATH,
-      gridCols: config.GRID_COLS,
-      gridRows: config.GRID_ROWS,
-      cellSize: config.CELL_SIZE,
+      path: adjustedPath,
+      gridCols,
+      gridRows,
+      cellSize,
       unlockedTowers,
       equippedSkins,
-      arenaExpanded,
+      arenaExpansions,
       doubleDamageUntil: 0,
       hasRevive: false,
       gameStartTime: Date.now(),
@@ -217,8 +231,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   endGame: () => set({ isPlaying: false, isGameOver: true }),
   
   restartGame: () => {
-    const { unlockedTowers, equippedSkins, arenaExpanded } = get();
-    get().startGame(unlockedTowers, equippedSkins, arenaExpanded);
+    const { unlockedTowers, equippedSkins, arenaExpansions } = get();
+    get().startGame(unlockedTowers, equippedSkins, arenaExpansions);
   },
 
   // Wave management

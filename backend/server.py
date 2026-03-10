@@ -56,7 +56,7 @@ class PlayerUpdate(BaseModel):
     unlocked_skins: Optional[List[str]] = None
     equipped_skins: Optional[Dict[str, str]] = None
     premium: Optional[bool] = None
-    arena_expanded: Optional[bool] = None
+    arena_expansions: Optional[int] = None
 
 class Player(BaseModel):
     id: str = Field(alias="_id")
@@ -139,7 +139,7 @@ async def create_player(player_data: PlayerCreate):
         "unlocked_skins": ["default"],
         "equipped_skins": {},
         "premium": False,
-        "arena_expanded": False,
+        "arena_expansions": 0,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }

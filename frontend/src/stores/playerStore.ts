@@ -1,6 +1,24 @@
 import { create } from 'zustand';
 import { TowerType } from '../constants/game';
 
+// Tower unlock prices (coins) - TRIPLED costs for slow progression
+export const TOWER_PRICES: Record<TowerType, number> = {
+  machine_gun: 0, // Free starter tower
+  sniper: 1500, // Was 500, now 1500 (3x)
+  splash: 2250, // Was 750, now 2250 (3x)
+  freeze: 1800, // Was 600, now 1800 (3x)
+  missile: 3600, // Was 1200, now 3600 (3x)
+};
+
+// Arena expansion is REAL MONEY - $2.99 per expansion (NOT COINS!)
+export const ARENA_EXPANSION_PRICE_USD = 2.99;
+
+// Product ID for in-app purchases (must match App Store / Google Play configuration)
+export const IAP_PRODUCT_IDS = {
+  ARENA_EXPANSION: 'arena_expansion_299',
+  PREMIUM_UPGRADE: 'premium_upgrade_499',
+};
+
 interface PlayerState {
   // Player identity
   playerId: string | null;
@@ -24,7 +42,7 @@ interface PlayerState {
   
   // Purchases
   premium: boolean;
-  arenaExpanded: boolean;
+  arenaExpansions: number; // Number of rows expanded (each adds 1 row on each side)
   
   // Settings
   soundEnabled: boolean;
@@ -63,7 +81,12 @@ interface PlayerActions {
   
   // Purchases
   setPremium: (premium: boolean) => void;
-  setArenaExpanded: (expanded: boolean) => void;
+  addArenaExpansion: () => boolean; // Returns false if not enough coins
+  getArenaExpansionPrice: () => number;
+  
+  // Tower purchases
+  purchaseTower: (tower: TowerType) => boolean; // Returns false if not enough coins or already owned
+  getTowerPrice: (tower: TowerType) => number;
   
   // Settings
   toggleSound: () => void;
@@ -99,7 +122,7 @@ const initialState: PlayerState = {
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
-  arenaExpanded: false,
+  arenaExpansions: 0,
   soundEnabled: true,
   musicEnabled: true,
   hapticEnabled: true,
@@ -161,7 +184,36 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
 
     // Purchases
     setPremium: (premium) => set({ premium }),
-    setArenaExpanded: (expanded) => set({ arenaExpanded: expanded }),
+    
+    addArenaExpansion: () => {
+      const state = get();
+      const price = state.arenaExpansions === 0 ? ARENA_EXPANSION_PRICE : ARENA_EXPANSION_PRICE * (state.arenaExpansions + 1);
+      if (state.coins < price) return false;
+      set({
+        coins: state.coins - price,
+        arenaExpansions: state.arenaExpansions + 1,
+      });
+      return true;
+    },
+    
+    getArenaExpansionPrice: () => {
+      const state = get();
+      return state.arenaExpansions === 0 ? ARENA_EXPANSION_PRICE : ARENA_EXPANSION_PRICE * (state.arenaExpansions + 1);
+    },
+    
+    purchaseTower: (tower) => {
+      const state = get();
+      if (state.unlockedTowers.includes(tower)) return false;
+      const price = TOWER_PRICES[tower];
+      if (state.coins < price) return false;
+      set({
+        coins: state.coins - price,
+        unlockedTowers: [...state.unlockedTowers, tower],
+      });
+      return true;
+    },
+    
+    getTowerPrice: (tower) => TOWER_PRICES[tower],
 
     // Settings
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),

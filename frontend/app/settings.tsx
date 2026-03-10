@@ -156,6 +156,16 @@ export default function SettingsScreen() {
               {playerStore.premium ? 'Yes' : 'No'}
             </Text>
           </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Arena Expansions</Text>
+            <Text style={styles.infoValue}>{playerStore.arenaExpansions}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Unlocked Towers</Text>
+            <Text style={styles.infoValue}>{playerStore.unlockedTowers.length}/5</Text>
+          </View>
         </View>
 
         {/* Stats Section */}
