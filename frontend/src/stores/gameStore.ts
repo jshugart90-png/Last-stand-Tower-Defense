@@ -374,8 +374,42 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       [state.selectedTowerType]: state.towerPurchaseCount[state.selectedTowerType] + 1,
     };
 
+    // Get all towers including the new one for path recalculation
+    const allTowers = [...state.towers, newTower];
+    const blockedCells = getBlockedCells(allTowers);
+
+    // Recalculate paths for ALL existing enemies
+    const updatedEnemies = state.enemies.map(enemy => {
+      // Calculate new path from enemy's current position to base
+      const currentGridX = Math.round(enemy.position.x);
+      const currentGridY = Math.round(enemy.position.y);
+      
+      const newPath = findPath(
+        { x: currentGridX, y: currentGridY },
+        state.basePosition,
+        state.gridCols,
+        state.gridRows,
+        blockedCells
+      );
+
+      if (newPath && newPath.length > 1) {
+        // Update enemy with new path, starting from index 0
+        return {
+          ...enemy,
+          path: newPath,
+          pathIndex: 0,
+          // Keep the exact position, the path will guide from current cell
+          position: { x: enemy.position.x, y: enemy.position.y },
+        };
+      }
+      
+      // If no valid path found (shouldn't happen due to canPlaceTower check), keep current path
+      return enemy;
+    });
+
     set(s => ({
-      towers: [...s.towers, newTower],
+      towers: allTowers,
+      enemies: updatedEnemies,
       coins: s.coins - cost,
       towersPlaced: s.towersPlaced + 1,
       towerPurchaseCount: newPurchaseCount,
