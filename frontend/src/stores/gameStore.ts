@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { TOWERS, ENEMIES, GAME_CONFIG, EXPANDED_GAME_CONFIG, getWaveConfig, DEFAULT_PATH, TowerType, EnemyType, SKIN_COLORS } from '../constants/game';
+import { 
+  TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, EnemyType, 
+  SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getTowersUnlockedByWave,
+  getInfiniteUpgradeStats, getInfiniteUpgradeCost, TargetingMode
+} from '../constants/game';
+import { findPath, wouldBlockPath } from '../utils/pathfinding';
 
 export interface Position {
   x: number;
@@ -13,6 +18,8 @@ export interface PlacedTower {
   level: number;
   lastFireTime: number;
   skin: string;
+  targetingMode: TargetingMode;
+  totalCostSpent: number; // Track total coins spent on this tower
 }
 
 export interface Enemy {
@@ -25,6 +32,8 @@ export interface Enemy {
   pathIndex: number;
   slowedUntil: number;
   coinReward: number;
+  spawnTime: number; // For "last" targeting
+  path: Position[]; // Individual path for each enemy
 }
 
 export interface Projectile {
@@ -41,6 +50,8 @@ export interface Projectile {
   slowAmount?: number;
   slowDuration?: number;
 }
+
+export type GameSpeed = 1 | 2 | 3;
 
 export interface GameState {
   // Game status
@@ -67,34 +78,49 @@ export interface GameState {
   projectiles: Projectile[];
   
   // Map configuration
-  path: Position[];
   gridCols: number;
   gridRows: number;
   cellSize: number;
+  spawnPoint: Position;
+  basePosition: Position;
   
   // Player progression
   unlockedTowers: TowerType[];
   equippedSkins: Record<string, string>;
   arenaExpansions: number;
   
+  // Tower purchase tracking (for cost increases)
+  towerPurchaseCount: Record<TowerType, number>;
+  
   // Power-ups
   doubleDamageUntil: number;
   hasRevive: boolean;
+  adReviveUsed: boolean; // Track if ad revive already used this game
   
   // Game timing
   gameStartTime: number;
+  gameSpeed: GameSpeed;
+  waveEndTime: number; // For auto-start timer
+  autoWaveTimer: number; // Countdown in ms
   
-  // Selected tower for placement
+  // UI State
   selectedTowerType: TowerType | null;
+  selectedPlacedTower: PlacedTower | null;
+  
+  // Zoom
+  zoomLevel: number;
 }
 
 interface GameActions {
   // Game flow
-  startGame: (unlockedTowers: TowerType[], equippedSkins: Record<string, string>, arenaExpansions: number) => void;
+  startGame: (equippedSkins: Record<string, string>, arenaExpansions: number) => void;
   pauseGame: () => void;
   resumeGame: () => void;
   endGame: () => void;
   restartGame: () => void;
+  
+  // Speed control
+  setGameSpeed: (speed: GameSpeed) => void;
   
   // Wave management
   startWave: () => void;
@@ -102,23 +128,16 @@ interface GameActions {
   
   // Tower actions
   selectTower: (type: TowerType | null) => void;
+  selectPlacedTower: (tower: PlacedTower | null) => void;
   placeTower: (position: Position) => boolean;
   upgradeTower: (towerId: string) => boolean;
   sellTower: (towerId: string) => void;
+  setTowerTargeting: (towerId: string, mode: TargetingMode) => void;
   
   // Enemy actions
   spawnEnemy: (type: EnemyType, healthMultiplier: number, speedMultiplier: number) => void;
-  damageEnemy: (enemyId: string, damage: number) => void;
-  killEnemy: (enemyId: string) => void;
-  moveEnemies: (deltaTime: number) => void;
-  slowEnemy: (enemyId: string, slowAmount: number, duration: number) => void;
   
-  // Projectile actions
-  fireProjectile: (tower: PlacedTower, targetId: string) => void;
-  moveProjectiles: (deltaTime: number) => void;
-  removeProjectile: (projectileId: string) => void;
-  
-  // Main game tick - processes all game logic with fresh state
+  // Main game tick
   gameTick: (deltaTime: number) => void;
   
   // Damage base
@@ -132,10 +151,7 @@ interface GameActions {
   activateDoubleDamage: (duration: number) => void;
   grantRevive: () => void;
   useRevive: () => boolean;
-  
-  // Combo
-  incrementCombo: () => void;
-  resetCombo: () => void;
+  canUseAdRevive: () => boolean;
   
   // Utility
   canPlaceTower: (position: Position) => boolean;
@@ -145,9 +161,25 @@ interface GameActions {
   getUpgradeCost: (tower: PlacedTower) => number;
   getSellValue: (tower: PlacedTower) => number;
   getTowerColor: (tower: PlacedTower) => string;
+  recalculatePath: () => Position[] | null;
+  
+  // Zoom
+  setZoomLevel: (level: number) => void;
+  
+  // Save coins to player store callback
+  onCoinsEarned?: (coins: number) => void;
 }
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+// Get blocked cells from towers
+const getBlockedCells = (towers: PlacedTower[]): Set<string> => {
+  const blocked = new Set<string>();
+  for (const tower of towers) {
+    blocked.add(`${tower.position.x},${tower.position.y}`);
+  }
+  return blocked;
+};
 
 export const useGameStore = create<GameState & GameActions>((set, get) => ({
   // Initial state
@@ -166,34 +198,45 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   towers: [],
   enemies: [],
   projectiles: [],
-  path: DEFAULT_PATH,
   gridCols: GAME_CONFIG.GRID_COLS,
   gridRows: GAME_CONFIG.GRID_ROWS,
   cellSize: GAME_CONFIG.CELL_SIZE,
+  spawnPoint: { ...SPAWN_POINT },
+  basePosition: { ...BASE_POSITION },
   unlockedTowers: ['machine_gun'],
   equippedSkins: {},
   arenaExpansions: 0,
+  towerPurchaseCount: {
+    machine_gun: 0,
+    sniper: 0,
+    splash: 0,
+    freeze: 0,
+    missile: 0,
+  },
   doubleDamageUntil: 0,
   hasRevive: false,
+  adReviveUsed: false,
   gameStartTime: 0,
+  gameSpeed: 1,
+  waveEndTime: 0,
+  autoWaveTimer: 0,
   selectedTowerType: null,
+  selectedPlacedTower: null,
+  zoomLevel: 1,
 
   // Game flow
-  startGame: (unlockedTowers, equippedSkins, arenaExpansions) => {
-    // Calculate grid size based on expansions
-    // Each expansion adds 1 row on top and bottom, 1 col on left and right
+  startGame: (equippedSkins, arenaExpansions) => {
     const baseConfig = GAME_CONFIG;
     const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
     const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
-    
-    // Adjust cell size to fit screen if needed (smaller cells for larger arenas)
     const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
     
-    // Adjust path for expansions (shift path by expansion amount)
-    const adjustedPath = DEFAULT_PATH.map(p => ({
-      x: p.x + arenaExpansions,
-      y: p.y + arenaExpansions,
-    }));
+    // Adjust spawn and base for expansions
+    const spawnPoint = { x: arenaExpansions, y: arenaExpansions };
+    const basePosition = { 
+      x: gridCols - 1 - arenaExpansions, 
+      y: gridRows - 1 - arenaExpansions 
+    };
     
     set({
       isPlaying: true,
@@ -211,42 +254,72 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towers: [],
       enemies: [],
       projectiles: [],
-      path: adjustedPath,
       gridCols,
       gridRows,
       cellSize,
-      unlockedTowers,
+      spawnPoint,
+      basePosition,
+      unlockedTowers: ['machine_gun'], // Start with only machine gun
       equippedSkins,
       arenaExpansions,
+      towerPurchaseCount: {
+        machine_gun: 0,
+        sniper: 0,
+        splash: 0,
+        freeze: 0,
+        missile: 0,
+      },
       doubleDamageUntil: 0,
       hasRevive: false,
+      adReviveUsed: false,
       gameStartTime: Date.now(),
+      gameSpeed: 1,
+      waveEndTime: 0,
+      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
       selectedTowerType: null,
+      selectedPlacedTower: null,
+      zoomLevel: 1,
     });
   },
 
   pauseGame: () => set({ isPaused: true }),
   resumeGame: () => set({ isPaused: false }),
-  
   endGame: () => set({ isPlaying: false, isGameOver: true }),
   
   restartGame: () => {
-    const { unlockedTowers, equippedSkins, arenaExpansions } = get();
-    get().startGame(unlockedTowers, equippedSkins, arenaExpansions);
+    const { equippedSkins, arenaExpansions } = get();
+    get().startGame(equippedSkins, arenaExpansions);
   },
+
+  setGameSpeed: (speed) => set({ gameSpeed: speed }),
 
   // Wave management
   startWave: () => {
-    set(state => ({
-      currentWave: state.currentWave + 1,
+    const state = get();
+    const newWave = state.currentWave + 1;
+    
+    // Unlock towers based on wave
+    const newUnlockedTowers = getTowersUnlockedByWave(newWave);
+    
+    set({
+      currentWave: newWave,
       waveInProgress: true,
-    }));
+      unlockedTowers: newUnlockedTowers,
+      autoWaveTimer: 0,
+    });
   },
 
-  endWave: () => set({ waveInProgress: false }),
+  endWave: () => {
+    set({ 
+      waveInProgress: false,
+      waveEndTime: Date.now(),
+      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+    });
+  },
 
   // Tower actions
-  selectTower: (type) => set({ selectedTowerType: type }),
+  selectTower: (type) => set({ selectedTowerType: type, selectedPlacedTower: null }),
+  selectPlacedTower: (tower) => set({ selectedPlacedTower: tower, selectedTowerType: null }),
 
   placeTower: (position) => {
     const state = get();
@@ -265,12 +338,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       level: 0,
       lastFireTime: 0,
       skin,
+      targetingMode: 'first',
+      totalCostSpent: cost,
+    };
+
+    // Update tower purchase count for cost increase
+    const newPurchaseCount = {
+      ...state.towerPurchaseCount,
+      [state.selectedTowerType]: state.towerPurchaseCount[state.selectedTowerType] + 1,
     };
 
     set(s => ({
       towers: [...s.towers, newTower],
       coins: s.coins - cost,
       towersPlaced: s.towersPlaced + 1,
+      towerPurchaseCount: newPurchaseCount,
     }));
 
     return true;
@@ -281,17 +363,19 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const tower = state.towers.find(t => t.id === towerId);
     if (!tower) return false;
 
-    const towerDef = TOWERS[tower.type];
-    if (tower.level >= towerDef.upgrades.length) return false;
-
     const cost = state.getUpgradeCost(tower);
     if (state.coins < cost) return false;
 
     set(s => ({
       towers: s.towers.map(t =>
-        t.id === towerId ? { ...t, level: t.level + 1 } : t
+        t.id === towerId 
+          ? { ...t, level: t.level + 1, totalCostSpent: t.totalCostSpent + cost } 
+          : t
       ),
       coins: s.coins - cost,
+      selectedPlacedTower: s.selectedPlacedTower?.id === towerId 
+        ? { ...s.selectedPlacedTower, level: s.selectedPlacedTower.level + 1, totalCostSpent: s.selectedPlacedTower.totalCostSpent + cost }
+        : s.selectedPlacedTower,
     }));
 
     return true;
@@ -307,15 +391,40 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     set(s => ({
       towers: s.towers.filter(t => t.id !== towerId),
       coins: s.coins + sellValue,
+      selectedPlacedTower: null,
+    }));
+  },
+
+  setTowerTargeting: (towerId, mode) => {
+    set(s => ({
+      towers: s.towers.map(t =>
+        t.id === towerId ? { ...t, targetingMode: mode } : t
+      ),
+      selectedPlacedTower: s.selectedPlacedTower?.id === towerId 
+        ? { ...s.selectedPlacedTower, targetingMode: mode }
+        : s.selectedPlacedTower,
     }));
   },
 
   // Enemy actions
   spawnEnemy: (type, healthMultiplier, speedMultiplier) => {
+    const state = get();
     const enemyDef = ENEMIES[type];
-    const path = get().path;
     
-    console.log('Spawning enemy:', type, 'at', path[0]);
+    // Calculate path for this enemy
+    const blockedCells = getBlockedCells(state.towers);
+    const path = findPath(
+      state.spawnPoint,
+      state.basePosition,
+      state.gridCols,
+      state.gridRows,
+      blockedCells
+    );
+    
+    if (!path || path.length < 2) {
+      console.error('No valid path for enemy!');
+      return;
+    }
     
     const enemy: Enemy = {
       id: generateId(),
@@ -327,229 +436,31 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       pathIndex: 0,
       slowedUntil: 0,
       coinReward: enemyDef.coinReward,
+      spawnTime: Date.now(),
+      path,
     };
 
     set(s => ({ enemies: [...s.enemies, enemy] }));
-    console.log('Enemy spawned, total enemies:', get().enemies.length);
   },
 
-  damageEnemy: (enemyId, damage) => {
-    const state = get();
-    const doubleDamage = Date.now() < state.doubleDamageUntil;
-    const actualDamage = doubleDamage ? damage * 2 : damage;
-
-    set(s => ({
-      enemies: s.enemies.map(e =>
-        e.id === enemyId ? { ...e, health: e.health - actualDamage } : e
-      ),
-    }));
-
-    // Check if enemy died
-    const enemy = get().enemies.find(e => e.id === enemyId);
-    if (enemy && enemy.health <= 0) {
-      get().killEnemy(enemyId);
-    }
-  },
-
-  killEnemy: (enemyId) => {
-    const state = get();
-    const enemy = state.enemies.find(e => e.id === enemyId);
-    if (!enemy) return;
-
-    // Combo system
-    const now = Date.now();
-    const isCombo = now - state.lastKillTime < GAME_CONFIG.COMBO_WINDOW;
-    
-    let comboBonus = 0;
-    if (isCombo) {
-      const newCombo = state.comboCount + 1;
-      comboBonus = Math.floor(enemy.coinReward * newCombo * GAME_CONFIG.COMBO_BONUS_MULTIPLIER);
-      set({ comboCount: newCombo, lastKillTime: now });
-    } else {
-      set({ comboCount: 1, lastKillTime: now });
-    }
-
-    const totalReward = enemy.coinReward + comboBonus;
-
-    set(s => ({
-      enemies: s.enemies.filter(e => e.id !== enemyId),
-      coins: s.coins + totalReward,
-      score: s.score + totalReward,
-      enemiesKilled: s.enemiesKilled + 1,
-    }));
-  },
-
-  moveEnemies: (deltaTime) => {
-    const state = get();
-    const path = state.path;
-    const cellSize = state.cellSize;
-
-    set(s => ({
-      enemies: s.enemies.map(enemy => {
-        const now = Date.now();
-        const isSlowed = now < enemy.slowedUntil;
-        const speed = isSlowed ? enemy.speed * 0.5 : enemy.speed;
-        
-        const targetPathPoint = path[enemy.pathIndex + 1];
-        if (!targetPathPoint) {
-          // Enemy reached the end
-          return enemy;
-        }
-
-        const targetX = targetPathPoint.x * cellSize + cellSize / 2;
-        const targetY = targetPathPoint.y * cellSize + cellSize / 2;
-        const currentX = enemy.position.x * cellSize + cellSize / 2;
-        const currentY = enemy.position.y * cellSize + cellSize / 2;
-
-        const dx = targetX - currentX;
-        const dy = targetY - currentY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < speed * deltaTime) {
-          // Reached current waypoint
-          if (enemy.pathIndex + 2 >= path.length) {
-            // Reached the base
-            return { ...enemy, pathIndex: path.length };
-          }
-          return {
-            ...enemy,
-            position: { x: targetPathPoint.x, y: targetPathPoint.y },
-            pathIndex: enemy.pathIndex + 1,
-          };
-        }
-
-        const moveX = (dx / dist) * speed * deltaTime / cellSize;
-        const moveY = (dy / dist) * speed * deltaTime / cellSize;
-
-        return {
-          ...enemy,
-          position: {
-            x: enemy.position.x + moveX,
-            y: enemy.position.y + moveY,
-          },
-        };
-      }),
-    }));
-
-    // Check for enemies that reached the base
-    const reachedBase = get().enemies.filter(e => e.pathIndex >= path.length - 1);
-    reachedBase.forEach(enemy => {
-      get().damageBase(1);
-      set(s => ({ enemies: s.enemies.filter(e => e.id !== enemy.id) }));
-    });
-  },
-
-  slowEnemy: (enemyId, slowAmount, duration) => {
-    set(s => ({
-      enemies: s.enemies.map(e =>
-        e.id === enemyId ? { ...e, slowedUntil: Date.now() + duration } : e
-      ),
-    }));
-  },
-
-  // Projectile actions
-  fireProjectile: (tower, targetId) => {
-    const towerDef = TOWERS[tower.type];
-    const stats = tower.level === 0 
-      ? towerDef.baseStats 
-      : { ...towerDef.baseStats, ...towerDef.upgrades[tower.level - 1] };
-
-    const projectile: Projectile = {
-      id: generateId(),
-      position: { ...tower.position },
-      targetId,
-      damage: stats.damage,
-      speed: stats.projectileSpeed,
-      towerId: tower.id,
-      towerType: tower.type,
-      isSplash: tower.type === 'splash' || tower.type === 'missile',
-      splashRadius: (stats as any).splashRadius,
-      isFreeze: tower.type === 'freeze',
-      slowAmount: (stats as any).slowAmount,
-      slowDuration: (stats as any).slowDuration,
-    };
-
-    set(s => ({
-      projectiles: [...s.projectiles, projectile],
-      towers: s.towers.map(t =>
-        t.id === tower.id ? { ...t, lastFireTime: Date.now() } : t
-      ),
-    }));
-  },
-
-  moveProjectiles: (deltaTime) => {
-    const state = get();
-    const cellSize = state.cellSize;
-    const projectilesToRemove: string[] = [];
-
-    set(s => ({
-      projectiles: s.projectiles.map(proj => {
-        const target = s.enemies.find(e => e.id === proj.targetId);
-        if (!target) {
-          projectilesToRemove.push(proj.id);
-          return proj;
-        }
-
-        const dx = target.position.x - proj.position.x;
-        const dy = target.position.y - proj.position.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        const moveSpeed = proj.speed * deltaTime / cellSize;
-
-        if (dist < moveSpeed + 0.3) {
-          // Hit target
-          projectilesToRemove.push(proj.id);
-          
-          if (proj.isSplash && proj.splashRadius) {
-            // Splash damage
-            const enemiesInRadius = state.getEnemiesInRange(
-              target.position,
-              proj.splashRadius / cellSize
-            );
-            enemiesInRadius.forEach(e => {
-              get().damageEnemy(e.id, proj.damage);
-            });
-          } else {
-            get().damageEnemy(target.id, proj.damage);
-          }
-
-          if (proj.isFreeze && proj.slowAmount && proj.slowDuration) {
-            get().slowEnemy(target.id, proj.slowAmount, proj.slowDuration);
-          }
-
-          return proj;
-        }
-
-        return {
-          ...proj,
-          position: {
-            x: proj.position.x + (dx / dist) * moveSpeed,
-            y: proj.position.y + (dy / dist) * moveSpeed,
-          },
-        };
-      }),
-    }));
-
-    // Remove hit projectiles
-    set(s => ({
-      projectiles: s.projectiles.filter(p => !projectilesToRemove.includes(p.id)),
-    }));
-  },
-
-  removeProjectile: (projectileId) => {
-    set(s => ({
-      projectiles: s.projectiles.filter(p => p.id !== projectileId),
-    }));
-  },
-
-  // Main game tick - processes all game logic with fresh state
+  // Main game tick
   gameTick: (deltaTime) => {
     const state = get();
     if (!state.isPlaying || state.isPaused) return;
 
     const now = Date.now();
-    const path = state.path;
-    const cellSize = state.cellSize;
+    const adjustedDelta = deltaTime * state.gameSpeed;
+
+    // Update auto wave timer
+    if (!state.waveInProgress && state.autoWaveTimer > 0) {
+      const newTimer = state.autoWaveTimer - adjustedDelta;
+      if (newTimer <= 0) {
+        // Auto start next wave
+        get().startWave();
+        return;
+      }
+      set({ autoWaveTimer: newTimer });
+    }
 
     // ====== MOVE ENEMIES ======
     let enemiesToRemove: string[] = [];
@@ -560,9 +471,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const speedMultiplier = isSlowed ? 0.5 : 1;
       const speed = enemy.speed * speedMultiplier;
       
-      const targetPathPoint = path[enemy.pathIndex + 1];
+      const targetPathPoint = enemy.path[enemy.pathIndex + 1];
       if (!targetPathPoint) {
-        // Enemy at end of path - reached base
         enemiesToRemove.push(enemy.id);
         baseDamage += 1;
         return enemy;
@@ -574,12 +484,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const dy = targetY - enemy.position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      const moveAmount = speed * deltaTime * 0.001; // Convert to units per ms
+      const moveAmount = speed * adjustedDelta * 0.001;
 
       if (dist < moveAmount) {
-        // Reached current waypoint
-        if (enemy.pathIndex + 2 >= path.length) {
-          // Will reach base next tick
+        if (enemy.pathIndex + 2 >= enemy.path.length) {
           enemiesToRemove.push(enemy.id);
           baseDamage += 1;
           return enemy;
@@ -601,15 +509,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     });
 
     // ====== TOWER FIRING ======
-    let newProjectiles: typeof state.projectiles = [];
+    let newProjectiles: Projectile[] = [];
     const updatedTowers = state.towers.map(tower => {
       const towerDef = TOWERS[tower.type];
-      const stats = tower.level === 0 
-        ? towerDef.baseStats 
-        : { ...towerDef.baseStats, ...towerDef.upgrades[tower.level - 1] };
+      const stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
       
-      // Check if can fire (cooldown passed)
-      if (now - tower.lastFireTime < stats.fireRate) {
+      if (now - tower.lastFireTime < stats.fireRate / state.gameSpeed) {
         return tower;
       }
       
@@ -622,34 +527,65 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         return dist <= stats.range;
       });
       
-      if (enemiesInRange.length > 0) {
-        // Target enemy closest to base (furthest along path)
-        const target = enemiesInRange.reduce((a, b) => 
-          a.pathIndex > b.pathIndex ? a : b
-        );
-        
-        // Create projectile
-        const projectile = {
-          id: Math.random().toString(36).substr(2, 9),
-          position: { x: tower.position.x, y: tower.position.y },
-          targetId: target.id,
-          damage: stats.damage,
-          speed: stats.projectileSpeed,
-          towerId: tower.id,
-          towerType: tower.type,
-          isSplash: tower.type === 'splash' || tower.type === 'missile',
-          splashRadius: (stats as any).splashRadius,
-          isFreeze: tower.type === 'freeze',
-          slowAmount: (stats as any).slowAmount,
-          slowDuration: (stats as any).slowDuration,
-        };
-        
-        newProjectiles.push(projectile);
-        
-        return { ...tower, lastFireTime: now };
+      if (enemiesInRange.length === 0) return tower;
+      
+      // Select target based on targeting mode
+      let target: typeof enemiesInRange[0];
+      switch (tower.targetingMode) {
+        case 'first':
+          // Furthest along their path (closest to base)
+          target = enemiesInRange.reduce((a, b) => 
+            (a.pathIndex / a.path.length) > (b.pathIndex / b.path.length) ? a : b
+          );
+          break;
+        case 'last':
+          // Most recently spawned
+          target = enemiesInRange.reduce((a, b) => 
+            a.spawnTime > b.spawnTime ? a : b
+          );
+          break;
+        case 'strongest':
+          // Most health
+          target = enemiesInRange.reduce((a, b) => 
+            a.health > b.health ? a : b
+          );
+          break;
+        case 'closest':
+          // Nearest to tower
+          target = enemiesInRange.reduce((a, b) => {
+            const distA = Math.sqrt(
+              Math.pow(a.position.x - tower.position.x, 2) +
+              Math.pow(a.position.y - tower.position.y, 2)
+            );
+            const distB = Math.sqrt(
+              Math.pow(b.position.x - tower.position.x, 2) +
+              Math.pow(b.position.y - tower.position.y, 2)
+            );
+            return distA < distB ? a : b;
+          });
+          break;
+        default:
+          target = enemiesInRange[0];
       }
       
-      return tower;
+      // Create projectile
+      const projectile: Projectile = {
+        id: generateId(),
+        position: { x: tower.position.x, y: tower.position.y },
+        targetId: target.id,
+        damage: stats.damage,
+        speed: stats.projectileSpeed,
+        towerId: tower.id,
+        towerType: tower.type,
+        isSplash: tower.type === 'splash' || tower.type === 'missile',
+        splashRadius: (stats as any).splashRadius,
+        isFreeze: tower.type === 'freeze',
+        slowAmount: (stats as any).slowAmount,
+        slowDuration: (stats as any).slowDuration,
+      };
+      
+      newProjectiles.push(projectile);
+      return { ...tower, lastFireTime: now };
     });
 
     // ====== MOVE PROJECTILES ======
@@ -666,14 +602,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const dx = target.position.x - proj.position.x;
       const dy = target.position.y - proj.position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const moveAmount = proj.speed * deltaTime * 0.001;
+      const moveAmount = proj.speed * adjustedDelta * 0.001;
 
       if (dist < moveAmount + 0.2) {
-        // Hit target
         projectilesToRemove.push(proj.id);
         
         if (proj.isSplash && proj.splashRadius) {
-          // Splash damage to all enemies in radius
           updatedEnemies.forEach(e => {
             const edx = e.position.x - target.position.x;
             const edy = e.position.y - target.position.y;
@@ -720,7 +654,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
         const newHealth = enemy.health - totalDamage;
         
-        // Apply slow effect
         let slowedUntil = enemy.slowedUntil;
         damageEntries.forEach(d => {
           if (d.slow) {
@@ -731,7 +664,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         if (newHealth <= 0) {
           enemiesKilledThisTick++;
           coinsEarned += enemy.coinReward;
-          return null; // Mark for removal
+          return null;
         }
 
         return { ...enemy, health: newHealth, slowedUntil };
@@ -807,22 +740,28 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       baseHealth: Math.floor(GAME_CONFIG.BASE_HEALTH / 2),
       isGameOver: false,
       isPlaying: true,
+      adReviveUsed: true,
+      waveInProgress: false,
+      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
     });
     return true;
   },
 
-  // Combo
-  incrementCombo: () => set(s => ({ comboCount: s.comboCount + 1 })),
-  resetCombo: () => set({ comboCount: 0 }),
+  canUseAdRevive: () => !get().adReviveUsed,
 
   // Utility functions
   canPlaceTower: (position) => {
     const state = get();
-    // Check if position is on path
-    const isOnPath = state.path.some(
-      p => Math.floor(p.x) === Math.floor(position.x) && Math.floor(p.y) === Math.floor(position.y)
-    );
-    if (isOnPath) return false;
+    
+    // Check bounds
+    if (position.x < 0 || position.x >= state.gridCols) return false;
+    if (position.y < 0 || position.y >= state.gridRows) return false;
+    
+    // Can't place on spawn point
+    if (position.x === state.spawnPoint.x && position.y === state.spawnPoint.y) return false;
+    
+    // Can't place on base
+    if (position.x === state.basePosition.x && position.y === state.basePosition.y) return false;
 
     // Check if position already has tower
     const hasTower = state.towers.some(
@@ -831,9 +770,18 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     );
     if (hasTower) return false;
 
-    // Check bounds
-    if (position.x < 0 || position.x >= state.gridCols) return false;
-    if (position.y < 0 || position.y >= state.gridRows) return false;
+    // Check if placing here would block all paths
+    const towerPositions = state.towers.map(t => t.position);
+    if (wouldBlockPath(
+      position,
+      state.spawnPoint,
+      state.basePosition,
+      state.gridCols,
+      state.gridRows,
+      towerPositions
+    )) {
+      return false;
+    }
 
     return true;
   },
@@ -846,32 +794,44 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
 
   getEnemiesInRange: (position, range) => {
-    const state = get();
-    return state.enemies.filter(enemy => {
+    return get().enemies.filter(enemy => {
       const dx = enemy.position.x - position.x;
       const dy = enemy.position.y - position.y;
       return Math.sqrt(dx * dx + dy * dy) <= range;
     });
   },
 
-  getTowerCost: (type) => TOWERS[type].baseCost,
+  getTowerCost: (type) => {
+    const state = get();
+    const baseCost = TOWERS[type].baseCost;
+    const purchaseCount = state.towerPurchaseCount[type];
+    // Each purchase increases cost by 15%
+    return Math.floor(baseCost * Math.pow(GAME_CONFIG.TOWER_COST_INCREASE, purchaseCount));
+  },
 
   getUpgradeCost: (tower) => {
-    const towerDef = TOWERS[tower.type];
-    if (tower.level >= towerDef.upgrades.length) return Infinity;
-    return towerDef.upgrades[tower.level].cost;
+    return getInfiniteUpgradeCost(TOWERS[tower.type].baseCost, tower.level);
   },
 
   getSellValue: (tower) => {
-    const towerDef = TOWERS[tower.type];
-    let totalCost = towerDef.baseCost;
-    for (let i = 0; i < tower.level; i++) {
-      totalCost += towerDef.upgrades[i].cost;
-    }
-    return Math.floor(totalCost * 0.6); // 60% return
+    return Math.floor(tower.totalCostSpent * 0.6); // 60% return
   },
 
   getTowerColor: (tower) => {
     return SKIN_COLORS[tower.skin] || TOWERS[tower.type].color;
   },
+
+  recalculatePath: () => {
+    const state = get();
+    const blockedCells = getBlockedCells(state.towers);
+    return findPath(
+      state.spawnPoint,
+      state.basePosition,
+      state.gridCols,
+      state.gridRows,
+      blockedCells
+    );
+  },
+
+  setZoomLevel: (level) => set({ zoomLevel: Math.max(0.5, Math.min(2, level)) }),
 }));

@@ -185,20 +185,18 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     // Purchases
     setPremium: (premium) => set({ premium }),
     
+    // Arena expansion is now REAL MONEY purchase via IAP
+    // This method is only used if somehow coins are used (legacy)
     addArenaExpansion: () => {
-      const state = get();
-      const price = state.arenaExpansions === 0 ? ARENA_EXPANSION_PRICE : ARENA_EXPANSION_PRICE * (state.arenaExpansions + 1);
-      if (state.coins < price) return false;
-      set({
-        coins: state.coins - price,
+      set(state => ({
         arenaExpansions: state.arenaExpansions + 1,
-      });
+      }));
       return true;
     },
     
     getArenaExpansionPrice: () => {
-      const state = get();
-      return state.arenaExpansions === 0 ? ARENA_EXPANSION_PRICE : ARENA_EXPANSION_PRICE * (state.arenaExpansions + 1);
+      // Arena expansion is $2.99 real money, not coins
+      return 0;
     },
     
     purchaseTower: (tower) => {

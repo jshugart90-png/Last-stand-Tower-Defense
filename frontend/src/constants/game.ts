@@ -1,3 +1,13 @@
+// Tower targeting modes
+export type TargetingMode = 'first' | 'last' | 'strongest' | 'closest';
+
+export const TARGETING_MODES: { id: TargetingMode; label: string; description: string }[] = [
+  { id: 'first', label: 'First', description: 'Target enemy closest to base' },
+  { id: 'last', label: 'Last', description: 'Target most recently spawned enemy' },
+  { id: 'strongest', label: 'Strong', description: 'Target enemy with most health' },
+  { id: 'closest', label: 'Close', description: 'Target nearest enemy to tower' },
+];
+
 // Tower definitions
 export const TOWERS = {
   machine_gun: {
@@ -16,7 +26,7 @@ export const TOWERS = {
       { damage: 25, fireRate: 200, range: 4, cost: 50 },
       { damage: 40, fireRate: 150, range: 4.5, cost: 80 },
     ],
-    unlockLevel: 1,
+    unlockWave: 1, // Available from start
     icon: 'crosshairs',
     color: '#4A90D9',
   },
@@ -36,7 +46,7 @@ export const TOWERS = {
       { damage: 120, fireRate: 1500, range: 8, cost: 100 },
       { damage: 200, fireRate: 1200, range: 10, cost: 150 },
     ],
-    unlockLevel: 3,
+    unlockWave: 3,
     icon: 'target',
     color: '#8B4513',
   },
@@ -57,7 +67,7 @@ export const TOWERS = {
       { damage: 60, splashRadius: 2, range: 4.5, cost: 110 },
       { damage: 90, splashRadius: 2.5, range: 5, cost: 160 },
     ],
-    unlockLevel: 5,
+    unlockWave: 5,
     icon: 'bomb',
     color: '#FF6B35',
   },
@@ -79,7 +89,7 @@ export const TOWERS = {
       { damage: 12, slowAmount: 0.7, slowDuration: 3000, range: 4, cost: 80 },
       { damage: 20, slowAmount: 0.8, slowDuration: 4000, range: 4.5, cost: 120 },
     ],
-    unlockLevel: 8,
+    unlockWave: 8,
     icon: 'snowflake',
     color: '#00D4FF',
   },
@@ -100,7 +110,7 @@ export const TOWERS = {
       { damage: 220, splashRadius: 1.8, range: 6, cost: 150 },
       { damage: 350, splashRadius: 2, range: 7, cost: 220 },
     ],
-    unlockLevel: 12,
+    unlockWave: 12,
     icon: 'rocket',
     color: '#DC143C',
   },
@@ -114,8 +124,8 @@ export const ENEMIES = {
     id: 'basic',
     name: 'Basic',
     baseHealth: 30,
-    baseSpeed: 0.8, // Slower
-    coinReward: 1, // Was 5, now 1 (75% reduction)
+    baseSpeed: 0.8,
+    coinReward: 1,
     color: '#E74C3C',
     size: 14,
   },
@@ -123,8 +133,8 @@ export const ENEMIES = {
     id: 'fast',
     name: 'Fast',
     baseHealth: 20,
-    baseSpeed: 1.5, // Slower
-    coinReward: 2, // Was 8, now 2 (75% reduction)
+    baseSpeed: 1.5,
+    coinReward: 2,
     color: '#9B59B6',
     size: 12,
   },
@@ -132,8 +142,8 @@ export const ENEMIES = {
     id: 'tank',
     name: 'Tank',
     baseHealth: 100,
-    baseSpeed: 0.4, // Slower
-    coinReward: 4, // Was 15, now ~4 (75% reduction)
+    baseSpeed: 0.4,
+    coinReward: 4,
     color: '#2ECC71',
     size: 20,
   },
@@ -141,8 +151,8 @@ export const ENEMIES = {
     id: 'boss',
     name: 'Boss',
     baseHealth: 500,
-    baseSpeed: 0.25, // Slower
-    coinReward: 25, // Was 100, now 25 (75% reduction)
+    baseSpeed: 0.25,
+    coinReward: 25,
     color: '#F39C12',
     size: 28,
   },
@@ -156,13 +166,16 @@ export const GAME_CONFIG = {
   GRID_ROWS: 14,
   CELL_SIZE: 32,
   BASE_HEALTH: 20,
-  STARTING_COINS: 150, // More starting coins
-  WAVE_DELAY: 5000, // ms between waves - longer for prep
-  ENEMY_SPAWN_DELAY: 1200, // ms between enemy spawns - slower
+  STARTING_COINS: 150,
+  WAVE_DELAY: 3000, // 3 seconds between waves (auto-start timer)
+  ENEMY_SPAWN_DELAY: 800, // ms between enemy spawns
   COMBO_WINDOW: 2000, // ms for combo kills
-  COMBO_BONUS_MULTIPLIER: 0.15, // 15% bonus per combo
+  COMBO_BONUS_MULTIPLIER: 0.15,
   XP_PER_WAVE: 10,
   XP_PER_KILL: 1,
+  BOSS_WAVE_INTERVAL: 10, // Boss every 10 waves
+  TOWER_COST_INCREASE: 1.15, // 15% cost increase per tower of same type
+  UPGRADE_COST_MULTIPLIER: 1.5, // Infinite upgrade cost multiplier
 };
 
 // Expanded arena configuration
@@ -172,13 +185,12 @@ export const EXPANDED_GAME_CONFIG = {
   CELL_SIZE: 28,
 };
 
-// Wave configuration
+// Wave configuration - Boss every 10 waves
 export const getWaveConfig = (waveNumber: number) => {
   const baseEnemies = 5 + Math.floor(waveNumber * 1.5);
   const healthMultiplier = 1 + (waveNumber - 1) * 0.15;
   const speedMultiplier = 1 + (waveNumber - 1) * 0.05;
   
-  // Enemy composition based on wave
   let enemies: { type: EnemyType; count: number }[] = [];
   
   if (waveNumber <= 3) {
@@ -200,10 +212,11 @@ export const getWaveConfig = (waveNumber: number) => {
       { type: 'fast', count: Math.floor(baseEnemies * 0.25) },
       { type: 'tank', count: Math.floor(baseEnemies * 0.25) },
     ];
-    // Boss every 5 waves after wave 10
-    if (waveNumber % 5 === 0) {
-      enemies.push({ type: 'boss', count: 1 });
-    }
+  }
+  
+  // Boss every 10 waves
+  if (waveNumber > 0 && waveNumber % GAME_CONFIG.BOSS_WAVE_INTERVAL === 0) {
+    enemies.push({ type: 'boss', count: 1 });
   }
   
   return {
@@ -214,27 +227,35 @@ export const getWaveConfig = (waveNumber: number) => {
   };
 };
 
-// Default enemy path (will be calculated based on map)
-export const DEFAULT_PATH = [
-  { x: 0, y: 4 },
-  { x: 3, y: 4 },
-  { x: 3, y: 2 },
-  { x: 7, y: 2 },
-  { x: 7, y: 6 },
-  { x: 2, y: 6 },
-  { x: 2, y: 10 },
-  { x: 8, y: 10 },
-  { x: 8, y: 13 },
-  { x: 5, y: 13 },
-];
+// Spawn point and base positions (fixed)
+export const SPAWN_POINT = { x: 0, y: 0 };
+export const BASE_POSITION = { x: 9, y: 13 };
 
-// Tower unlock levels
-export const TOWER_UNLOCKS = {
-  machine_gun: 1,
-  sniper: 3,
-  splash: 5,
-  freeze: 8,
-  missile: 12,
+// Get towers unlocked by wave
+export const getTowersUnlockedByWave = (wave: number): TowerType[] => {
+  return (Object.keys(TOWERS) as TowerType[]).filter(
+    type => TOWERS[type].unlockWave <= wave
+  );
+};
+
+// Calculate infinite upgrade stats
+export const getInfiniteUpgradeStats = (baseStats: any, level: number) => {
+  if (level === 0) return baseStats;
+  
+  const multiplier = Math.pow(1.2, level); // 20% increase per level
+  return {
+    ...baseStats,
+    damage: Math.floor(baseStats.damage * multiplier),
+    range: baseStats.range + (level * 0.2),
+    fireRate: Math.max(100, baseStats.fireRate - (level * 20)),
+  };
+};
+
+// Calculate infinite upgrade cost
+export const getInfiniteUpgradeCost = (baseCost: number, currentLevel: number): number => {
+  // Base upgrade cost starts at 50% of tower cost, increases by 50% each level
+  const baseUpgradeCost = Math.floor(baseCost * 0.5);
+  return Math.floor(baseUpgradeCost * Math.pow(GAME_CONFIG.UPGRADE_COST_MULTIPLIER, currentLevel));
 };
 
 // Skin colors
