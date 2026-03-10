@@ -275,7 +275,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       gameStartTime: Date.now(),
       gameSpeed: 1,
       waveEndTime: 0,
-      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      autoWaveTimer: 0, // Start at 0 - player must manually start first wave
       selectedTowerType: null,
       selectedPlacedTower: null,
       zoomLevel: 1,
@@ -451,8 +451,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const now = Date.now();
     const adjustedDelta = deltaTime * state.gameSpeed;
 
-    // Update auto wave timer
-    if (!state.waveInProgress && state.autoWaveTimer > 0) {
+    // Update auto wave timer (only after wave 1 has been played)
+    if (!state.waveInProgress && state.autoWaveTimer > 0 && state.currentWave > 0) {
       const newTimer = state.autoWaveTimer - adjustedDelta;
       if (newTimer <= 0) {
         // Auto start next wave

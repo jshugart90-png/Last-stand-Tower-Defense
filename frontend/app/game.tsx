@@ -808,7 +808,7 @@ export default function GameScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Wave info bar */}
+      {/* Wave info bar - shows when not in wave, allows starting next wave */}
       {!waveInProgress && !isGameOver && isPlaying && (
         <View style={styles.waveInfoBar}>
           <Text style={styles.waveInfoText}>
@@ -816,7 +816,7 @@ export default function GameScreen() {
           </Text>
           <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
             <Text style={styles.startWaveText}>
-              Start Wave {currentWave + 1} {autoWaveTimer > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
+              Start Wave {currentWave + 1} {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
             </Text>
           </TouchableOpacity>
         </View>
