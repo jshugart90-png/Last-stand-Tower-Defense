@@ -353,11 +353,11 @@ export default function GameScreen() {
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number>(Date.now());
   const spawnTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const spawningCompleteRef = useRef<boolean>(false);
   
   const [selectedTower, setSelectedTower] = useState<PlacedTower | null>(null);
   const [showTowerInfo, setShowTowerInfo] = useState(false);
   const [waitingForWave, setWaitingForWave] = useState(true);
-  const [spawningComplete, setSpawningComplete] = useState(false);
   
   const playerStore = usePlayerStore();
   const gameStore = useGameStore();
@@ -459,10 +459,10 @@ export default function GameScreen() {
       
       // Check wave completion - only after spawning is complete AND enemies are gone
       const state = useGameStore.getState();
-      if (state.waveInProgress && state.enemies.length === 0 && spawningComplete) {
+      if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
         endWave();
         setWaitingForWave(true);
-        setSpawningComplete(false);
+        spawningCompleteRef.current = false;
       }
     }, 33); // ~30 FPS
 
@@ -480,7 +480,7 @@ export default function GameScreen() {
     // Clear previous timeouts
     spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     spawnTimeoutsRef.current = [];
-    setSpawningComplete(false);
+    spawningCompleteRef.current = false;
 
     const waveConfig = getWaveConfig(currentWave);
     let delay = 500; // Start spawning after 0.5 second
@@ -507,7 +507,7 @@ export default function GameScreen() {
 
     // Mark spawning as complete after all enemies have been scheduled to spawn
     const completionTimeout = setTimeout(() => {
-      setSpawningComplete(true);
+      spawningCompleteRef.current = true;
     }, delay + 100); // Add small buffer
 
     return () => {
@@ -522,6 +522,7 @@ export default function GameScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     setWaitingForWave(false);
+    spawningCompleteRef.current = false; // Reset spawning flag for new wave
     startWave();
   }, [startWave, playerStore.hapticEnabled]);
 
