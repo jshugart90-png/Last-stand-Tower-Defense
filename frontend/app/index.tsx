@@ -225,12 +225,22 @@ export default function HomeScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [loading, setLoading] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
 
   // Initialize player on mount
   useEffect(() => {
     initializePlayer();
+  }, []);
+
+  // Show splash screen for minimum 2.5 seconds
+  useEffect(() => {
+    const splashTimer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2500); // 2.5 seconds minimum splash time
+
+    return () => clearTimeout(splashTimer);
   }, []);
 
   const initializePlayer = async () => {
@@ -372,13 +382,19 @@ export default function HomeScreen() {
     router.push('/settings');
   }, [router, playerStore.hapticEnabled]);
 
-  if (loading) {
+  // Show splash screen while loading OR during minimum splash time
+  if (loading || showSplash) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4A90D9" />
-          <Text style={styles.loadingText}>Loading...</Text>
+        <View style={styles.splashContainer}>
+          <MaterialCommunityIcons name="shield-sword" size={100} color="#4A90D9" />
+          <Text style={styles.splashTitle}>LAST STAND</Text>
+          <Text style={styles.splashSubtitle}>DEFENSE</Text>
+          <View style={styles.splashLoader}>
+            <ActivityIndicator size="large" color="#4A90D9" />
+            <Text style={styles.splashLoadingText}>Loading...</Text>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -488,6 +504,34 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#1a1a2e',
+  },
+  splashContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1a1a2e',
+  },
+  splashTitle: {
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: 'bold',
+    letterSpacing: 4,
+    marginTop: 16,
+  },
+  splashSubtitle: {
+    color: '#4A90D9',
+    fontSize: 32,
+    fontWeight: 'bold',
+    letterSpacing: 8,
+    marginBottom: 48,
+  },
+  splashLoader: {
+    alignItems: 'center',
+  },
+  splashLoadingText: {
+    color: '#666',
+    marginTop: 12,
+    fontSize: 14,
   },
   loadingContainer: {
     flex: 1,
