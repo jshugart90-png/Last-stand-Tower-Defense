@@ -3,7 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { initializeAds, loadRewardedAd } from '../src/services/adService';
+import { initializeAds, loadRewardedAd, loadInterstitialAd } from '../src/services/adService';
 import { initializeIAP } from '../src/services/iapService';
 
 const queryClient = new QueryClient();
@@ -15,8 +15,9 @@ export default function RootLayout() {
       try {
         const adsReady = await initializeAds();
         if (adsReady) {
-          // Pre-load a rewarded ad
+          // Pre-load rewarded and interstitial ads
           await loadRewardedAd();
+          await loadInterstitialAd();
         }
       } catch (e) {
         console.log('Ads init skipped:', e);

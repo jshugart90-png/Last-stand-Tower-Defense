@@ -8,8 +8,9 @@
 ### Ad Unit IDs
 | Ad Type | Unit ID | Usage |
 |---------|---------|-------|
-| Rewarded Video | `ca-app-pub-9533265028371895/6436541362` | Watch ads for coins, revive |
-| Banner | `ca-app-pub-9533265028371895/5352492157` | Shown on Home, Leaderboard, Shop screens |
+| Banner | `ca-app-pub-9533265028371895/3866386218` | Shown on Home, Leaderboard, Shop screens |
+| Interstitial | `ca-app-pub-9533265028371895/2757585578` | Every 10 waves, after game over |
+| Rewarded Video | `ca-app-pub-9533265028371895/7614059534` | Watch ads for coins, revive |
 
 ### Where Ads Appear
 1. **Rewarded Video Ads**:
@@ -20,6 +21,10 @@
    - Leaderboard screen (bottom)
    - Shop screen (bottom)
    - Banner ads are hidden when user purchases "Remove Ads"
+3. **Interstitial Ads** (full-screen):
+   - Every 10 waves during gameplay (wave 10, 20, 30...)
+   - After game over (when player dies)
+   - Interstitial ads are skipped for premium users ("Remove Ads" purchased)
 
 ---
 
@@ -31,6 +36,10 @@
 |---------|-----|------|-------|
 | Remove Ads | `com.laststanddefense.remove_ads` | Non-consumable | $2.99 |
 | Arena Expansion | `com.laststanddefense.arena_expansion` | Consumable | $2.99 |
+| 500 Coins | `com.laststanddefense.coins_500` | Consumable | $0.99 |
+| 2,000 Coins | `com.laststanddefense.coins_2000` | Consumable | $1.99 |
+| 5,000 Coins | `com.laststanddefense.coins_5000` | Consumable | $4.99 |
+| 12,000 Coins | `com.laststanddefense.coins_12000` | Consumable | $9.99 |
 | Premium Bundle | `com.laststanddefense.premium_bundle` | Non-consumable | $4.99 |
 
 ### How to Set Up IAP Products

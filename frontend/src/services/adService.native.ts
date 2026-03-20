@@ -2,6 +2,8 @@ import { Platform } from 'react-native';
 import mobileAds, {
   RewardedAd,
   RewardedAdEventType,
+  InterstitialAd,
+  AdEventType,
   BannerAd as NativeBannerAd,
   BannerAdSize as NativeBannerAdSize,
   TestIds as NativeTestIds,
@@ -9,8 +11,9 @@ import mobileAds, {
 
 // Ad Unit IDs
 export const AD_UNIT_IDS = {
-  REWARDED: 'ca-app-pub-9533265028371895/6436541362',
-  BANNER: 'ca-app-pub-9533265028371895/5352492157',
+  REWARDED: 'ca-app-pub-9533265028371895/7614059534',
+  BANNER: 'ca-app-pub-9533265028371895/3866386218',
+  INTERSTITIAL: 'ca-app-pub-9533265028371895/2757585578',
 };
 
 export const isNativeAdsAvailable = (): boolean => true;
@@ -18,6 +21,8 @@ export const isNativeAdsAvailable = (): boolean => true;
 let adsInitialized = false;
 let rewardedAd: any = null;
 let rewardedAdLoaded = false;
+let interstitialAd: any = null;
+let interstitialAdLoaded = false;
 
 // Initialize Mobile Ads SDK
 export const initializeAds = async (): Promise<boolean> => {
@@ -44,7 +49,8 @@ export const initializeAds = async (): Promise<boolean> => {
   }
 };
 
-// Load a rewarded ad
+// ==================== REWARDED ADS ====================
+
 export const loadRewardedAd = (): Promise<boolean> => {
   return new Promise((resolve) => {
     if (!adsInitialized) {
@@ -56,7 +62,7 @@ export const loadRewardedAd = (): Promise<boolean> => {
       rewardedAd = RewardedAd.createForAdRequest(AD_UNIT_IDS.REWARDED);
       rewardedAdLoaded = false;
 
-      const unsubscribeLoaded = rewardedAd.addAdEventListener(
+      rewardedAd.addAdEventListener(
         RewardedAdEventType.LOADED,
         () => {
           rewardedAdLoaded = true;
@@ -64,7 +70,7 @@ export const loadRewardedAd = (): Promise<boolean> => {
         }
       );
 
-      const unsubscribeError = rewardedAd.addAdEventListener(
+      rewardedAd.addAdEventListener(
         'error',
         (error: any) => {
           console.error('Rewarded ad failed to load:', error);
@@ -75,7 +81,6 @@ export const loadRewardedAd = (): Promise<boolean> => {
 
       rewardedAd.load();
 
-      // Timeout after 10 seconds
       setTimeout(() => {
         if (!rewardedAdLoaded) {
           resolve(false);
@@ -88,7 +93,6 @@ export const loadRewardedAd = (): Promise<boolean> => {
   });
 };
 
-// Show a rewarded ad
 export const showRewardedAd = (): Promise<{ type: string; amount: number } | null> => {
   return new Promise((resolve) => {
     if (!rewardedAd || !rewardedAdLoaded) {
@@ -129,6 +133,81 @@ export const showRewardedAd = (): Promise<{ type: string; amount: number } | nul
 };
 
 export const isRewardedAdReady = (): boolean => rewardedAdLoaded;
+
+// ==================== INTERSTITIAL ADS ====================
+
+export const loadInterstitialAd = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (!adsInitialized) {
+      resolve(false);
+      return;
+    }
+
+    try {
+      interstitialAd = InterstitialAd.createForAdRequest(AD_UNIT_IDS.INTERSTITIAL);
+      interstitialAdLoaded = false;
+
+      interstitialAd.addAdEventListener(
+        AdEventType.LOADED,
+        () => {
+          interstitialAdLoaded = true;
+          resolve(true);
+        }
+      );
+
+      interstitialAd.addAdEventListener(
+        'error',
+        (error: any) => {
+          console.error('Interstitial ad failed to load:', error);
+          interstitialAdLoaded = false;
+          resolve(false);
+        }
+      );
+
+      interstitialAd.load();
+
+      setTimeout(() => {
+        if (!interstitialAdLoaded) {
+          resolve(false);
+        }
+      }, 10000);
+    } catch (error) {
+      console.error('Error loading interstitial ad:', error);
+      resolve(false);
+    }
+  });
+};
+
+export const showInterstitialAd = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (!interstitialAd || !interstitialAdLoaded) {
+      resolve(false);
+      return;
+    }
+
+    try {
+      interstitialAd.addAdEventListener(
+        AdEventType.CLOSED,
+        () => {
+          interstitialAdLoaded = false;
+          resolve(true);
+          // Pre-load next interstitial
+          loadInterstitialAd();
+        }
+      );
+
+      interstitialAd.show();
+    } catch (error) {
+      console.error('Error showing interstitial ad:', error);
+      interstitialAdLoaded = false;
+      resolve(false);
+    }
+  });
+};
+
+export const isInterstitialAdReady = (): boolean => interstitialAdLoaded;
+
+// ==================== BANNER & UTILS ====================
 
 export const getNativeBannerAd = () => NativeBannerAd;
 export const getNativeBannerAdSize = () => NativeBannerAdSize;

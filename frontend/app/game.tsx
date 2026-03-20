@@ -25,7 +25,8 @@ import { gameApi, analyticsApi, rewardApi } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
-  isNativeAdsAvailable, isAdsInitialized 
+  isNativeAdsAvailable, isAdsInitialized,
+  showInterstitialAd, loadInterstitialAd, isInterstitialAdReady
 } from '../src/services/adService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -801,6 +802,15 @@ export default function GameScreen() {
         endWave();
         spawningCompleteRef.current = false;
         handleSaveCoins(state.coins);
+        
+        // Show interstitial ad every 10 waves (skip for premium users)
+        const completedWave = useGameStore.getState().currentWave;
+        if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
+          const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+          if (nativeAdsReady && isInterstitialAdReady()) {
+            showInterstitialAd().catch(console.error);
+          }
+        }
       }
     }, 33);
 
@@ -991,7 +1001,20 @@ export default function GameScreen() {
     } catch (error) {
       console.error('Error saving game:', error);
     }
-  }, [playerStore.playerId, gameStartTime, currentWave, score, enemiesKilled, towersPlaced]);
+
+    // Show interstitial ad after game over (skip for premium users)
+    if (!playerStore.premium) {
+      const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+      if (nativeAdsReady && isInterstitialAdReady()) {
+        showInterstitialAd().catch(console.error);
+      } else if (nativeAdsReady) {
+        // Try to load and show
+        loadInterstitialAd().then(loaded => {
+          if (loaded) showInterstitialAd().catch(console.error);
+        });
+      }
+    }
+  }, [playerStore.playerId, gameStartTime, currentWave, score, enemiesKilled, towersPlaced, playerStore.premium]);
 
   useEffect(() => {
     if (isGameOver) {
