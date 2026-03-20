@@ -180,6 +180,44 @@ interface GameActions {
   
   // Get current coins (for saving)
   getCurrentCoins: () => number;
+  
+  // Save/Resume game
+  getGameStateForSave: () => SavedGameStateForExport;
+  resumeFromSavedGame: (savedGame: SavedGameStateForExport, playerData: ResumePlayerData) => void;
+}
+
+// Type for saved game export
+export interface SavedGameStateForExport {
+  currentWave: number;
+  waveInProgress: boolean;
+  coins: number;
+  baseHealth: number;
+  score: number;
+  enemiesKilled: number;
+  towersPlaced: number;
+  towers: {
+    id: string;
+    type: TowerType;
+    position: Position;
+    level: number;
+    skin: string;
+    targetingMode: TargetingMode;
+    totalCostSpent: number;
+  }[];
+  towerPurchaseCount: Record<TowerType, number>;
+  gridCols: number;
+  gridRows: number;
+  arenaExpansions: number;
+  savedAt: number;
+  adReviveUsed: boolean;
+}
+
+// Player data needed for resume
+export interface ResumePlayerData {
+  unlockedTowers: TowerType[];
+  unlockedSpeeds: GameSpeed[];
+  towerUpgradeLevels: Record<TowerType, number>;
+  equippedSkins: Record<string, string>;
 }
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -933,4 +971,91 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   setZoomLevel: (level) => set({ zoomLevel: Math.max(0.5, Math.min(2, level)) }),
   
   getCurrentCoins: () => get().coins,
+  
+  // Get game state for saving
+  getGameStateForSave: () => {
+    const state = get();
+    return {
+      currentWave: state.currentWave,
+      waveInProgress: false, // Always save as not in wave
+      coins: state.coins,
+      baseHealth: state.baseHealth,
+      score: state.score,
+      enemiesKilled: state.enemiesKilled,
+      towersPlaced: state.towersPlaced,
+      towers: state.towers.map(t => ({
+        id: t.id,
+        type: t.type,
+        position: { x: t.position.x, y: t.position.y },
+        level: t.level,
+        skin: t.skin,
+        targetingMode: t.targetingMode,
+        totalCostSpent: t.totalCostSpent,
+      })),
+      towerPurchaseCount: { ...state.towerPurchaseCount },
+      gridCols: state.gridCols,
+      gridRows: state.gridRows,
+      arenaExpansions: state.arenaExpansions,
+      savedAt: Date.now(),
+      adReviveUsed: state.adReviveUsed,
+    };
+  },
+  
+  // Resume from saved game
+  resumeFromSavedGame: (savedGame, playerData) => {
+    const baseConfig = GAME_CONFIG;
+    const cellSize = savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    
+    const spawnPoint = { x: savedGame.arenaExpansions, y: savedGame.arenaExpansions };
+    const basePosition = { 
+      x: savedGame.gridCols - 1 - savedGame.arenaExpansions, 
+      y: savedGame.gridRows - 1 - savedGame.arenaExpansions 
+    };
+    
+    // Restore towers with full PlacedTower structure
+    const restoredTowers: PlacedTower[] = savedGame.towers.map(t => ({
+      ...t,
+      lastFireTime: 0,
+      currentTargetId: null,
+      damageAccumulator: 0,
+    }));
+    
+    set({
+      isPlaying: true,
+      isPaused: false,
+      isGameOver: false,
+      currentWave: savedGame.currentWave,
+      waveInProgress: false, // Start paused between waves
+      coins: savedGame.coins,
+      baseHealth: savedGame.baseHealth,
+      score: savedGame.score,
+      enemiesKilled: savedGame.enemiesKilled,
+      towersPlaced: savedGame.towersPlaced,
+      towers: restoredTowers,
+      enemies: [], // No enemies when resuming
+      projectiles: [],
+      laserBeams: [],
+      gridCols: savedGame.gridCols,
+      gridRows: savedGame.gridRows,
+      cellSize,
+      spawnPoint,
+      basePosition,
+      unlockedTowers: playerData.unlockedTowers,
+      unlockedSpeeds: playerData.unlockedSpeeds,
+      towerUpgradeLevels: playerData.towerUpgradeLevels,
+      equippedSkins: playerData.equippedSkins,
+      arenaExpansions: savedGame.arenaExpansions,
+      towerPurchaseCount: savedGame.towerPurchaseCount,
+      doubleDamageUntil: 0,
+      hasRevive: false,
+      adReviveUsed: savedGame.adReviveUsed,
+      gameStartTime: Date.now(),
+      gameSpeed: 1,
+      waveEndTime: 0,
+      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      selectedTowerType: null,
+      selectedPlacedTower: null,
+      zoomLevel: 1,
+    });
+  },
 }));

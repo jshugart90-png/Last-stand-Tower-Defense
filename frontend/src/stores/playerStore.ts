@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShopUpgradeCost } from '../constants/game';
+import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShopUpgradeCost, TargetingMode } from '../constants/game';
 
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
@@ -9,6 +9,48 @@ export const IAP_PRODUCT_IDS = {
   ARENA_EXPANSION: 'arena_expansion_299',
   PREMIUM_UPGRADE: 'premium_upgrade_499',
 };
+
+// Saved tower state for game resume
+export interface SavedTower {
+  id: string;
+  type: TowerType;
+  position: { x: number; y: number };
+  level: number;
+  skin: string;
+  targetingMode: TargetingMode;
+  totalCostSpent: number;
+}
+
+// Full saved game state
+export interface SavedGameState {
+  // Wave/progress
+  currentWave: number;
+  waveInProgress: boolean;
+  
+  // Resources
+  coins: number;
+  baseHealth: number;
+  score: number;
+  enemiesKilled: number;
+  towersPlaced: number;
+  
+  // Placed towers
+  towers: SavedTower[];
+  
+  // Tower purchase counts (for cost calculation)
+  towerPurchaseCount: Record<TowerType, number>;
+  
+  // Grid config
+  gridCols: number;
+  gridRows: number;
+  arenaExpansions: number;
+  
+  // Timestamp
+  savedAt: number;
+  
+  // Ad revive tracking
+  adReviveUsed: boolean;
+}
 
 interface PlayerState {
   // Player identity
@@ -54,9 +96,8 @@ interface PlayerState {
   // Tutorial
   tutorialCompleted: boolean;
   
-  // Current game session (for saving on exit)
-  currentGameWave: number;
-  currentGameCoins: number;
+  // SAVED GAME STATE - for resume functionality
+  savedGame: SavedGameState | null;
 }
 
 interface PlayerActions {
@@ -111,9 +152,11 @@ interface PlayerActions {
   // Tutorial
   completeTutorial: () => void;
   
-  // Game session tracking
-  setCurrentGameProgress: (wave: number, coins: number) => void;
-  clearCurrentGameProgress: () => void;
+  // SAVED GAME FUNCTIONS
+  saveGame: (gameState: SavedGameState) => void;
+  clearSavedGame: () => void;
+  hasSavedGame: () => boolean;
+  getSavedGame: () => SavedGameState | null;
   
   // Sync from server
   syncFromServer: (data: Partial<PlayerState>) => void;
@@ -151,8 +194,7 @@ const initialState: PlayerState = {
   hapticEnabled: true,
   gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
-  currentGameWave: 0,
-  currentGameCoins: 0,
+  savedGame: null,  // No saved game initially
 };
 
 export const usePlayerStore = create<PlayerState & PlayerActions>()(
@@ -284,12 +326,24 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     // Tutorial
     completeTutorial: () => set({ tutorialCompleted: true }),
 
-    // Game session tracking
-    setCurrentGameProgress: (wave, coins) => {
-      set({ currentGameWave: wave, currentGameCoins: coins });
+    // SAVED GAME FUNCTIONS
+    saveGame: (gameState: SavedGameState) => {
+      set({ 
+        savedGame: gameState,
+        coins: gameState.coins, // Update player coins to match saved game
+      });
     },
-    clearCurrentGameProgress: () => {
-      set({ currentGameWave: 0, currentGameCoins: 0 });
+    
+    clearSavedGame: () => {
+      set({ savedGame: null });
+    },
+    
+    hasSavedGame: () => {
+      return get().savedGame !== null;
+    },
+    
+    getSavedGame: () => {
+      return get().savedGame;
     },
 
     // Sync from server

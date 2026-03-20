@@ -14,8 +14,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useGameStore, PlacedTower } from '../src/stores/gameStore';
-import { usePlayerStore } from '../src/stores/playerStore';
+import { useGameStore, PlacedTower, SavedGameStateForExport } from '../src/stores/gameStore';
+import { usePlayerStore, SavedGameState } from '../src/stores/playerStore';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, 
   TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
@@ -539,35 +539,88 @@ const GameOverModal = ({
   );
 };
 
-// Exit Warning Modal
+// Exit Warning Modal with Shop option
 const ExitWarningModal = ({ 
   visible, 
   onConfirm, 
-  onCancel 
+  onCancel,
+  onGoToShop,
+  currentWave,
+  coins,
 }: {
   visible: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  onGoToShop: () => void;
+  currentWave: number;
+  coins: number;
 }) => {
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.modalOverlay}>
         <View style={styles.exitWarningModal}>
-          <Ionicons name="warning" size={48} color="#F39C12" />
-          <Text style={styles.exitWarningTitle}>End Round?</Text>
+          <Ionicons name="pause-circle" size={48} color="#4A90D9" />
+          <Text style={styles.exitWarningTitle}>Game Paused</Text>
+          <Text style={styles.exitWarningSubtitle}>Wave {currentWave} • {coins} coins</Text>
           <Text style={styles.exitWarningText}>
-            Exiting now will end your current round.{'\n'}
-            Your coins will be saved.
+            Your progress will be saved.{'\n'}
+            You can return and continue later!
           </Text>
+          
+          <TouchableOpacity style={styles.shopButton} onPress={onGoToShop}>
+            <FontAwesome5 name="store" size={16} color="#fff" />
+            <Text style={styles.shopButtonText}>Go to Shop</Text>
+          </TouchableOpacity>
           
           <View style={styles.exitWarningButtons}>
             <TouchableOpacity style={styles.cancelExitButton} onPress={onCancel}>
-              <Text style={styles.cancelExitText}>Stay</Text>
+              <Text style={styles.cancelExitText}>Resume</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.confirmExitButton} onPress={onConfirm}>
-              <Text style={styles.confirmExitText}>Exit</Text>
+              <Text style={styles.confirmExitText}>Exit & Save</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// Resume Game Modal
+const ResumeGameModal = ({
+  visible,
+  savedGame,
+  onResume,
+  onNewGame,
+}: {
+  visible: boolean;
+  savedGame: SavedGameState | null;
+  onResume: () => void;
+  onNewGame: () => void;
+}) => {
+  if (!savedGame) return null;
+  
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.resumeModal}>
+          <MaterialCommunityIcons name="content-save" size={48} color="#2ECC71" />
+          <Text style={styles.resumeTitle}>Saved Game Found!</Text>
+          <Text style={styles.resumeDetails}>
+            Wave {savedGame.currentWave} • {savedGame.towers.length} towers
+          </Text>
+          <Text style={styles.resumeDetails}>
+            {savedGame.coins} coins • {savedGame.baseHealth} HP
+          </Text>
+          
+          <TouchableOpacity style={styles.resumeButton} onPress={onResume}>
+            <Ionicons name="play" size={20} color="#fff" />
+            <Text style={styles.resumeButtonText}>Continue Game</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.newGameButton} onPress={onNewGame}>
+            <Text style={styles.newGameText}>Start New Game</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -637,6 +690,8 @@ export default function GameScreen() {
     getCurrentCoins,
   } = gameStore;
 
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+
   const boardWidth = gridCols * cellSize;
   const boardHeight = gridRows * cellSize;
   const scale = Math.min(
@@ -644,15 +699,23 @@ export default function GameScreen() {
     (SCREEN_HEIGHT - 380) / boardHeight
   );
 
-  // Initialize game on mount
+  // Initialize game on mount - check for saved game
   useEffect(() => {
-    startGame(
-      playerStore.unlockedTowers,
-      playerStore.unlockedSpeeds,
-      playerStore.towerUpgradeLevels,
-      playerStore.equippedSkins, 
-      playerStore.arenaExpansions
-    );
+    const savedGame = playerStore.getSavedGame();
+    
+    if (savedGame && savedGame.currentWave > 0) {
+      // Show resume prompt
+      setShowResumePrompt(true);
+    } else {
+      // Start new game
+      startGame(
+        playerStore.unlockedTowers,
+        playerStore.unlockedSpeeds,
+        playerStore.towerUpgradeLevels,
+        playerStore.equippedSkins, 
+        playerStore.arenaExpansions
+      );
+    }
     
     if (playerStore.playerId) {
       analyticsApi.log({
@@ -666,6 +729,33 @@ export default function GameScreen() {
       spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     };
   }, []);
+
+  // Handle resume saved game
+  const handleResumeGame = useCallback(() => {
+    const savedGame = playerStore.getSavedGame();
+    if (savedGame) {
+      gameStore.resumeFromSavedGame(savedGame as SavedGameStateForExport, {
+        unlockedTowers: playerStore.unlockedTowers,
+        unlockedSpeeds: playerStore.unlockedSpeeds,
+        towerUpgradeLevels: playerStore.towerUpgradeLevels,
+        equippedSkins: playerStore.equippedSkins,
+      });
+    }
+    setShowResumePrompt(false);
+  }, [playerStore, gameStore]);
+
+  // Handle start new game (discard saved)
+  const handleStartNewGame = useCallback(() => {
+    playerStore.clearSavedGame();
+    startGame(
+      playerStore.unlockedTowers,
+      playerStore.unlockedSpeeds,
+      playerStore.towerUpgradeLevels,
+      playerStore.equippedSkins, 
+      playerStore.arenaExpansions
+    );
+    setShowResumePrompt(false);
+  }, [playerStore, startGame]);
 
   // Handle back button (Android)
   useEffect(() => {
@@ -749,7 +839,6 @@ export default function GameScreen() {
   // Save coins to backend and player store
   const handleSaveCoins = async (currentCoins: number) => {
     playerStore.setCoins(currentCoins);
-    playerStore.setCurrentGameProgress(currentWave, currentCoins);
     
     if (!playerStore.playerId) return;
     try {
@@ -766,6 +855,12 @@ export default function GameScreen() {
     }
   };
 
+  // Save full game state for resume
+  const saveGameState = useCallback(() => {
+    const gameState = gameStore.getGameStateForSave();
+    playerStore.saveGame(gameState as any);
+  }, [gameStore, playerStore]);
+
   // Handle exit with warning
   const handleExitAttempt = useCallback(() => {
     if (isPlaying && !isGameOver && currentWave > 0) {
@@ -776,13 +871,22 @@ export default function GameScreen() {
     }
   }, [isPlaying, isGameOver, currentWave, pauseGame, router]);
 
+  // Save and go to shop
+  const handleGoToShop = useCallback(() => {
+    // Save game state before navigating to shop
+    saveGameState();
+    setShowExitWarning(false);
+    router.push('/shop');
+  }, [saveGameState, router]);
+
   const handleConfirmExit = useCallback(async () => {
     setShowExitWarning(false);
-    // Save progress before exiting
+    // Save game state for resume
+    saveGameState();
     await handleSaveCoins(getCurrentCoins());
     playerStore.recordGame(currentWave);
     router.back();
-  }, [getCurrentCoins, currentWave, router]);
+  }, [saveGameState, getCurrentCoins, currentWave, router]);
 
   const handleCancelExit = useCallback(() => {
     setShowExitWarning(false);
@@ -918,13 +1022,14 @@ export default function GameScreen() {
   }, [playerStore.playerId, grantRevive, useRevive]);
 
   const handleRestart = useCallback(() => {
+    playerStore.clearSavedGame(); // Clear saved game on restart
     restartGame();
-  }, [restartGame]);
+  }, [restartGame, playerStore]);
 
   const handleExit = useCallback(() => {
-    playerStore.clearCurrentGameProgress();
+    playerStore.clearSavedGame(); // Clear saved game on exit after game over
     router.back();
-  }, [router]);
+  }, [router, playerStore]);
 
   const formatTimer = (ms: number) => {
     const seconds = Math.ceil(ms / 1000);
@@ -1060,10 +1165,21 @@ export default function GameScreen() {
         visible={showExitWarning}
         onConfirm={handleConfirmExit}
         onCancel={handleCancelExit}
+        onGoToShop={handleGoToShop}
+        currentWave={currentWave}
+        coins={coins}
+      />
+
+      {/* Resume game modal */}
+      <ResumeGameModal
+        visible={showResumePrompt}
+        savedGame={playerStore.getSavedGame()}
+        onResume={handleResumeGame}
+        onNewGame={handleStartNewGame}
       />
 
       {/* Pause overlay */}
-      {isPaused && !isGameOver && !showExitWarning && (
+      {isPaused && !isGameOver && !showExitWarning && !showResumePrompt && (
         <View style={styles.pauseOverlay}>
           <Text style={styles.pauseText}>PAUSED</Text>
           <TouchableOpacity style={styles.resumeButton} onPress={resumeGame}>
@@ -1558,17 +1674,39 @@ const styles = StyleSheet.create({
     maxWidth: 320,
   },
   exitWarningTitle: {
-    color: '#F39C12',
+    color: '#4A90D9',
     fontSize: 24,
     fontWeight: 'bold',
     marginTop: 12,
+    marginBottom: 4,
+  },
+  exitWarningSubtitle: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
     marginBottom: 8,
   },
   exitWarningText: {
     color: '#aaa',
     fontSize: 14,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
+  },
+  shopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#9B59B6',
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 8,
+    width: '100%',
+    marginBottom: 12,
+  },
+  shopButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   exitWarningButtons: {
     flexDirection: 'row',
@@ -1589,7 +1727,7 @@ const styles = StyleSheet.create({
   },
   confirmExitButton: {
     flex: 1,
-    backgroundColor: '#E74C3C',
+    backgroundColor: '#2a2a4e',
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -1598,6 +1736,52 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // Resume modal styles
+  resumeModal: {
+    backgroundColor: '#16213e',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '85%',
+    maxWidth: 320,
+  },
+  resumeTitle: {
+    color: '#2ECC71',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  resumeDetails: {
+    color: '#aaa',
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  resumeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2ECC71',
+    paddingVertical: 14,
+    borderRadius: 8,
+    gap: 8,
+    width: '100%',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  resumeButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  newGameButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  newGameText: {
+    color: '#888',
+    fontSize: 14,
   },
   pauseOverlay: {
     ...StyleSheet.absoluteFillObject,
