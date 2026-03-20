@@ -40,7 +40,7 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'trending-up',
       title: 'Upgrade & Survive',
-      description: 'Earn coins to upgrade towers and survive longer',
+      description: 'Earn gems to upgrade towers and survive longer',
     },
   ];
 
@@ -266,7 +266,7 @@ export default function HomeScreen() {
             playerStore.syncFromServer({
               xp: response.data.xp,
               level: response.data.level,
-              coins: response.data.coins,
+              gems: response.data.gems,
               totalWavesSurvived: response.data.total_waves_survived,
               gamesPlayed: response.data.games_played,
               bestWave: response.data.best_wave,
@@ -412,8 +412,8 @@ export default function HomeScreen() {
           <Text style={styles.playerLevel}>Level {playerStore.level}</Text>
         </View>
         <View style={styles.currencyContainer}>
-          <FontAwesome5 name="coins" size={16} color="#FFD700" />
-          <Text style={styles.currencyText}>{playerStore.coins}</Text>
+          <FontAwesome5 name="gem" size={16} color="#4A90D9" />
+          <Text style={styles.currencyText}>{playerStore.gems}</Text>
         </View>
       </View>
 

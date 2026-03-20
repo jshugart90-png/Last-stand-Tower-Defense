@@ -23,7 +23,7 @@ import {
   isNativeAdsAvailable, isAdsInitialized 
 } from '../src/services/adService';
 import { 
-  IAP_PRODUCTS, IAP_PRICES, COIN_PACK_AMOUNTS, requestPurchase, 
+  IAP_PRODUCTS, IAP_PRICES, GEM_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
 import BannerAdComponent from '../src/components/BannerAdComponent';
@@ -61,7 +61,7 @@ export default function ShopScreen() {
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'coins' | 'arena' | 'skins'>('towers');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins'>('towers');
   const [adLoading, setAdLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
 
@@ -94,14 +94,14 @@ export default function ShopScreen() {
       return;
     }
     
-    if (playerStore.coins < price) {
+    if (playerStore.gems < price) {
       Alert.alert(
-        'Not Enough Coins',
-        `You need ${price} coins but only have ${playerStore.coins}.\n\nEarn coins by playing games, watching ads, or buying coin packs!`,
+        'Not Enough Gems',
+        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games, watching ads, or buying gem packs!`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
-          { text: 'Watch Ad', onPress: handleWatchAdForCoins },
+          { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
+          { text: 'Watch Ad', onPress: handleWatchAdForGems },
         ]
       );
       return;
@@ -127,14 +127,14 @@ export default function ShopScreen() {
       return;
     }
     
-    if (playerStore.coins < price) {
+    if (playerStore.gems < price) {
       Alert.alert(
-        'Not Enough Coins',
-        `You need ${price} coins but only have ${playerStore.coins}.\n\nEarn coins by playing games, watching ads, or buying coin packs!`,
+        'Not Enough Gems',
+        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games, watching ads, or buying gem packs!`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
-          { text: 'Watch Ad', onPress: handleWatchAdForCoins },
+          { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
+          { text: 'Watch Ad', onPress: handleWatchAdForGems },
         ]
       );
       return;
@@ -158,13 +158,13 @@ export default function ShopScreen() {
       return;
     }
     
-    if (playerStore.coins < price) {
+    if (playerStore.gems < price) {
       Alert.alert(
-        'Not Enough Coins',
-        `You need ${price} coins but only have ${playerStore.coins}.`,
+        'Not Enough Gems',
+        `You need ${price} gems but only have ${playerStore.gems}.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
+          { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
         ]
       );
       return;
@@ -339,12 +339,12 @@ export default function ShopScreen() {
   };
 
 
-  // Handle coin pack purchase (IAP)
-  const handlePurchaseCoinPack = async (productId: string) => {
-    const coinAmount = COIN_PACK_AMOUNTS[productId];
+  // Handle gem pack purchase (IAP)
+  const handlePurchaseGemPack = async (productId: string) => {
+    const gemAmount = GEM_PACK_AMOUNTS[productId];
     const price = IAP_PRICES[productId];
     
-    if (!coinAmount) return;
+    if (!gemAmount) return;
 
     if (isIAPAvailable() && isIAPInitialized()) {
       // Real IAP flow
@@ -352,19 +352,19 @@ export default function ShopScreen() {
       try {
         const result = await requestPurchase(productId);
         if (result.success) {
-          playerStore.addCoins(coinAmount);
+          playerStore.addGems(gemAmount);
           if (playerStore.playerId) {
             try {
               await purchaseApi.process({
                 player_id: playerStore.playerId,
-                item_type: 'coins',
+                item_type: 'gems',
                 item_id: productId,
               });
             } catch (e) {
               console.error('Backend purchase report failed:', e);
             }
           }
-          Alert.alert('Coins Added!', `${coinAmount.toLocaleString()} coins have been added to your balance!`);
+          Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems have been added to your balance!`);
         } else if (result.error && result.error !== 'Purchase cancelled') {
           Alert.alert('Purchase Failed', result.error);
         }
@@ -376,15 +376,15 @@ export default function ShopScreen() {
     } else {
       // Simulated purchase for development/testing
       Alert.alert(
-        `Buy ${coinAmount.toLocaleString()} Coins`,
-        `Purchase ${coinAmount.toLocaleString()} coins for ${price}?\n\n(IAP requires a native build - simulating for testing)`,
+        `Buy ${gemAmount.toLocaleString()} Gems`,
+        `Purchase ${gemAmount.toLocaleString()} gems for ${price}?\n\n(IAP requires a native build - simulating for testing)`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Simulate Purchase',
             onPress: () => {
-              playerStore.addCoins(coinAmount);
-              Alert.alert('Coins Added!', `${coinAmount.toLocaleString()} coins added! (Simulated)`);
+              playerStore.addGems(gemAmount);
+              Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems added! (Simulated)`);
             }
           },
         ]
@@ -392,8 +392,8 @@ export default function ShopScreen() {
     }
   };
 
-  // Handle watch ad for coins (AdMob Rewarded Ad)
-  const handleWatchAdForCoins = async () => {
+  // Handle watch ad for gems (AdMob Rewarded Ad)
+  const handleWatchAdForGems = async () => {
     const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
     
     if (nativeAdsReady && isRewardedAdReady()) {
@@ -402,15 +402,15 @@ export default function ShopScreen() {
       try {
         const reward = await showRewardedAd();
         if (reward) {
-          // Ad watched successfully - grant coins
-          playerStore.addCoins(25);
-          Alert.alert('Reward!', 'You earned 25 coins!');
+          // Ad watched successfully - grant gems
+          playerStore.addGems(10);
+          Alert.alert('Reward!', 'You earned 10 gems!');
           
           if (playerStore.playerId) {
             try {
               await rewardApi.claim({
                 player_id: playerStore.playerId,
-                reward_type: 'coins',
+                reward_type: 'gems',
                 ad_type: 'rewarded',
               });
             } catch (e) {
@@ -420,7 +420,7 @@ export default function ShopScreen() {
           // Pre-load next ad
           loadRewardedAd();
         } else {
-          Alert.alert('No Reward', 'You need to watch the full ad to earn coins.');
+          Alert.alert('No Reward', 'You need to watch the full ad to earn gems.');
         }
       } catch (e) {
         console.error('Error showing ad:', e);
@@ -436,7 +436,7 @@ export default function ShopScreen() {
       setAdLoading(false);
       if (loaded) {
         // Retry showing
-        handleWatchAdForCoins();
+        handleWatchAdForGems();
       } else {
         Alert.alert('Ad Unavailable', 'No ads available right now. Please try again later.');
       }
@@ -444,20 +444,20 @@ export default function ShopScreen() {
       // Non-native environment (web/Expo Go) - simulate for testing
       Alert.alert(
         'Watch Ad',
-        'Rewarded ads require a native build.\n\nSimulate watching ad for 25 coins?',
+        'Rewarded ads require a native build.\n\nSimulate watching ad for 10 gems?',
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Simulate',
             onPress: async () => {
-              playerStore.addCoins(25);
-              Alert.alert('Reward!', 'You earned 25 coins! (Simulated)');
+              playerStore.addGems(10);
+              Alert.alert('Reward!', 'You earned 10 gems! (Simulated)');
               
               if (playerStore.playerId) {
                 try {
                   await rewardApi.claim({
                     player_id: playerStore.playerId,
-                    reward_type: 'coins',
+                    reward_type: 'gems',
                     ad_type: 'rewarded',
                   });
                 } catch (e) {
@@ -478,8 +478,8 @@ export default function ShopScreen() {
     const unlockPrice = TOWER_UNLOCK_PRICES[towerType];
     const upgradeLevel = playerStore.getTowerUpgradeLevel(towerType);
     const upgradePrice = playerStore.getTowerUpgradePrice(towerType);
-    const canAffordUnlock = playerStore.coins >= unlockPrice;
-    const canAffordUpgrade = playerStore.coins >= upgradePrice;
+    const canAffordUnlock = playerStore.gems >= unlockPrice;
+    const canAffordUpgrade = playerStore.gems >= upgradePrice;
 
     return (
       <View key={towerType} style={styles.towerCard}>
@@ -501,7 +501,7 @@ export default function ShopScreen() {
               style={[styles.unlockButton, !canAffordUnlock && styles.disabledButton]}
               onPress={() => handlePurchaseTower(towerType)}
             >
-              <FontAwesome5 name="coins" size={12} color="#FFD700" />
+              <FontAwesome5 name="gem" size={12} color="#4A90D9" />
               <Text style={styles.buttonText}>{unlockPrice}</Text>
             </TouchableOpacity>
           ) : (
@@ -522,7 +522,7 @@ export default function ShopScreen() {
   const renderSpeedCard = (speed: GameSpeed) => {
     const price = SPEED_UNLOCK_PRICES[speed];
     const isUnlocked = playerStore.isSpeedUnlocked(speed);
-    const canAfford = playerStore.coins >= price;
+    const canAfford = playerStore.gems >= price;
 
     return (
       <View key={speed} style={styles.speedCard}>
@@ -567,8 +567,8 @@ export default function ShopScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Shop</Text>
         <View style={styles.coinsDisplay}>
-          <FontAwesome5 name="coins" size={16} color="#FFD700" />
-          <Text style={styles.coinsText}>{playerStore.coins}</Text>
+          <FontAwesome5 name="gem" size={16} color="#4A90D9" />
+          <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
       </View>
 
@@ -583,11 +583,11 @@ export default function ShopScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, selectedTab === 'coins' && styles.tabActive]}
-          onPress={() => setSelectedTab('coins')}
+          style={[styles.tab, selectedTab === 'gems' && styles.tabActive]}
+          onPress={() => setSelectedTab('gems')}
         >
-          <Text style={[styles.tabText, selectedTab === 'coins' && styles.tabTextActive]}>
-            Coins
+          <Text style={[styles.tabText, selectedTab === 'gems' && styles.tabTextActive]}>
+            Gems
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -630,25 +630,25 @@ export default function ShopScreen() {
         )}
 
         {/* Coins Tab */}
-        {selectedTab === 'coins' && (
+        {selectedTab === 'gems' && (
           <View>
-            <Text style={styles.sectionTitle}>Buy Coins</Text>
+            <Text style={styles.sectionTitle}>Buy Gems</Text>
             <Text style={styles.sectionSubtitle}>
-              Purchase coins to unlock towers, upgrades, and more
+              Purchase gems to unlock towers, upgrades, and more
             </Text>
 
             <View style={styles.coinPacksContainer}>
               {/* Small Pack */}
               <TouchableOpacity 
                 style={styles.coinPackCard}
-                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_500)}
+                onPress={() => handlePurchaseGemPack(IAP_PRODUCTS.GEMS_100)}
                 disabled={purchaseLoading}
               >
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="coins" size={24} color="#FFD700" />
+                  <FontAwesome5 name="gem" size={24} color="#4A90D9" />
                 </View>
-                <Text style={styles.coinPackAmount}>500</Text>
-                <Text style={styles.coinPackLabel}>Coins</Text>
+                <Text style={styles.coinPackAmount}>100</Text>
+                <Text style={styles.coinPackLabel}>Gems</Text>
                 <View style={styles.coinPackPriceTag}>
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -661,17 +661,17 @@ export default function ShopScreen() {
               {/* Medium Pack */}
               <TouchableOpacity 
                 style={[styles.coinPackCard, styles.coinPackPopular]}
-                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_2000)}
+                onPress={() => handlePurchaseGemPack(IAP_PRODUCTS.GEMS_500)}
                 disabled={purchaseLoading}
               >
                 <View style={styles.popularBadge}>
                   <Text style={styles.popularBadgeText}>POPULAR</Text>
                 </View>
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="coins" size={28} color="#FFD700" />
+                  <FontAwesome5 name="gem" size={28} color="#4A90D9" />
                 </View>
-                <Text style={styles.coinPackAmount}>2,000</Text>
-                <Text style={styles.coinPackLabel}>Coins</Text>
+                <Text style={styles.coinPackAmount}>500</Text>
+                <Text style={styles.coinPackLabel}>Gems</Text>
                 <View style={[styles.coinPackPriceTag, styles.coinPackPricePopular]}>
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -684,15 +684,15 @@ export default function ShopScreen() {
               {/* Large Pack */}
               <TouchableOpacity 
                 style={styles.coinPackCard}
-                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_5000)}
+                onPress={() => handlePurchaseGemPack(IAP_PRODUCTS.GEMS_1500)}
                 disabled={purchaseLoading}
               >
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="coins" size={32} color="#FFD700" />
-                  <FontAwesome5 name="coins" size={18} color="#FFD700" style={{ position: 'absolute', top: -4, right: -8 }} />
+                  <FontAwesome5 name="gem" size={32} color="#4A90D9" />
+                  <FontAwesome5 name="gem" size={18} color="#4A90D9" style={{ position: 'absolute', top: -4, right: -8 }} />
                 </View>
-                <Text style={styles.coinPackAmount}>5,000</Text>
-                <Text style={styles.coinPackLabel}>Coins</Text>
+                <Text style={styles.coinPackAmount}>1,500</Text>
+                <Text style={styles.coinPackLabel}>Gems</Text>
                 <View style={styles.coinPackPriceTag}>
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -705,7 +705,7 @@ export default function ShopScreen() {
               {/* Mega Pack */}
               <TouchableOpacity 
                 style={[styles.coinPackCard, styles.coinPackMega]}
-                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_12000)}
+                onPress={() => handlePurchaseGemPack(IAP_PRODUCTS.GEMS_4000)}
                 disabled={purchaseLoading}
               >
                 <View style={styles.bestValueBadge}>
@@ -714,8 +714,8 @@ export default function ShopScreen() {
                 <View style={styles.coinPackIconWrap}>
                   <FontAwesome5 name="gem" size={32} color="#E74C3C" />
                 </View>
-                <Text style={styles.coinPackAmount}>12,000</Text>
-                <Text style={styles.coinPackLabel}>Coins</Text>
+                <Text style={styles.coinPackAmount}>4,000</Text>
+                <Text style={styles.coinPackLabel}>Gems</Text>
                 <View style={[styles.coinPackPriceTag, styles.coinPackPriceMega]}>
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -851,7 +851,7 @@ export default function ShopScreen() {
         <View style={styles.adSection}>
           <TouchableOpacity 
             style={[styles.watchAdButton, adLoading && styles.disabledButton]} 
-            onPress={handleWatchAdForCoins}
+            onPress={handleWatchAdForGems}
             disabled={adLoading}
           >
             {adLoading ? (
@@ -860,7 +860,7 @@ export default function ShopScreen() {
               <Ionicons name="videocam" size={24} color="#fff" />
             )}
             <Text style={styles.watchAdText}>
-              {adLoading ? 'Loading Ad...' : 'Watch Ad for 25 Coins'}
+              {adLoading ? 'Loading Ad...' : 'Watch Ad for 10 Gems'}
             </Text>
           </TouchableOpacity>
         </View>

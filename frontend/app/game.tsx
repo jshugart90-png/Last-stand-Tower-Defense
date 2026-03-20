@@ -853,23 +853,11 @@ export default function GameScreen() {
     };
   }, [waveInProgress, currentWave, isPlaying, gameSpeed]);
 
-  // Save coins to backend and player store
-  const handleSaveCoins = async (currentCoins: number) => {
-    playerStore.setCoins(currentCoins);
-    
-    if (!playerStore.playerId) return;
-    try {
-      await gameApi.endGame({
-        player_id: playerStore.playerId,
-        wave_reached: currentWave,
-        coins_earned: currentCoins - GAME_CONFIG.STARTING_COINS,
-        enemies_killed: enemiesKilled,
-        towers_placed: towersPlaced,
-        duration_seconds: Math.floor((Date.now() - gameStartTime) / 1000),
-      });
-    } catch (error) {
-      console.error('Error saving coins:', error);
-    }
+  // Auto-save between waves (in-game coins NOT synced to gems - separate systems)
+  const handleSaveCoins = async (_currentCoins: number) => {
+    // In-game coins don't transfer to persistent gems.
+    // Gems are only awarded at game end based on performance.
+    // This function is kept for save-game compatibility.
   };
 
   // Save full game state for resume
@@ -984,7 +972,6 @@ export default function GameScreen() {
       const response = await gameApi.endGame({
         player_id: playerStore.playerId,
         wave_reached: currentWave,
-        coins_earned: score,
         enemies_killed: enemiesKilled,
         towers_placed: towersPlaced,
         duration_seconds: duration,
@@ -992,7 +979,10 @@ export default function GameScreen() {
 
       if (response.data) {
         playerStore.addXp(response.data.xp_earned);
-        playerStore.setCoins(response.data.new_balance || playerStore.coins);
+        // Sync gems from server (the authoritative source for persistent currency)
+        if (response.data.new_gem_balance !== undefined) {
+          playerStore.setGems(response.data.new_gem_balance);
+        }
       }
 
       playerStore.recordGame(currentWave);

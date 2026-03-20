@@ -1,0 +1,52 @@
+{
+  "summary": {
+    "passed": 5,
+    "total": 5,
+    "success_rate": 100.0
+  },
+  "results": [
+    {
+      "test": "Step 1: Create Player",
+      "success": true,
+      "details": "Player created with ID: 69bdabc2b2a6359f0eb6734f, initial gems: 0",
+      "expected": "",
+      "actual": "",
+      "timestamp": "2026-03-20T20:19:14.543624"
+    },
+    {
+      "test": "Step 2: End Game",
+      "success": true,
+      "details": "Gem rewards calculated correctly: wave_gems=15, kill_gems=8, milestone_gems=3, total=26, new_balance=26",
+      "expected": "",
+      "actual": "",
+      "timestamp": "2026-03-20T20:19:14.593620"
+    },
+    {
+      "test": "Step 3: Verify Player Gems",
+      "success": true,
+      "details": "Player gem balance verified: 26 gems",
+      "expected": "",
+      "actual": "",
+      "timestamp": "2026-03-20T20:19:14.647381"
+    },
+    {
+      "test": "Step 4: Claim Ad Reward",
+      "success": true,
+      "details": "Ad reward claimed successfully: granted 10 gems, new balance: 36",
+      "expected": "",
+      "actual": "",
+      "timestamp": "2026-03-20T20:19:14.693419"
+    },
+    {
+      "test": "Step 5: Gem IAP Purchase",
+      "success": true,
+      "details": "Gem IAP purchase successful: new balance 536 gems",
+      "expected": "",
+      "actual": "",
+      "timestamp": "2026-03-20T20:19:14.741491"
+    }
+  ],
+  "tested_at": "2026-03-20T20:19:14.741752",
+  "backend_url": "https://wave-survival-game-2.preview.emergentagent.com/api",
+  "test_type": "dual_currency_system"
+}

@@ -4,15 +4,15 @@ import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShop
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
 
-// Product ID for in-app purchases - import from iapService for consistency
+// Product ID for in-app purchases
 export const IAP_PRODUCT_IDS = {
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
   REMOVE_ADS: 'com.laststanddefense.remove_ads',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
-  COINS_500: 'com.laststanddefense.coins_500',
-  COINS_2000: 'com.laststanddefense.coins_2000',
-  COINS_5000: 'com.laststanddefense.coins_5000',
-  COINS_12000: 'com.laststanddefense.coins_12000',
+  GEMS_100: 'com.laststanddefense.gems_100',
+  GEMS_500: 'com.laststanddefense.gems_500',
+  GEMS_1500: 'com.laststanddefense.gems_1500',
+  GEMS_4000: 'com.laststanddefense.gems_4000',
 };
 
 // Saved tower state for game resume
@@ -32,7 +32,7 @@ export interface SavedGameState {
   currentWave: number;
   waveInProgress: boolean;
   
-  // Resources
+  // Resources (in-game coins only - not persistent)
   coins: number;
   baseHealth: number;
   score: number;
@@ -66,20 +66,20 @@ interface PlayerState {
   // Progression
   xp: number;
   level: number;
-  coins: number;
+  gems: number;  // Persistent currency (earned from gameplay, IAP, ads)
   
   // Stats
   totalWavesSurvived: number;
   gamesPlayed: number;
   bestWave: number;
   
-  // Tower unlocks (purchased in shop)
+  // Tower unlocks (purchased in shop with gems)
   unlockedTowers: TowerType[];
   
-  // Tower upgrades (purchased in shop - permanent stat boosts)
+  // Tower upgrades (purchased in shop with gems - permanent stat boosts)
   towerUpgradeLevels: Record<TowerType, number>;
   
-  // Speed unlocks (purchased in shop)
+  // Speed unlocks (purchased in shop with gems)
   unlockedSpeeds: GameSpeed[];
   
   // Skins
@@ -114,24 +114,24 @@ interface PlayerActions {
   // Progression
   addXp: (amount: number) => void;
   setLevel: (level: number) => void;
-  setCoins: (coins: number) => void;
-  addCoins: (amount: number) => void;
+  setGems: (gems: number) => void;
+  addGems: (amount: number) => void;
   
   // Stats
   recordGame: (wavesReached: number) => void;
   setBestWave: (wave: number) => void;
   
-  // Tower unlocks
+  // Tower unlocks (gems)
   purchaseTower: (tower: TowerType) => boolean;
   isTowerUnlocked: (tower: TowerType) => boolean;
   getTowerUnlockPrice: (tower: TowerType) => number;
   
-  // Tower upgrades (shop)
+  // Tower upgrades (shop, gems)
   purchaseTowerUpgrade: (tower: TowerType) => boolean;
   getTowerUpgradeLevel: (tower: TowerType) => number;
   getTowerUpgradePrice: (tower: TowerType) => number;
   
-  // Speed unlocks
+  // Speed unlocks (gems)
   purchaseSpeed: (speed: GameSpeed) => boolean;
   isSpeedUnlocked: (speed: GameSpeed) => boolean;
   getSpeedUnlockPrice: (speed: GameSpeed) => number;
@@ -162,6 +162,7 @@ interface PlayerActions {
   clearSavedGame: () => void;
   hasSavedGame: () => boolean;
   getSavedGame: () => SavedGameState | null;
+  clearCurrentGameProgress: () => void;
   
   // Sync from server
   syncFromServer: (data: Partial<PlayerState>) => void;
@@ -176,7 +177,7 @@ const initialState: PlayerState = {
   nickname: 'Player',
   xp: 0,
   level: 1,
-  coins: 100,
+  gems: 0,  // Start with 0 gems - earn through gameplay
   totalWavesSurvived: 0,
   gamesPlayed: 0,
   bestWave: 0,
@@ -199,7 +200,7 @@ const initialState: PlayerState = {
   hapticEnabled: true,
   gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
-  savedGame: null,  // No saved game initially
+  savedGame: null,
 };
 
 export const usePlayerStore = create<PlayerState & PlayerActions>()(
@@ -220,8 +221,8 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
     },
     setLevel: (level) => set({ level }),
-    setCoins: (coins) => set({ coins }),
-    addCoins: (amount) => set(state => ({ coins: state.coins + amount })),
+    setGems: (gems) => set({ gems }),
+    addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
     // Stats
     recordGame: (wavesReached) => {
@@ -233,14 +234,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
     setBestWave: (wave) => set({ bestWave: wave }),
 
-    // Tower unlocks
+    // Tower unlocks (gems)
     purchaseTower: (tower) => {
       const state = get();
       if (state.unlockedTowers.includes(tower)) return false;
       const price = TOWER_UNLOCK_PRICES[tower];
-      if (state.coins < price) return false;
+      if (state.gems < price) return false;
       set({
-        coins: state.coins - price,
+        gems: state.gems - price,
         unlockedTowers: [...state.unlockedTowers, tower],
       });
       return true;
@@ -250,15 +251,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     
     getTowerUnlockPrice: (tower) => TOWER_UNLOCK_PRICES[tower],
     
-    // Tower upgrades (shop - permanent stat boosts)
+    // Tower upgrades (shop - permanent stat boosts, paid in gems)
     purchaseTowerUpgrade: (tower) => {
       const state = get();
       if (!state.unlockedTowers.includes(tower)) return false;
       const currentLevel = state.towerUpgradeLevels[tower];
       const price = getShopUpgradeCost(tower, currentLevel);
-      if (state.coins < price) return false;
+      if (state.gems < price) return false;
       set({
-        coins: state.coins - price,
+        gems: state.gems - price,
         towerUpgradeLevels: {
           ...state.towerUpgradeLevels,
           [tower]: currentLevel + 1,
@@ -274,14 +275,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       return getShopUpgradeCost(tower, currentLevel);
     },
     
-    // Speed unlocks
+    // Speed unlocks (gems)
     purchaseSpeed: (speed) => {
       const state = get();
       if (state.unlockedSpeeds.includes(speed)) return false;
       const price = SPEED_UNLOCK_PRICES[speed];
-      if (state.coins < price) return false;
+      if (state.gems < price) return false;
       set({
-        coins: state.coins - price,
+        gems: state.gems - price,
         unlockedSpeeds: [...state.unlockedSpeeds, speed].sort((a, b) => a - b) as GameSpeed[],
       });
       return true;
@@ -333,13 +334,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
 
     // SAVED GAME FUNCTIONS
     saveGame: (gameState: SavedGameState) => {
-      set({ 
-        savedGame: gameState,
-        coins: gameState.coins, // Update player coins to match saved game
-      });
+      set({ savedGame: gameState });
+      // Note: in-game coins are NOT synced to gems. They are separate.
     },
     
     clearSavedGame: () => {
+      set({ savedGame: null });
+    },
+    
+    clearCurrentGameProgress: () => {
       set({ savedGame: null });
     },
     

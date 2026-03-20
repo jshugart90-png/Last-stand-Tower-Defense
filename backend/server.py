@@ -49,7 +49,7 @@ class PlayerUpdate(BaseModel):
     nickname: Optional[str] = None
     xp: Optional[int] = None
     level: Optional[int] = None
-    coins: Optional[int] = None
+    gems: Optional[int] = None
     total_waves_survived: Optional[int] = None
     games_played: Optional[int] = None
     unlocked_towers: Optional[List[str]] = None
@@ -64,7 +64,7 @@ class Player(BaseModel):
     device_id: str
     xp: int = 0
     level: int = 1
-    coins: int = 0
+    gems: int = 0
     total_waves_survived: int = 0
     games_played: int = 0
     best_wave: int = 0
@@ -94,20 +94,20 @@ class LeaderboardEntry(BaseModel):
 class GameResult(BaseModel):
     player_id: str
     wave_reached: int
-    coins_earned: int
     enemies_killed: int
     towers_placed: int
     duration_seconds: int
 
 class RewardClaim(BaseModel):
     player_id: str
-    reward_type: str  # "coins", "revive", "double_damage"
+    reward_type: str  # "gems", "revive", "double_damage"
     ad_type: str  # "rewarded", "interstitial"
 
 class PurchaseRequest(BaseModel):
     player_id: str
-    item_type: str  # "premium", "arena_expansion", "skin"
-    item_id: Optional[str] = None  # for skins
+    item_type: str  # "premium", "arena_expansion", "skin", "gems"
+    item_id: Optional[str] = None
+    gems_amount: Optional[int] = None  # for gem pack purchases
 
 class AnalyticsEvent(BaseModel):
     player_id: str
@@ -115,23 +115,43 @@ class AnalyticsEvent(BaseModel):
     event_data: Dict[str, Any] = {}
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+# ==================== Gem Reward Calculations ====================
+
+def calculate_gem_reward(wave_reached: int, enemies_killed: int) -> dict:
+    """Calculate gem rewards based on game performance"""
+    # Base: 1 gem per wave survived
+    wave_gems = wave_reached
+    
+    # Bonus: 1 gem per 10 enemies killed
+    kill_gems = enemies_killed // 10
+    
+    # Milestone bonuses: +3 gems at wave 10, 20, 30, etc.
+    milestone_gems = (wave_reached // 10) * 3
+    
+    total = wave_gems + kill_gems + milestone_gems
+    
+    return {
+        "wave_gems": wave_gems,
+        "kill_gems": kill_gems,
+        "milestone_gems": milestone_gems,
+        "total_gems": total,
+    }
+
 # ==================== Player Routes ====================
 
 @api_router.post("/players", response_model=dict)
 async def create_player(player_data: PlayerCreate):
     """Create a new player or return existing one by device_id"""
-    # Check if player exists
     existing = await db.players.find_one({"device_id": player_data.device_id})
     if existing:
         return serialize_doc(existing)
     
-    # Create new player
     player_doc = {
         "nickname": player_data.nickname,
         "device_id": player_data.device_id,
         "xp": 0,
         "level": 1,
-        "coins": 100,  # Starting coins
+        "gems": 0,
         "total_waves_survived": 0,
         "games_played": 0,
         "best_wave": 0,
@@ -147,7 +167,6 @@ async def create_player(player_data: PlayerCreate):
     result = await db.players.insert_one(player_doc)
     player_doc["_id"] = str(result.inserted_id)
     
-    # Also create leaderboard entry
     await db.leaderboard.insert_one({
         "player_id": str(result.inserted_id),
         "nickname": player_data.nickname,
@@ -204,18 +223,22 @@ async def update_player(player_id: str, update_data: PlayerUpdate):
 
 @api_router.post("/games/end", response_model=dict)
 async def end_game(game_result: GameResult):
-    """Record game result and update player stats"""
+    """Record game result and update player stats - awards gems based on performance"""
     try:
         player = await db.players.find_one({"_id": ObjectId(game_result.player_id)})
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
         
-        # Calculate XP earned (10 XP per wave + 1 XP per enemy killed)
+        # Calculate XP earned
         xp_earned = (game_result.wave_reached * 10) + game_result.enemies_killed
         
-        # Calculate new level (every 100 XP = 1 level)
+        # Calculate new level
         new_xp = player.get("xp", 0) + xp_earned
         new_level = (new_xp // 100) + 1
+        
+        # Calculate gem rewards (the new persistent currency)
+        gem_reward = calculate_gem_reward(game_result.wave_reached, game_result.enemies_killed)
+        new_gems = player.get("gems", 0) + gem_reward["total_gems"]
         
         # Check for new tower unlocks based on level
         tower_unlocks = {
@@ -230,14 +253,12 @@ async def end_game(game_result: GameResult):
             if new_level >= level and tower not in current_towers:
                 current_towers.append(tower)
         
-        # Update best wave if new record
         best_wave = max(player.get("best_wave", 0), game_result.wave_reached)
         
-        # Update player
         update_data = {
             "xp": new_xp,
             "level": new_level,
-            "coins": player.get("coins", 0) + game_result.coins_earned,
+            "gems": new_gems,
             "total_waves_survived": player.get("total_waves_survived", 0) + game_result.wave_reached,
             "games_played": player.get("games_played", 0) + 1,
             "best_wave": best_wave,
@@ -250,7 +271,6 @@ async def end_game(game_result: GameResult):
             {"$set": update_data}
         )
         
-        # Update leaderboard
         await db.leaderboard.update_one(
             {"player_id": game_result.player_id},
             {"$set": {
@@ -262,15 +282,15 @@ async def end_game(game_result: GameResult):
             upsert=True
         )
         
-        # Check for newly unlocked towers
         newly_unlocked = [t for t in current_towers if t not in player.get("unlocked_towers", [])]
         
         return {
             "xp_earned": xp_earned,
             "new_xp": new_xp,
             "new_level": new_level,
-            "coins_earned": game_result.coins_earned,
-            "new_balance": player.get("coins", 0) + game_result.coins_earned,
+            "gems_earned": gem_reward["total_gems"],
+            "gem_breakdown": gem_reward,
+            "new_gem_balance": new_gems,
             "new_best_wave": best_wave > player.get("best_wave", 0),
             "newly_unlocked_towers": newly_unlocked
         }
@@ -293,9 +313,8 @@ async def get_player_rank(player_id: str):
     if not player_entry:
         raise HTTPException(status_code=404, detail="Player not found in leaderboard")
     
-    # Count players with better scores
     rank = await db.leaderboard.count_documents({"best_wave": {"$gt": player_entry["best_wave"]}})
-    rank += 1  # Add 1 because rank is 1-indexed
+    rank += 1
     
     return {
         "rank": rank,
@@ -306,34 +325,28 @@ async def get_player_rank(player_id: str):
 
 @api_router.post("/rewards/claim", response_model=dict)
 async def claim_reward(reward: RewardClaim):
-    """Claim a reward from watching an ad"""
+    """Claim a reward from watching an ad - now gives gems"""
     try:
         player = await db.players.find_one({"_id": ObjectId(reward.player_id)})
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
         
-        reward_values = {
-            "coins": 50,  # Extra coins
-            "revive": 1,  # One revive token (handled client-side)
-            "double_damage": 30  # 30 seconds of double damage
-        }
-        
         response = {"success": True, "reward_type": reward.reward_type}
         
-        if reward.reward_type == "coins":
-            new_coins = player.get("coins", 0) + reward_values["coins"]
+        if reward.reward_type == "gems":
+            gems_granted = 10  # 10 gems per ad watch
+            new_gems = player.get("gems", 0) + gems_granted
             await db.players.update_one(
                 {"_id": ObjectId(reward.player_id)},
-                {"$set": {"coins": new_coins, "updated_at": datetime.utcnow()}}
+                {"$set": {"gems": new_gems, "updated_at": datetime.utcnow()}}
             )
-            response["coins_granted"] = reward_values["coins"]
-            response["new_balance"] = new_coins
+            response["gems_granted"] = gems_granted
+            response["new_gem_balance"] = new_gems
         elif reward.reward_type == "revive":
             response["revive_granted"] = True
         elif reward.reward_type == "double_damage":
-            response["duration_seconds"] = reward_values["double_damage"]
+            response["duration_seconds"] = 30
         
-        # Log analytics
         await db.analytics.insert_one({
             "player_id": reward.player_id,
             "event_type": "ad_watched",
@@ -365,6 +378,10 @@ async def process_purchase(purchase: PurchaseRequest):
             update_data["premium"] = True
         elif purchase.item_type == "arena_expansion":
             update_data["arena_expanded"] = True
+        elif purchase.item_type == "gems" and purchase.gems_amount:
+            # IAP gem pack purchase - add gems to balance
+            new_gems = player.get("gems", 0) + purchase.gems_amount
+            update_data["gems"] = new_gems
         elif purchase.item_type == "skin" and purchase.item_id:
             current_skins = player.get("unlocked_skins", ["default"])
             if purchase.item_id not in current_skins:
@@ -378,18 +395,21 @@ async def process_purchase(purchase: PurchaseRequest):
             {"$set": update_data}
         )
         
-        # Log analytics
         await db.analytics.insert_one({
             "player_id": purchase.player_id,
             "event_type": "purchase_completed",
             "event_data": {
                 "item_type": purchase.item_type,
-                "item_id": purchase.item_id
+                "item_id": purchase.item_id,
+                "gems_amount": purchase.gems_amount
             },
             "timestamp": datetime.utcnow()
         })
         
-        return {"success": True, "item_type": purchase.item_type, "item_id": purchase.item_id}
+        result = {"success": True, "item_type": purchase.item_type, "item_id": purchase.item_id}
+        if "gems" in update_data:
+            result["new_gem_balance"] = update_data["gems"]
+        return result
     except Exception as e:
         logger.error(f"Error processing purchase: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -411,13 +431,13 @@ async def log_analytics(event: AnalyticsEvent):
 
 @api_router.get("/skins", response_model=List[dict])
 async def get_available_skins():
-    """Get all available tower skins"""
+    """Get all available tower skins - priced in gems"""
     skins = [
         {"id": "default", "name": "Default", "price": 0, "price_type": "free", "color": "#4A90D9"},
-        {"id": "neon", "name": "Neon", "price": 100, "price_type": "coins", "color": "#00FF88"},
-        {"id": "military", "name": "Military", "price": 150, "price_type": "coins", "color": "#4A5D23"},
-        {"id": "ice", "name": "Ice", "price": 200, "price_type": "coins", "color": "#00D4FF"},
-        {"id": "gold", "name": "Gold", "price": 500, "price_type": "coins", "color": "#FFD700"},
+        {"id": "neon", "name": "Neon", "price": 25, "price_type": "gems", "color": "#00FF88"},
+        {"id": "military", "name": "Military", "price": 40, "price_type": "gems", "color": "#4A5D23"},
+        {"id": "ice", "name": "Ice", "price": 50, "price_type": "gems", "color": "#00D4FF"},
+        {"id": "gold", "name": "Gold", "price": 100, "price_type": "gems", "color": "#FFD700"},
         {"id": "cyber", "name": "Cyber", "price": 2.99, "price_type": "premium", "color": "#FF00FF"},
     ]
     return skins
@@ -448,29 +468,28 @@ async def equip_skin(player_id: str, tower_type: str, skin_id: str):
 
 @api_router.post("/skins/purchase", response_model=dict)
 async def purchase_skin(player_id: str, skin_id: str):
-    """Purchase a skin with coins"""
+    """Purchase a skin with gems"""
     try:
         player = await db.players.find_one({"_id": ObjectId(player_id)})
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
         
-        # Get skin prices
         skin_prices = {
             "default": 0,
-            "neon": 100,
-            "military": 150,
-            "ice": 200,
-            "gold": 500,
+            "neon": 25,
+            "military": 40,
+            "ice": 50,
+            "gold": 100,
         }
         
         if skin_id not in skin_prices:
             raise HTTPException(status_code=400, detail="Invalid skin or premium skin")
         
         price = skin_prices[skin_id]
-        current_coins = player.get("coins", 0)
+        current_gems = player.get("gems", 0)
         
-        if current_coins < price:
-            raise HTTPException(status_code=400, detail="Not enough coins")
+        if current_gems < price:
+            raise HTTPException(status_code=400, detail="Not enough gems")
         
         current_skins = player.get("unlocked_skins", ["default"])
         if skin_id in current_skins:
@@ -481,7 +500,7 @@ async def purchase_skin(player_id: str, skin_id: str):
         await db.players.update_one(
             {"_id": ObjectId(player_id)},
             {"$set": {
-                "coins": current_coins - price,
+                "gems": current_gems - price,
                 "unlocked_skins": current_skins,
                 "updated_at": datetime.utcnow()
             }}
@@ -490,8 +509,8 @@ async def purchase_skin(player_id: str, skin_id: str):
         return {
             "success": True,
             "skin_id": skin_id,
-            "coins_spent": price,
-            "new_balance": current_coins - price
+            "gems_spent": price,
+            "new_gem_balance": current_gems - price
         }
     except HTTPException:
         raise

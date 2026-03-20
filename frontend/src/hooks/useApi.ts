@@ -31,7 +31,6 @@ export const gameApi = {
   endGame: (data: {
     player_id: string;
     wave_reached: number;
-    coins_earned: number;
     enemies_killed: number;
     towers_placed: number;
     duration_seconds: number;
@@ -62,6 +61,7 @@ export const purchaseApi = {
     player_id: string;
     item_type: string;
     item_id?: string;
+    gems_amount?: number;
   }) => api.post('/purchases', data),
 };
 

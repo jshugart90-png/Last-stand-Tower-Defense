@@ -12,20 +12,20 @@ export const TARGETING_MODES: { id: TargetingMode; label: string; description: s
 export type GameSpeed = 1 | 2 | 3 | 5 | 10;
 export const SPEED_UNLOCK_PRICES: Record<GameSpeed, number> = {
   1: 0,      // Free
-  2: 300,    // Unlock 2x speed
-  3: 800,    // Unlock 3x speed
-  5: 2000,   // Unlock 5x speed
-  10: 5000,  // Unlock 10x speed
+  2: 30,     // 30 gems for 2x speed
+  3: 80,     // 80 gems for 3x speed
+  5: 150,    // 150 gems for 5x speed
+  10: 300,   // 300 gems for 10x speed
 };
 
-// Tower unlock prices (coins) - purchased in shop
+// Tower unlock prices (gems) - purchased in shop
 export const TOWER_UNLOCK_PRICES = {
   machine_gun: 0,      // Free starter tower
-  sniper: 2000,        // Long range
-  splash: 3500,        // Area damage
-  freeze: 3000,        // Slow enemies
-  missile: 6000,       // High damage
-  laser: 10000,        // Most expensive - progressive damage
+  sniper: 50,          // 50 gems
+  splash: 75,          // 75 gems
+  freeze: 60,          // 60 gems
+  missile: 100,        // 100 gems
+  laser: 200,          // 200 gems
 };
 
 // Tower definitions
@@ -265,15 +265,15 @@ export const getInfiniteUpgradeCost = (baseCost: number, currentLevel: number): 
   return Math.floor(baseUpgradeCost * Math.pow(GAME_CONFIG.UPGRADE_COST_MULTIPLIER, currentLevel));
 };
 
-// Shop tower upgrade prices (permanent stat boosts)
+// Shop tower upgrade prices in GEMS (permanent stat boosts)
 export const getShopUpgradeCost = (towerType: TowerType, currentLevel: number): number => {
   const basePrices: Record<TowerType, number> = {
-    machine_gun: 200,
-    sniper: 300,
-    splash: 350,
-    freeze: 250,
-    missile: 400,
-    laser: 500,
+    machine_gun: 15,
+    sniper: 25,
+    splash: 30,
+    freeze: 20,
+    missile: 35,
+    laser: 50,
   };
   return Math.floor(basePrices[towerType] * Math.pow(1.5, currentLevel));
 };

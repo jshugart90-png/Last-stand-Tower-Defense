@@ -4,27 +4,27 @@ export const IAP_PRODUCTS = {
   REMOVE_ADS: 'com.laststanddefense.remove_ads',
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
-  COINS_500: 'com.laststanddefense.coins_500',
-  COINS_2000: 'com.laststanddefense.coins_2000',
-  COINS_5000: 'com.laststanddefense.coins_5000',
-  COINS_12000: 'com.laststanddefense.coins_12000',
+  GEMS_100: 'com.laststanddefense.gems_100',
+  GEMS_500: 'com.laststanddefense.gems_500',
+  GEMS_1500: 'com.laststanddefense.gems_1500',
+  GEMS_4000: 'com.laststanddefense.gems_4000',
 };
 
 export const IAP_PRICES: Record<string, string> = {
   [IAP_PRODUCTS.REMOVE_ADS]: '$2.99',
   [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
   [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
-  [IAP_PRODUCTS.COINS_500]: '$0.99',
-  [IAP_PRODUCTS.COINS_2000]: '$1.99',
-  [IAP_PRODUCTS.COINS_5000]: '$4.99',
-  [IAP_PRODUCTS.COINS_12000]: '$9.99',
+  [IAP_PRODUCTS.GEMS_100]: '$0.99',
+  [IAP_PRODUCTS.GEMS_500]: '$1.99',
+  [IAP_PRODUCTS.GEMS_1500]: '$4.99',
+  [IAP_PRODUCTS.GEMS_4000]: '$9.99',
 };
 
-export const COIN_PACK_AMOUNTS: Record<string, number> = {
-  [IAP_PRODUCTS.COINS_500]: 500,
-  [IAP_PRODUCTS.COINS_2000]: 2000,
-  [IAP_PRODUCTS.COINS_5000]: 5000,
-  [IAP_PRODUCTS.COINS_12000]: 12000,
+export const GEM_PACK_AMOUNTS: Record<string, number> = {
+  [IAP_PRODUCTS.GEMS_100]: 100,
+  [IAP_PRODUCTS.GEMS_500]: 500,
+  [IAP_PRODUCTS.GEMS_1500]: 1500,
+  [IAP_PRODUCTS.GEMS_4000]: 4000,
 };
 
 export const isIAPAvailable = (): boolean => true;

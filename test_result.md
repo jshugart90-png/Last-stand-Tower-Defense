@@ -213,6 +213,21 @@ backend:
         agent: "testing"
         comment: "TESTED: Analytics API works correctly. Successfully logged game_start event with test data."
 
+  - task: "Dual-Currency System (Gems)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Implemented complete gem economy: gem rewards in game end API, gem rewards for ads, gem IAP purchases, gem-based skin pricing"
+      - working: true
+        agent: "testing"
+        comment: "TESTED: Complete dual-currency system working perfectly. 5/5 test steps passed: 1) Created player 'GemEcon' ✅, 2) Game end correctly calculated gem rewards (wave_gems=15, kill_gems=8, milestone_gems=3, total=26) ✅, 3) Player gem balance verified at 26 ✅, 4) Ad reward granted 10 gems (new balance 36) ✅, 5) IAP purchase added 500 gems (new balance 536) ✅. Full gem economy flow: earn through gameplay → earn through ads → buy through IAP working correctly."
+
 frontend:
   - task: "Home Screen UI"
     implemented: true
@@ -311,4 +326,6 @@ agent_communication:
     message: "COMPREHENSIVE RE-TESTING COMPLETE ✅ All 11/11 backend API endpoints tested successfully with new requirements: 1) POST /api/players - Player creation working ✅, 2) GET /api/players/device/{id} - Device lookup working ✅, 3) POST /api/games/end - Game scoring and progression working ✅, 4) GET /api/leaderboard - Global rankings working ✅, 5) POST /api/rewards/claim with ad_type:'rewarded' - Coin/revive rewards working ✅, 6) POST /api/purchases with item_type:'premium' and 'arena_expansion' using proper product IDs (com.laststanddefense.remove_ads) working ✅, 7) GET /api/skins - 6 available skins returned ✅, 8) POST /api/analytics - Event tracking working ✅. Test suite created at /app/backend_test.py with detailed results at /app/backend_test_results.json. 100% success rate with proper IAP product ID format validation."
   - agent: "testing"
     message: "NEW_BALANCE FIELD VERIFICATION COMPLETE ✅ Focused test confirmed game end endpoint returns correct new_balance field. Created player 'BalanceTest' with 100 starting coins, submitted game with wave_reached=5, coins_earned=150, enemies_killed=20, towers_placed=3, duration_seconds=60. Response correctly returned new_balance=250 (100+150). Player balance verified at 250 coins. Critical functionality working as expected."
+  - agent: "testing"
+    message: "DUAL-CURRENCY SYSTEM TEST COMPLETE ✅ Comprehensive testing of gem economy flow completed successfully. All 5 test steps passed (100% success rate): 1) Created player 'GemEcon' with device_id 'gem-test-device' ✅, 2) Game end API correctly calculated gem rewards for wave_reached=15, enemies_killed=80 (wave_gems=15, kill_gems=8, milestone_gems=3, total=26) ✅, 3) Player gem balance verified at 26 gems ✅, 4) Ad reward claim granted 10 gems (new balance 36) ✅, 5) IAP gem purchase added 500 gems (new balance 536) ✅. Complete gem economy flow working: earn through gameplay → earn through ads → buy through IAP. Test results saved to /app/gem_economy_test_results.json."
 
