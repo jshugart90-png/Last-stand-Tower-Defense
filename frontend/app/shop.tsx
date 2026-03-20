@@ -23,7 +23,7 @@ import {
   isNativeAdsAvailable, isAdsInitialized 
 } from '../src/services/adService';
 import { 
-  IAP_PRODUCTS, IAP_PRICES, requestPurchase, 
+  IAP_PRODUCTS, IAP_PRICES, COIN_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
 import BannerAdComponent from '../src/components/BannerAdComponent';
@@ -61,7 +61,7 @@ export default function ShopScreen() {
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'arena' | 'skins'>('towers');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'coins' | 'arena' | 'skins'>('towers');
   const [adLoading, setAdLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
 
@@ -97,9 +97,10 @@ export default function ShopScreen() {
     if (playerStore.coins < price) {
       Alert.alert(
         'Not Enough Coins',
-        `You need ${price - playerStore.coins} more coins.`,
+        `You need ${price} coins but only have ${playerStore.coins}.\n\nEarn coins by playing games, watching ads, or buying coin packs!`,
         [
           { text: 'Cancel', style: 'cancel' },
+          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
           { text: 'Watch Ad', onPress: handleWatchAdForCoins },
         ]
       );
@@ -138,8 +139,12 @@ export default function ShopScreen() {
     if (playerStore.coins < price) {
       Alert.alert(
         'Not Enough Coins',
-        `You need ${price - playerStore.coins} more coins.`,
-        [{ text: 'OK' }]
+        `You need ${price} coins but only have ${playerStore.coins}.\n\nEarn coins by playing games, watching ads, or buying coin packs!`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
+          { text: 'Watch Ad', onPress: handleWatchAdForCoins },
+        ]
       );
       return;
     }
@@ -357,6 +362,60 @@ export default function ShopScreen() {
     }
   };
 
+
+  // Handle coin pack purchase (IAP)
+  const handlePurchaseCoinPack = async (productId: string) => {
+    const coinAmount = COIN_PACK_AMOUNTS[productId];
+    const price = IAP_PRICES[productId];
+    
+    if (!coinAmount) return;
+
+    if (isIAPAvailable() && isIAPInitialized()) {
+      // Real IAP flow
+      setPurchaseLoading(true);
+      try {
+        const result = await requestPurchase(productId);
+        if (result.success) {
+          playerStore.addCoins(coinAmount);
+          if (playerStore.playerId) {
+            try {
+              await purchaseApi.process({
+                player_id: playerStore.playerId,
+                item_type: 'coins',
+                item_id: productId,
+              });
+            } catch (e) {
+              console.error('Backend purchase report failed:', e);
+            }
+          }
+          Alert.alert('Coins Added!', `${coinAmount.toLocaleString()} coins have been added to your balance!`);
+        } else if (result.error && result.error !== 'Purchase cancelled') {
+          Alert.alert('Purchase Failed', result.error);
+        }
+      } catch (e) {
+        Alert.alert('Error', 'Purchase failed. Please try again.');
+      } finally {
+        setPurchaseLoading(false);
+      }
+    } else {
+      // Simulated purchase for development/testing
+      Alert.alert(
+        `Buy ${coinAmount.toLocaleString()} Coins`,
+        `Purchase ${coinAmount.toLocaleString()} coins for ${price}?\n\n(IAP requires a native build - simulating for testing)`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Simulate Purchase',
+            onPress: () => {
+              playerStore.addCoins(coinAmount);
+              Alert.alert('Coins Added!', `${coinAmount.toLocaleString()} coins added! (Simulated)`);
+            }
+          },
+        ]
+      );
+    }
+  };
+
   // Handle watch ad for coins (AdMob Rewarded Ad)
   const handleWatchAdForCoins = async () => {
     const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
@@ -548,6 +607,14 @@ export default function ShopScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
+          style={[styles.tab, selectedTab === 'coins' && styles.tabActive]}
+          onPress={() => setSelectedTab('coins')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'coins' && styles.tabTextActive]}>
+            Coins
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.tab, selectedTab === 'speeds' && styles.tabActive]}
           onPress={() => setSelectedTab('speeds')}
         >
@@ -583,6 +650,109 @@ export default function ShopScreen() {
             </Text>
             
             {(Object.keys(TOWERS) as TowerType[]).map(renderTowerCard)}
+          </View>
+        )}
+
+        {/* Coins Tab */}
+        {selectedTab === 'coins' && (
+          <View>
+            <Text style={styles.sectionTitle}>Buy Coins</Text>
+            <Text style={styles.sectionSubtitle}>
+              Purchase coins to unlock towers, upgrades, and more
+            </Text>
+
+            <View style={styles.coinPacksContainer}>
+              {/* Small Pack */}
+              <TouchableOpacity 
+                style={styles.coinPackCard}
+                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_500)}
+                disabled={purchaseLoading}
+              >
+                <View style={styles.coinPackIconWrap}>
+                  <FontAwesome5 name="coins" size={24} color="#FFD700" />
+                </View>
+                <Text style={styles.coinPackAmount}>500</Text>
+                <Text style={styles.coinPackLabel}>Coins</Text>
+                <View style={styles.coinPackPriceTag}>
+                  {purchaseLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.coinPackPrice}>$0.99</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Medium Pack */}
+              <TouchableOpacity 
+                style={[styles.coinPackCard, styles.coinPackPopular]}
+                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_2000)}
+                disabled={purchaseLoading}
+              >
+                <View style={styles.popularBadge}>
+                  <Text style={styles.popularBadgeText}>POPULAR</Text>
+                </View>
+                <View style={styles.coinPackIconWrap}>
+                  <FontAwesome5 name="coins" size={28} color="#FFD700" />
+                </View>
+                <Text style={styles.coinPackAmount}>2,000</Text>
+                <Text style={styles.coinPackLabel}>Coins</Text>
+                <View style={[styles.coinPackPriceTag, styles.coinPackPricePopular]}>
+                  {purchaseLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.coinPackPrice}>$1.99</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Large Pack */}
+              <TouchableOpacity 
+                style={styles.coinPackCard}
+                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_5000)}
+                disabled={purchaseLoading}
+              >
+                <View style={styles.coinPackIconWrap}>
+                  <FontAwesome5 name="coins" size={32} color="#FFD700" />
+                  <FontAwesome5 name="coins" size={18} color="#FFD700" style={{ position: 'absolute', top: -4, right: -8 }} />
+                </View>
+                <Text style={styles.coinPackAmount}>5,000</Text>
+                <Text style={styles.coinPackLabel}>Coins</Text>
+                <View style={styles.coinPackPriceTag}>
+                  {purchaseLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.coinPackPrice}>$4.99</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+
+              {/* Mega Pack */}
+              <TouchableOpacity 
+                style={[styles.coinPackCard, styles.coinPackMega]}
+                onPress={() => handlePurchaseCoinPack(IAP_PRODUCTS.COINS_12000)}
+                disabled={purchaseLoading}
+              >
+                <View style={styles.bestValueBadge}>
+                  <Text style={styles.bestValueBadgeText}>BEST VALUE</Text>
+                </View>
+                <View style={styles.coinPackIconWrap}>
+                  <FontAwesome5 name="gem" size={32} color="#E74C3C" />
+                </View>
+                <Text style={styles.coinPackAmount}>12,000</Text>
+                <Text style={styles.coinPackLabel}>Coins</Text>
+                <View style={[styles.coinPackPriceTag, styles.coinPackPriceMega]}>
+                  {purchaseLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.coinPackPrice}>$9.99</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.realMoneyNote}>
+              * Real money purchases (In-App Purchase)
+            </Text>
           </View>
         )}
 
@@ -1088,5 +1258,100 @@ const styles = StyleSheet.create({
   restoreText: {
     color: '#4A90D9',
     fontSize: 14,
+  },
+  // Coin Pack styles
+  coinPacksContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 8,
+  },
+  coinPackCard: {
+    width: '47%' as any,
+    backgroundColor: '#1e2a4a',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2a3a5e',
+    marginBottom: 4,
+  },
+  coinPackPopular: {
+    borderColor: '#4A90D9',
+    borderWidth: 2,
+  },
+  coinPackMega: {
+    borderColor: '#E74C3C',
+    borderWidth: 2,
+  },
+  coinPackIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#2a3a5e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: 8,
+  },
+  coinPackAmount: {
+    color: '#FFD700',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  coinPackLabel: {
+    color: '#8899aa',
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  coinPackPriceTag: {
+    backgroundColor: '#27ae60',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  coinPackPricePopular: {
+    backgroundColor: '#4A90D9',
+  },
+  coinPackPriceMega: {
+    backgroundColor: '#E74C3C',
+  },
+  coinPackPrice: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  popularBadge: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    backgroundColor: '#4A90D9',
+    borderTopRightRadius: 11,
+    borderBottomLeftRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  popularBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  bestValueBadge: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    backgroundColor: '#E74C3C',
+    borderTopRightRadius: 11,
+    borderBottomLeftRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  bestValueBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
   },
 });

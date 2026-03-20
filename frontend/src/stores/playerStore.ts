@@ -9,6 +9,10 @@ export const IAP_PRODUCT_IDS = {
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
   REMOVE_ADS: 'com.laststanddefense.remove_ads',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
+  COINS_500: 'com.laststanddefense.coins_500',
+  COINS_2000: 'com.laststanddefense.coins_2000',
+  COINS_5000: 'com.laststanddefense.coins_5000',
+  COINS_12000: 'com.laststanddefense.coins_12000',
 };
 
 // Saved tower state for game resume
