@@ -23,6 +23,10 @@ import {
 } from '../src/constants/game';
 import { gameApi, analyticsApi, rewardApi } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
+import { 
+  isRewardedAdReady, showRewardedAd, loadRewardedAd, 
+  isNativeAdsAvailable, isAdsInitialized 
+} from '../src/services/adService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -996,32 +1000,74 @@ export default function GameScreen() {
   }, [isGameOver]);
 
   const handleWatchAdForRevive = useCallback(async () => {
-    Alert.alert(
-      'Watch Ad',
-      'Watch a short ad to revive with 50% health?\n\n(Can only use once per game)',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Watch',
-          onPress: async () => {
-            grantRevive();
-            useRevive();
-            
-            if (playerStore.playerId) {
-              try {
-                await rewardApi.claim({
-                  player_id: playerStore.playerId,
-                  reward_type: 'revive',
-                  ad_type: 'rewarded',
-                });
-              } catch (e) {
-                console.error('Error claiming reward:', e);
-              }
+    const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+    
+    if (nativeAdsReady && isRewardedAdReady()) {
+      // Show real rewarded ad for revive
+      try {
+        const reward = await showRewardedAd();
+        if (reward) {
+          grantRevive();
+          useRevive();
+          
+          if (playerStore.playerId) {
+            try {
+              await rewardApi.claim({
+                player_id: playerStore.playerId,
+                reward_type: 'revive',
+                ad_type: 'rewarded',
+              });
+            } catch (e) {
+              console.error('Error claiming reward:', e);
             }
+          }
+          // Pre-load next ad
+          loadRewardedAd();
+        } else {
+          Alert.alert('No Reward', 'You need to watch the full ad to revive.');
+        }
+      } catch (e) {
+        console.error('Error showing revive ad:', e);
+        Alert.alert('Error', 'Failed to show ad. Please try again.');
+      }
+    } else if (nativeAdsReady && !isRewardedAdReady()) {
+      // Try to load ad
+      Alert.alert('Loading Ad', 'Please wait...');
+      const loaded = await loadRewardedAd();
+      if (loaded) {
+        handleWatchAdForRevive();
+      } else {
+        Alert.alert('Ad Unavailable', 'No ads available right now.');
+      }
+    } else {
+      // Non-native fallback (development/web)
+      Alert.alert(
+        'Watch Ad',
+        'Rewarded ads require a native build.\n\nSimulate watching ad to revive?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Simulate',
+            onPress: async () => {
+              grantRevive();
+              useRevive();
+              
+              if (playerStore.playerId) {
+                try {
+                  await rewardApi.claim({
+                    player_id: playerStore.playerId,
+                    reward_type: 'revive',
+                    ad_type: 'rewarded',
+                  });
+                } catch (e) {
+                  console.error('Error claiming reward:', e);
+                }
+              }
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   }, [playerStore.playerId, grantRevive, useRevive]);
 
   const handleRestart = useCallback(() => {

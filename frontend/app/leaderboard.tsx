@@ -13,6 +13,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { leaderboardApi } from '../src/hooks/useApi';
+import BannerAdComponent from '../src/components/BannerAdComponent';
 
 interface LeaderboardEntry {
   _id: string;
@@ -141,6 +142,9 @@ export default function LeaderboardScreen() {
           }
         />
       )}
+
+      {/* Banner Ad */}
+      <BannerAdComponent isPremium={playerStore.premium} />
     </SafeAreaView>
   );
 }

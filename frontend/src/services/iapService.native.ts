@@ -1,0 +1,88 @@
+import * as ExpoIAP from 'expo-iap';
+
+export const IAP_PRODUCTS = {
+  REMOVE_ADS: 'com.laststanddefense.remove_ads',
+  ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
+  PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
+};
+
+export const IAP_PRICES: Record<string, string> = {
+  [IAP_PRODUCTS.REMOVE_ADS]: '$2.99',
+  [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
+  [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
+};
+
+export const isIAPAvailable = (): boolean => true;
+
+let iapInitialized = false;
+
+export const initializeIAP = async (): Promise<boolean> => {
+  if (iapInitialized) return true;
+
+  try {
+    await ExpoIAP.initConnection();
+    iapInitialized = true;
+    console.log('IAP connection initialized');
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize IAP:', error);
+    return false;
+  }
+};
+
+export const getProducts = async (): Promise<any[]> => {
+  if (!iapInitialized) return [];
+
+  try {
+    const skus = Object.values(IAP_PRODUCTS);
+    const products = await ExpoIAP.getProducts({ skus });
+    return products;
+  } catch (error) {
+    console.error('Failed to get products:', error);
+    return [];
+  }
+};
+
+export const requestPurchase = async (productId: string): Promise<{ success: boolean; receipt?: string; error?: string }> => {
+  if (!iapInitialized) {
+    return { success: false, error: 'IAP not initialized' };
+  }
+
+  try {
+    const purchase = await ExpoIAP.requestPurchase({ sku: productId });
+    if (purchase) {
+      await ExpoIAP.finishTransaction({ purchase, isConsumable: productId === IAP_PRODUCTS.ARENA_EXPANSION });
+      return { success: true, receipt: purchase.transactionReceipt };
+    }
+    return { success: false, error: 'Purchase cancelled' };
+  } catch (error: any) {
+    if (error.code === 'E_USER_CANCELLED') {
+      return { success: false, error: 'Purchase cancelled' };
+    }
+    return { success: false, error: error.message || 'Purchase failed' };
+  }
+};
+
+export const restorePurchases = async (): Promise<any[]> => {
+  if (!iapInitialized) return [];
+
+  try {
+    const purchases = await ExpoIAP.getAvailablePurchases();
+    return purchases || [];
+  } catch (error) {
+    console.error('Failed to restore purchases:', error);
+    return [];
+  }
+};
+
+export const endIAPConnection = async (): Promise<void> => {
+  if (!iapInitialized) return;
+  try {
+    await ExpoIAP.endConnection();
+    iapInitialized = false;
+  } catch (error) {
+    console.error('Failed to end IAP connection:', error);
+  }
+};
+
+export const isIAPInitialized = () => iapInitialized;

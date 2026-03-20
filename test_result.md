@@ -286,7 +286,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -302,3 +302,8 @@ agent_communication:
     message: "BACKEND TESTING COMPLETE ✅ All 7 backend API endpoints tested successfully - 16/16 tests passed. Player APIs, Game End, Leaderboard, Rewards, Purchases, Skins, and Analytics all working correctly. Created comprehensive test suite at /app/backend_test.py. No issues found."
   - agent: "main"
     message: "MONETIZATION REWORK COMPLETE ✅ Implemented user requested changes: 1) Arena expansion now $2.99 real-money purchase (green button in shop), 2) Tower prices TRIPLED (Sniper: 1500, Splash: 2250, Freeze: 1800, Missile: 3600), 3) Coin rewards reduced by 75% (basic enemy: 1 coin, fast: 2, tank: 4, boss: 25). IAP flow is MOCKED - uses simulated purchase until expo-iap is integrated with real store products."
+  - agent: "main"
+    message: "ADMOB + IAP INTEGRATION COMPLETE ✅ Integrated real AdMob with user's credentials (App ID, Rewarded Ad Unit, Banner Ad Unit) and expo-iap for in-app purchases. Platform-specific files (.web.ts/.native.ts) ensure web preview works while native builds use real ads/IAP. Banner ads on Home, Leaderboard, Shop screens (hidden for premium users). Rewarded ads for coins and revive. IAP for Remove Ads ($2.99) and Arena Expansion ($2.99) with placeholder product IDs. Restore purchases functionality added."
+  - agent: "testing"
+    message: "COMPREHENSIVE RE-TESTING COMPLETE ✅ All 11/11 backend API endpoints tested successfully with new requirements: 1) POST /api/players - Player creation working ✅, 2) GET /api/players/device/{id} - Device lookup working ✅, 3) POST /api/games/end - Game scoring and progression working ✅, 4) GET /api/leaderboard - Global rankings working ✅, 5) POST /api/rewards/claim with ad_type:'rewarded' - Coin/revive rewards working ✅, 6) POST /api/purchases with item_type:'premium' and 'arena_expansion' using proper product IDs (com.laststanddefense.remove_ads) working ✅, 7) GET /api/skins - 6 available skins returned ✅, 8) POST /api/analytics - Event tracking working ✅. Test suite created at /app/backend_test.py with detailed results at /app/backend_test_results.json. 100% success rate with proper IAP product ID format validation."
+

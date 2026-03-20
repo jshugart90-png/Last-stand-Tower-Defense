@@ -1,0 +1,88 @@
+{
+  "summary": {
+    "passed": 11,
+    "total": 11,
+    "success_rate": 100.0
+  },
+  "results": [
+    {
+      "test": "Health Check",
+      "success": true,
+      "details": "API is healthy",
+      "endpoint": "GET /api/health",
+      "timestamp": "2026-03-20T04:24:28.321828"
+    },
+    {
+      "test": "Create Player",
+      "success": true,
+      "details": "Player created with ID: 69bccbfc53c5894a150c48d6, coins: 100",
+      "endpoint": "POST /api/players",
+      "timestamp": "2026-03-20T04:24:28.378976"
+    },
+    {
+      "test": "Get Player by Device",
+      "success": true,
+      "details": "Retrieved player: TestWarrior2024, level: 1",
+      "endpoint": "GET /api/players/device/{device_id}",
+      "timestamp": "2026-03-20T04:24:28.455128"
+    },
+    {
+      "test": "Game End",
+      "success": true,
+      "details": "XP earned: 125, new level: 2, newly unlocked: []",
+      "endpoint": "POST /api/games/end",
+      "timestamp": "2026-03-20T04:24:28.519078"
+    },
+    {
+      "test": "Get Leaderboard",
+      "success": true,
+      "details": "Retrieved 33 entries, test player included: True",
+      "endpoint": "GET /api/leaderboard",
+      "timestamp": "2026-03-20T04:24:28.569307"
+    },
+    {
+      "test": "Claim Rewarded Ad",
+      "success": true,
+      "details": "Granted 50 coins, new balance: 270",
+      "endpoint": "POST /api/rewards/claim",
+      "timestamp": "2026-03-20T04:24:28.622916"
+    },
+    {
+      "test": "Claim Revive Reward",
+      "success": true,
+      "details": "Revive granted successfully",
+      "endpoint": "POST /api/rewards/claim",
+      "timestamp": "2026-03-20T04:24:28.670989"
+    },
+    {
+      "test": "Purchase Premium",
+      "success": true,
+      "details": "Premium purchase successful with product ID: com.laststanddefense.remove_ads",
+      "endpoint": "POST /api/purchases",
+      "timestamp": "2026-03-20T04:24:28.734816"
+    },
+    {
+      "test": "Purchase Arena Expansion",
+      "success": true,
+      "details": "Arena expansion purchase successful with product ID: com.laststanddefense.arena_expansion",
+      "endpoint": "POST /api/purchases",
+      "timestamp": "2026-03-20T04:24:28.782372"
+    },
+    {
+      "test": "Get Skins",
+      "success": true,
+      "details": "Retrieved 6 skins: Default, Neon, Military...",
+      "endpoint": "GET /api/skins",
+      "timestamp": "2026-03-20T04:24:28.828280"
+    },
+    {
+      "test": "Analytics Event",
+      "success": true,
+      "details": "Logged tower_placement event with data: machine_gun",
+      "endpoint": "POST /api/analytics",
+      "timestamp": "2026-03-20T04:24:28.876058"
+    }
+  ],
+  "tested_at": "2026-03-20T04:24:28.876278",
+  "backend_url": "https://wave-survival-game-2.preview.emergentagent.com/api"
+}

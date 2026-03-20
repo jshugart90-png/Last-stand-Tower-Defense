@@ -4,10 +4,11 @@ import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShop
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
 
-// Product ID for in-app purchases
+// Product ID for in-app purchases - import from iapService for consistency
 export const IAP_PRODUCT_IDS = {
-  ARENA_EXPANSION: 'arena_expansion_299',
-  PREMIUM_UPGRADE: 'premium_upgrade_499',
+  ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
+  REMOVE_ADS: 'com.laststanddefense.remove_ads',
+  PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
 };
 
 // Saved tower state for game resume

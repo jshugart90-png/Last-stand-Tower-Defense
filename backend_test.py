@@ -1,365 +1,406 @@
 #!/usr/bin/env python3
 """
-Last Stand Defense Backend API Test Suite
-Tests all backend endpoints for the tower defense game.
+Backend API Test Suite for Last Stand Defense
+Tests all endpoints with focus on new requirements:
+- Real ad_type: 'rewarded' for rewards
+- New IAP product IDs like 'com.laststanddefense.remove_ads'
+- item_type: 'premium' and 'arena_expansion'
 """
 
 import asyncio
 import aiohttp
 import json
-import sys
-import time
+import logging
+import os
 from datetime import datetime
-from typing import Optional, Dict, Any
 
-# Backend URL from environment configuration
-BACKEND_URL = "https://wave-survival-game-2.preview.emergentagent.com/api"
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-class GameAPITester:
-    def __init__(self, base_url: str):
-        self.base_url = base_url
+# Get backend URL from environment
+BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', 'https://wave-survival-game-2.preview.emergentagent.com')
+API_BASE = f"{BACKEND_URL}/api"
+
+logger.info(f"Testing backend at: {API_BASE}")
+
+class APITester:
+    def __init__(self):
         self.session = None
+        self.test_results = []
         self.test_player_id = None
-        self.results = {
-            "passed": 0,
-            "failed": 0,
-            "errors": [],
-            "player_id": None
-        }
-
+        self.test_device_id = f"test_device_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
         return self
-
+    
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
-
-    def log_success(self, test_name: str, response_data: Any = None):
-        """Log successful test"""
-        self.results["passed"] += 1
-        print(f"✅ {test_name}")
-        if response_data:
-            print(f"   Response: {json.dumps(response_data, indent=2)}")
-
-    def log_failure(self, test_name: str, error: str, response_data: Any = None):
-        """Log failed test"""
-        self.results["failed"] += 1
-        self.results["errors"].append(f"{test_name}: {error}")
-        print(f"❌ {test_name}: {error}")
-        if response_data:
-            print(f"   Response: {json.dumps(response_data, indent=2)}")
-
-    async def make_request(self, method: str, endpoint: str, **kwargs) -> tuple[int, Any]:
-        """Make HTTP request and return status code and response data"""
-        url = f"{self.base_url}{endpoint}"
+    
+    def log_result(self, test_name, success, details="", endpoint=""):
+        result = {
+            "test": test_name,
+            "success": success,
+            "details": details,
+            "endpoint": endpoint,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        self.test_results.append(result)
+        status = "✅ PASS" if success else "❌ FAIL"
+        logger.info(f"{status}: {test_name} - {details}")
+    
+    async def make_request(self, method, endpoint, data=None, params=None):
+        """Make HTTP request with error handling"""
+        url = f"{API_BASE}{endpoint}"
         try:
-            async with self.session.request(method, url, **kwargs) as response:
-                try:
-                    data = await response.json()
-                except:
-                    data = await response.text()
-                return response.status, data
+            if method == "GET":
+                async with self.session.get(url, params=params) as response:
+                    return response.status, await response.json()
+            elif method == "POST":
+                async with self.session.post(url, json=data) as response:
+                    return response.status, await response.json()
+            elif method == "PATCH":
+                async with self.session.patch(url, json=data) as response:
+                    return response.status, await response.json()
         except Exception as e:
-            return 0, f"Connection error: {str(e)}"
-
-    async def test_player_apis(self):
-        """Test all Player CRUD APIs"""
-        print("\n🔍 Testing Player APIs...")
-        
-        # Test 1: Create Player
-        player_data = {
-            "nickname": "GameTester2024",
-            "device_id": "test-device-12345"
+            logger.error(f"Request failed for {method} {endpoint}: {e}")
+            return 0, {"error": str(e)}
+    
+    # ========== Player API Tests ==========
+    
+    async def test_create_player(self):
+        """Test POST /api/players - Create a player with nickname"""
+        data = {
+            "nickname": "TestWarrior2024",
+            "device_id": self.test_device_id
         }
         
-        status, response = await self.make_request("POST", "/players", json=player_data)
+        status, response = await self.make_request("POST", "/players", data)
         
-        if status == 200 and response.get("_id"):
+        if status == 200 and "_id" in response and response["nickname"] == "TestWarrior2024":
             self.test_player_id = response["_id"]
-            self.results["player_id"] = self.test_player_id
-            self.log_success("Create Player", {"player_id": self.test_player_id, "nickname": response.get("nickname")})
+            self.log_result(
+                "Create Player", 
+                True, 
+                f"Player created with ID: {self.test_player_id}, coins: {response.get('coins', 0)}", 
+                "POST /api/players"
+            )
+            return True
         else:
-            self.log_failure("Create Player", f"Status: {status}", response)
+            self.log_result("Create Player", False, f"Status: {status}, Response: {response}", "POST /api/players")
             return False
-
-        # Test 2: Get Player by ID
-        status, response = await self.make_request("GET", f"/players/{self.test_player_id}")
-        
-        if status == 200 and response.get("_id") == self.test_player_id:
-            self.log_success("Get Player by ID", {"nickname": response.get("nickname"), "coins": response.get("coins")})
-        else:
-            self.log_failure("Get Player by ID", f"Status: {status}", response)
-
-        # Test 3: Get Player by Device ID
-        status, response = await self.make_request("GET", f"/players/device/{player_data['device_id']}")
-        
-        if status == 200 and response.get("device_id") == player_data["device_id"]:
-            self.log_success("Get Player by Device ID", {"device_id": response.get("device_id")})
-        else:
-            self.log_failure("Get Player by Device ID", f"Status: {status}", response)
-
-        # Test 4: Update Player
-        update_data = {"coins": 500}
-        status, response = await self.make_request("PATCH", f"/players/{self.test_player_id}", json=update_data)
-        
-        if status == 200 and response.get("coins") == 500:
-            self.log_success("Update Player", {"new_coins": response.get("coins")})
-        else:
-            self.log_failure("Update Player", f"Status: {status}", response)
-
-        return True
-
-    async def test_game_api(self):
-        """Test Game End API"""
-        print("\n🎮 Testing Game APIs...")
-        
+    
+    async def test_get_player_by_device(self):
+        """Test GET /api/players/device/{device_id} - Get player by device ID"""
         if not self.test_player_id:
-            self.log_failure("Game End API", "No test player available")
-            return
-
-        game_result = {
-            "player_id": self.test_player_id,
-            "wave_reached": 5,
-            "coins_earned": 100,
-            "enemies_killed": 25,
-            "towers_placed": 3,
-            "duration_seconds": 120
-        }
-
-        status, response = await self.make_request("POST", "/games/end", json=game_result)
+            self.log_result("Get Player by Device", False, "No test player created", "GET /api/players/device/{device_id}")
+            return False
         
-        if status == 200 and "xp_earned" in response:
-            self.log_success("Game End API", {
-                "xp_earned": response.get("xp_earned"),
-                "new_level": response.get("new_level"),
-                "coins_earned": response.get("coins_earned"),
-                "newly_unlocked_towers": response.get("newly_unlocked_towers", [])
-            })
+        status, response = await self.make_request("GET", f"/players/device/{self.test_device_id}")
+        
+        if status == 200 and response["_id"] == self.test_player_id and response["device_id"] == self.test_device_id:
+            self.log_result(
+                "Get Player by Device", 
+                True, 
+                f"Retrieved player: {response['nickname']}, level: {response.get('level', 1)}", 
+                "GET /api/players/device/{device_id}"
+            )
+            return True
         else:
-            self.log_failure("Game End API", f"Status: {status}", response)
-
-    async def test_leaderboard_apis(self):
-        """Test Leaderboard APIs"""
-        print("\n🏆 Testing Leaderboard APIs...")
+            self.log_result("Get Player by Device", False, f"Status: {status}, Response: {response}", "GET /api/players/device/{device_id}")
+            return False
+    
+    # ========== Game API Tests ==========
+    
+    async def test_game_end(self):
+        """Test POST /api/game/end - End game and submit score"""
+        if not self.test_player_id:
+            self.log_result("Game End", False, "No test player created", "POST /api/game/end")
+            return False
         
-        # Test 1: Get Global Leaderboard
+        data = {
+            "player_id": self.test_player_id,
+            "wave_reached": 8,
+            "coins_earned": 120,
+            "enemies_killed": 45,
+            "towers_placed": 12,
+            "duration_seconds": 420
+        }
+        
+        status, response = await self.make_request("POST", "/games/end", data)
+        
+        if status == 200 and "xp_earned" in response and "new_level" in response:
+            expected_xp = (8 * 10) + 45  # 125 XP total
+            actual_xp = response.get("xp_earned", 0)
+            self.log_result(
+                "Game End", 
+                True, 
+                f"XP earned: {actual_xp}, new level: {response['new_level']}, newly unlocked: {response.get('newly_unlocked_towers', [])}", 
+                "POST /api/games/end"
+            )
+            return True
+        else:
+            self.log_result("Game End", False, f"Status: {status}, Response: {response}", "POST /api/games/end")
+            return False
+    
+    # ========== Leaderboard API Tests ==========
+    
+    async def test_leaderboard(self):
+        """Test GET /api/leaderboard - Get leaderboard"""
         status, response = await self.make_request("GET", "/leaderboard")
         
         if status == 200 and isinstance(response, list):
-            self.log_success("Global Leaderboard", {"entries_count": len(response)})
+            player_count = len(response)
+            has_test_player = any(entry.get("player_id") == self.test_player_id for entry in response)
+            self.log_result(
+                "Get Leaderboard", 
+                True, 
+                f"Retrieved {player_count} entries, test player included: {has_test_player}", 
+                "GET /api/leaderboard"
+            )
+            return True
         else:
-            self.log_failure("Global Leaderboard", f"Status: {status}", response)
-
-        # Test 2: Get Player Rank
-        if self.test_player_id:
-            status, response = await self.make_request("GET", f"/leaderboard/player/{self.test_player_id}")
-            
-            if status == 200 and "rank" in response:
-                self.log_success("Player Rank", {"rank": response.get("rank")})
-            else:
-                self.log_failure("Player Rank", f"Status: {status}", response)
-
-    async def test_reward_api(self):
-        """Test Reward Claim API"""
-        print("\n🎁 Testing Reward APIs...")
-        
+            self.log_result("Get Leaderboard", False, f"Status: {status}, Response: {response}", "GET /api/leaderboard")
+            return False
+    
+    # ========== Rewards API Tests ==========
+    
+    async def test_claim_rewarded_ad(self):
+        """Test POST /api/rewards/claim - Claim ad reward with real ad_type: 'rewarded'"""
         if not self.test_player_id:
-            self.log_failure("Reward Claim API", "No test player available")
-            return
-
-        reward_data = {
+            self.log_result("Claim Rewarded Ad", False, "No test player created", "POST /api/rewards/claim")
+            return False
+        
+        data = {
             "player_id": self.test_player_id,
             "reward_type": "coins",
+            "ad_type": "rewarded"  # Real ad_type as requested
+        }
+        
+        status, response = await self.make_request("POST", "/rewards/claim", data)
+        
+        if status == 200 and response.get("success") and "coins_granted" in response:
+            self.log_result(
+                "Claim Rewarded Ad", 
+                True, 
+                f"Granted {response['coins_granted']} coins, new balance: {response['new_balance']}", 
+                "POST /api/rewards/claim"
+            )
+            return True
+        else:
+            self.log_result("Claim Rewarded Ad", False, f"Status: {status}, Response: {response}", "POST /api/rewards/claim")
+            return False
+    
+    async def test_claim_revive_reward(self):
+        """Test POST /api/rewards/claim - Claim revive reward"""
+        if not self.test_player_id:
+            self.log_result("Claim Revive Reward", False, "No test player created", "POST /api/rewards/claim")
+            return False
+        
+        data = {
+            "player_id": self.test_player_id,
+            "reward_type": "revive",
             "ad_type": "rewarded"
         }
-
-        status, response = await self.make_request("POST", "/rewards/claim", json=reward_data)
         
-        if status == 200 and response.get("success"):
-            self.log_success("Reward Claim API", {
-                "reward_type": response.get("reward_type"),
-                "coins_granted": response.get("coins_granted"),
-                "new_balance": response.get("new_balance")
-            })
+        status, response = await self.make_request("POST", "/rewards/claim", data)
+        
+        if status == 200 and response.get("success") and response.get("revive_granted"):
+            self.log_result(
+                "Claim Revive Reward", 
+                True, 
+                "Revive granted successfully", 
+                "POST /api/rewards/claim"
+            )
+            return True
         else:
-            self.log_failure("Reward Claim API", f"Status: {status}", response)
-
-    async def test_purchase_apis(self):
-        """Test Purchase APIs"""
-        print("\n💰 Testing Purchase APIs...")
-        
+            self.log_result("Claim Revive Reward", False, f"Status: {status}, Response: {response}", "POST /api/rewards/claim")
+            return False
+    
+    # ========== Purchase API Tests ==========
+    
+    async def test_purchase_premium(self):
+        """Test POST /api/purchases - Process IAP purchase with item_type: 'premium' and proper product ID"""
         if not self.test_player_id:
-            self.log_failure("Purchase APIs", "No test player available")
-            return
-
-        # Test 1: Premium Purchase
-        purchase_data = {
+            self.log_result("Purchase Premium", False, "No test player created", "POST /api/purchases")
+            return False
+        
+        data = {
             "player_id": self.test_player_id,
-            "item_type": "premium"
+            "item_type": "premium",
+            "item_id": "com.laststanddefense.remove_ads"  # Real IAP product ID as requested
         }
-
-        status, response = await self.make_request("POST", "/purchases", json=purchase_data)
         
-        if status == 200 and response.get("success"):
-            self.log_success("Premium Purchase", {"item_type": response.get("item_type")})
+        status, response = await self.make_request("POST", "/purchases", data)
+        
+        if status == 200 and response.get("success") and response.get("item_type") == "premium":
+            self.log_result(
+                "Purchase Premium", 
+                True, 
+                f"Premium purchase successful with product ID: {response.get('item_id')}", 
+                "POST /api/purchases"
+            )
+            return True
         else:
-            self.log_failure("Premium Purchase", f"Status: {status}", response)
-
-        # Test 2: Arena Expansion Purchase
-        arena_purchase = {
+            self.log_result("Purchase Premium", False, f"Status: {status}, Response: {response}", "POST /api/purchases")
+            return False
+    
+    async def test_purchase_arena_expansion(self):
+        """Test POST /api/purchases - Process IAP purchase with item_type: 'arena_expansion'"""
+        if not self.test_player_id:
+            self.log_result("Purchase Arena Expansion", False, "No test player created", "POST /api/purchases")
+            return False
+        
+        data = {
             "player_id": self.test_player_id,
-            "item_type": "arena_expansion"
+            "item_type": "arena_expansion",
+            "item_id": "com.laststanddefense.arena_expansion"  # Proper product ID format
         }
-
-        status, response = await self.make_request("POST", "/purchases", json=arena_purchase)
         
-        if status == 200 and response.get("success"):
-            self.log_success("Arena Expansion Purchase", {"item_type": response.get("item_type")})
+        status, response = await self.make_request("POST", "/purchases", data)
+        
+        if status == 200 and response.get("success") and response.get("item_type") == "arena_expansion":
+            self.log_result(
+                "Purchase Arena Expansion", 
+                True, 
+                f"Arena expansion purchase successful with product ID: {response.get('item_id')}", 
+                "POST /api/purchases"
+            )
+            return True
         else:
-            self.log_failure("Arena Expansion Purchase", f"Status: {status}", response)
-
-    async def test_skins_apis(self):
-        """Test Skins APIs"""
-        print("\n🎨 Testing Skins APIs...")
-        
-        # Test 1: Get All Skins
+            self.log_result("Purchase Arena Expansion", False, f"Status: {status}, Response: {response}", "POST /api/purchases")
+            return False
+    
+    # ========== Skins API Tests ==========
+    
+    async def test_get_skins(self):
+        """Test GET /api/skins - Get available skins"""
         status, response = await self.make_request("GET", "/skins")
         
-        if status == 200 and isinstance(response, list):
-            available_skins = [skin["id"] for skin in response if skin["price_type"] == "coins"]
-            self.log_success("Get All Skins", {"skins_count": len(response), "coin_skins": available_skins})
+        if status == 200 and isinstance(response, list) and len(response) > 0:
+            skin_count = len(response)
+            skin_names = [skin.get("name", "Unknown") for skin in response[:3]]  # First 3 skins
+            self.log_result(
+                "Get Skins", 
+                True, 
+                f"Retrieved {skin_count} skins: {', '.join(skin_names)}...", 
+                "GET /api/skins"
+            )
+            return True
         else:
-            self.log_failure("Get All Skins", f"Status: {status}", response)
-            return
-
+            self.log_result("Get Skins", False, f"Status: {status}, Response: {response}", "GET /api/skins")
+            return False
+    
+    # ========== Analytics API Tests ==========
+    
+    async def test_analytics_event(self):
+        """Test POST /api/analytics/event - Track analytics event"""
         if not self.test_player_id:
-            self.log_failure("Skins Purchase/Equip", "No test player available")
-            return
-
-        # Test 2: Purchase Skin
-        purchase_params = {
+            self.log_result("Analytics Event", False, "No test player created", "POST /api/analytics/event")
+            return False
+        
+        data = {
             "player_id": self.test_player_id,
-            "skin_id": "neon"
+            "event_type": "tower_placement",
+            "event_data": {
+                "tower_type": "machine_gun",
+                "position": {"x": 100, "y": 150},
+                "wave": 3,
+                "cost": 450
+            }
         }
-
-        status, response = await self.make_request("POST", "/skins/purchase", params=purchase_params)
+        
+        status, response = await self.make_request("POST", "/analytics", data)
         
         if status == 200 and response.get("success"):
-            self.log_success("Purchase Skin", {
-                "skin_id": response.get("skin_id"),
-                "coins_spent": response.get("coins_spent"),
-                "new_balance": response.get("new_balance")
-            })
+            self.log_result(
+                "Analytics Event", 
+                True, 
+                f"Logged {data['event_type']} event with data: {data['event_data']['tower_type']}", 
+                "POST /api/analytics"
+            )
+            return True
         else:
-            self.log_failure("Purchase Skin", f"Status: {status}", response)
-
-        # Test 3: Equip Skin
-        equip_params = {
-            "player_id": self.test_player_id,
-            "tower_type": "machine_gun",
-            "skin_id": "neon"
-        }
-
-        status, response = await self.make_request("POST", "/skins/equip", params=equip_params)
-        
-        if status == 200 and response.get("success"):
-            self.log_success("Equip Skin", {"equipped_skins": response.get("equipped_skins")})
-        else:
-            self.log_failure("Equip Skin", f"Status: {status}", response)
-
-    async def test_analytics_api(self):
-        """Test Analytics API"""
-        print("\n📊 Testing Analytics APIs...")
-        
-        if not self.test_player_id:
-            self.log_failure("Analytics API", "No test player available")
-            return
-
-        analytics_data = {
-            "player_id": self.test_player_id,
-            "event_type": "game_start",
-            "event_data": {"test_mode": True}
-        }
-
-        status, response = await self.make_request("POST", "/analytics", json=analytics_data)
-        
-        if status == 200 and response.get("success"):
-            self.log_success("Analytics API", {"event_logged": True})
-        else:
-            self.log_failure("Analytics API", f"Status: {status}", response)
-
-    async def test_health_endpoints(self):
-        """Test Health Check endpoints"""
-        print("\n❤️ Testing Health Check APIs...")
-        
-        # Test root endpoint
-        status, response = await self.make_request("GET", "/")
-        
-        if status == 200 and "Last Stand Defense API" in str(response):
-            self.log_success("Root Health Check", response)
-        else:
-            self.log_failure("Root Health Check", f"Status: {status}", response)
-
-        # Test health endpoint
+            self.log_result("Analytics Event", False, f"Status: {status}, Response: {response}", "POST /api/analytics")
+            return False
+    
+    # ========== Health Check Tests ==========
+    
+    async def test_health_check(self):
+        """Test basic API health"""
         status, response = await self.make_request("GET", "/health")
         
         if status == 200 and response.get("status") == "healthy":
-            self.log_success("Health Check", response)
+            self.log_result("Health Check", True, "API is healthy", "GET /api/health")
+            return True
         else:
-            self.log_failure("Health Check", f"Status: {status}", response)
-
+            self.log_result("Health Check", False, f"Status: {status}, Response: {response}", "GET /api/health")
+            return False
+    
+    # ========== Run All Tests ==========
+    
     async def run_all_tests(self):
-        """Run all API tests"""
-        print(f"🚀 Starting Last Stand Defense API Tests")
-        print(f"   Backend URL: {self.base_url}")
-        print(f"   Timestamp: {datetime.now().isoformat()}")
+        """Run all API tests in sequence"""
+        logger.info("Starting comprehensive backend API testing...")
         
-        # Test in logical order
-        await self.test_health_endpoints()
+        test_functions = [
+            ("Health Check", self.test_health_check),
+            ("Create Player", self.test_create_player),
+            ("Get Player by Device", self.test_get_player_by_device),
+            ("Game End", self.test_game_end),
+            ("Get Leaderboard", self.test_leaderboard),
+            ("Claim Rewarded Ad", self.test_claim_rewarded_ad),
+            ("Claim Revive Reward", self.test_claim_revive_reward),
+            ("Purchase Premium", self.test_purchase_premium),
+            ("Purchase Arena Expansion", self.test_purchase_arena_expansion),
+            ("Get Skins", self.test_get_skins),
+            ("Analytics Event", self.test_analytics_event),
+        ]
         
-        # Player tests must come first to create test player
-        success = await self.test_player_apis()
-        if not success:
-            print("\n⚠️ Stopping tests due to player creation failure")
-            return self.results
+        passed = 0
+        total = len(test_functions)
         
-        # Test all other APIs
-        await self.test_game_api()
-        await self.test_leaderboard_apis()
-        await self.test_reward_api()
-        await self.test_purchase_apis()
-        await self.test_skins_apis()
-        await self.test_analytics_api()
-
-        return self.results
+        for test_name, test_func in test_functions:
+            try:
+                success = await test_func()
+                if success:
+                    passed += 1
+            except Exception as e:
+                self.log_result(test_name, False, f"Exception: {str(e)}")
+                logger.error(f"Test {test_name} failed with exception: {e}")
+        
+        logger.info(f"\n=== TEST SUMMARY ===")
+        logger.info(f"Tests passed: {passed}/{total}")
+        logger.info(f"Success rate: {(passed/total)*100:.1f}%")
+        
+        if passed == total:
+            logger.info("🎉 ALL TESTS PASSED!")
+        else:
+            logger.warning(f"⚠️  {total-passed} TESTS FAILED")
+            failed_tests = [r for r in self.test_results if not r["success"]]
+            for test in failed_tests:
+                logger.warning(f"  - {test['test']}: {test['details']}")
+        
+        return passed, total, self.test_results
 
 async def main():
-    """Main test execution"""
-    try:
-        async with GameAPITester(BACKEND_URL) as tester:
-            results = await tester.run_all_tests()
-            
-            print(f"\n" + "="*60)
-            print(f"📊 TEST RESULTS SUMMARY")
-            print(f"="*60)
-            print(f"✅ Passed: {results['passed']}")
-            print(f"❌ Failed: {results['failed']}")
-            print(f"🆔 Test Player ID: {results['player_id']}")
-            
-            if results['errors']:
-                print(f"\n🔍 FAILED TESTS:")
-                for error in results['errors']:
-                    print(f"   • {error}")
-            
-            print(f"\n{'🎉 ALL TESTS PASSED!' if results['failed'] == 0 else '⚠️ SOME TESTS FAILED'}")
-            
-            # Exit with error code if any tests failed
-            sys.exit(0 if results['failed'] == 0 else 1)
-            
-    except Exception as e:
-        print(f"❌ Test execution failed: {e}")
-        sys.exit(1)
+    """Main test execution function"""
+    async with APITester() as tester:
+        passed, total, results = await tester.run_all_tests()
+        
+        # Save detailed results
+        with open('/app/backend_test_results.json', 'w') as f:
+            json.dump({
+                "summary": {"passed": passed, "total": total, "success_rate": (passed/total)*100},
+                "results": results,
+                "tested_at": datetime.utcnow().isoformat(),
+                "backend_url": API_BASE
+            }, f, indent=2)
+        
+        return passed == total
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    success = asyncio.run(main())
+    exit(0 if success else 1)

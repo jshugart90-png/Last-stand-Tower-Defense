@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { playerApi, analyticsApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
+import BannerAdComponent from '../src/components/BannerAdComponent';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -470,6 +471,9 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Banner Ad */}
+      <BannerAdComponent isPremium={playerStore.premium} />
 
       {/* XP Progress bar */}
       <View style={styles.xpContainer}>

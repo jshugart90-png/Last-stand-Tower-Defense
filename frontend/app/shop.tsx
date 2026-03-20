@@ -7,16 +7,26 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
-import { skinsApi, rewardApi } from '../src/hooks/useApi';
+import { skinsApi, rewardApi, purchaseApi } from '../src/hooks/useApi';
 import { 
   TOWERS, TowerType, SKIN_COLORS, TOWER_UNLOCK_PRICES, 
   SPEED_UNLOCK_PRICES, GameSpeed, getShopUpgradeCost 
 } from '../src/constants/game';
+import { 
+  isRewardedAdReady, showRewardedAd, loadRewardedAd, 
+  isNativeAdsAvailable, isAdsInitialized 
+} from '../src/services/adService';
+import { 
+  IAP_PRODUCTS, IAP_PRICES, requestPurchase, 
+  isIAPAvailable, isIAPInitialized, restorePurchases 
+} from '../src/services/iapService';
+import BannerAdComponent from '../src/components/BannerAdComponent';
 
 interface Skin {
   id: string;
@@ -52,9 +62,15 @@ export default function ShopScreen() {
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'arena' | 'skins'>('towers');
+  const [adLoading, setAdLoading] = useState(false);
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
 
   useEffect(() => {
     loadSkins();
+    // Pre-load rewarded ad when shop opens
+    if (isNativeAdsAvailable() && isAdsInitialized()) {
+      loadRewardedAd();
+    }
   }, []);
 
   const loadSkins = async () => {
@@ -182,8 +198,8 @@ export default function ShopScreen() {
     );
   };
 
-  // Handle arena expansion (real money)
-  const handlePurchaseArenaExpansion = () => {
+  // Handle arena expansion (real money via IAP)
+  const handlePurchaseArenaExpansion = async () => {
     Alert.alert(
       'Arena Expansion - $2.99',
       `Purchase arena expansion for $${ARENA_EXPANSION_PRICE_USD}?\n\nThis will add 1 row of cells to each side of your battlefield.\n\nCurrent expansions: ${playerStore.arenaExpansions}`,
@@ -192,57 +208,232 @@ export default function ShopScreen() {
         {
           text: `Buy for $${ARENA_EXPANSION_PRICE_USD}`,
           onPress: async () => {
-            // In production, this triggers IAP flow
-            Alert.alert(
-              'Purchase Processing',
-              'In production, this would open the App Store/Google Play payment sheet.\n\nFor testing, the expansion will be granted.',
-              [
-                {
-                  text: 'Simulate Purchase',
-                  onPress: () => {
-                    playerStore.addArenaExpansion();
-                    Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
+            if (isIAPAvailable() && isIAPInitialized()) {
+              // Real IAP flow
+              setPurchaseLoading(true);
+              try {
+                const result = await requestPurchase(IAP_PRODUCTS.ARENA_EXPANSION);
+                if (result.success) {
+                  playerStore.addArenaExpansion();
+                  // Report to backend
+                  if (playerStore.playerId) {
+                    try {
+                      await purchaseApi.process({
+                        player_id: playerStore.playerId,
+                        item_type: 'arena_expansion',
+                        item_id: IAP_PRODUCTS.ARENA_EXPANSION,
+                      });
+                    } catch (e) {
+                      console.error('Backend purchase report failed:', e);
+                    }
                   }
-                },
-                { text: 'Cancel', style: 'cancel' }
-              ]
-            );
+                  Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
+                } else if (result.error && result.error !== 'Purchase cancelled') {
+                  Alert.alert('Purchase Failed', result.error);
+                }
+              } catch (e) {
+                Alert.alert('Error', 'Purchase failed. Please try again.');
+              } finally {
+                setPurchaseLoading(false);
+              }
+            } else {
+              // Simulated purchase for development/testing
+              Alert.alert(
+                'Development Mode',
+                'IAP requires a native build. For testing, the expansion will be granted.',
+                [
+                  {
+                    text: 'Simulate Purchase',
+                    onPress: () => {
+                      playerStore.addArenaExpansion();
+                      Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
+                    }
+                  },
+                  { text: 'Cancel', style: 'cancel' }
+                ]
+              );
+            }
           },
         },
       ]
     );
   };
 
-  // Handle watch ad for coins
-  const handleWatchAdForCoins = async () => {
+
+  // Handle Remove Ads purchase (IAP)
+  const handlePurchaseRemoveAds = async () => {
+    if (playerStore.premium) {
+      Alert.alert('Already Purchased', 'You already have ad-free access!');
+      return;
+    }
+
     Alert.alert(
-      'Watch Ad',
-      'Watch a short ad to earn 25 coins?',
+      'Remove Ads - $2.99',
+      'Remove all banner ads permanently?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Watch',
+          text: 'Buy $2.99',
           onPress: async () => {
-            // Simulate ad watching
-            playerStore.addCoins(25);
-            Alert.alert('Reward!', 'You earned 25 coins!');
-            
-            if (playerStore.playerId) {
+            if (isIAPAvailable() && isIAPInitialized()) {
+              setPurchaseLoading(true);
               try {
-                await rewardApi.claim({
-                  player_id: playerStore.playerId,
-                  reward_type: 'coins',
-                  ad_type: 'rewarded',
-                  amount: 25,
-                });
+                const result = await requestPurchase(IAP_PRODUCTS.REMOVE_ADS);
+                if (result.success) {
+                  playerStore.syncFromServer({ premium: true });
+                  if (playerStore.playerId) {
+                    try {
+                      await purchaseApi.process({
+                        player_id: playerStore.playerId,
+                        item_type: 'premium',
+                        item_id: IAP_PRODUCTS.REMOVE_ADS,
+                      });
+                    } catch (e) {
+                      console.error('Backend purchase report failed:', e);
+                    }
+                  }
+                  Alert.alert('Success!', 'All ads have been removed. Thank you!');
+                } else if (result.error && result.error !== 'Purchase cancelled') {
+                  Alert.alert('Purchase Failed', result.error);
+                }
               } catch (e) {
-                console.error('Error claiming reward:', e);
+                Alert.alert('Error', 'Purchase failed. Please try again.');
+              } finally {
+                setPurchaseLoading(false);
               }
+            } else {
+              Alert.alert(
+                'Development Mode',
+                'IAP requires a native build. Simulate ad removal?',
+                [
+                  {
+                    text: 'Simulate',
+                    onPress: () => {
+                      playerStore.syncFromServer({ premium: true });
+                      Alert.alert('Success!', 'Ads removed! (Simulated)');
+                    }
+                  },
+                  { text: 'Cancel', style: 'cancel' }
+                ]
+              );
             }
           },
         },
       ]
     );
+  };
+
+  // Handle restore purchases
+  const handleRestorePurchases = async () => {
+    if (isIAPAvailable() && isIAPInitialized()) {
+      setPurchaseLoading(true);
+      try {
+        const purchases = await restorePurchases();
+        let restoredSomething = false;
+
+        for (const purchase of purchases) {
+          if (purchase.productId === IAP_PRODUCTS.REMOVE_ADS) {
+            playerStore.syncFromServer({ premium: true });
+            restoredSomething = true;
+          }
+          if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
+            playerStore.addArenaExpansion();
+            restoredSomething = true;
+          }
+        }
+
+        if (restoredSomething) {
+          Alert.alert('Restored!', 'Your purchases have been restored.');
+        } else {
+          Alert.alert('No Purchases', 'No previous purchases found to restore.');
+        }
+      } catch (e) {
+        Alert.alert('Error', 'Failed to restore purchases. Please try again.');
+      } finally {
+        setPurchaseLoading(false);
+      }
+    } else {
+      Alert.alert('Not Available', 'Purchase restoration requires a native build.');
+    }
+  };
+
+  // Handle watch ad for coins (AdMob Rewarded Ad)
+  const handleWatchAdForCoins = async () => {
+    const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+    
+    if (nativeAdsReady && isRewardedAdReady()) {
+      // Show real rewarded ad
+      setAdLoading(true);
+      try {
+        const reward = await showRewardedAd();
+        if (reward) {
+          // Ad watched successfully - grant coins
+          playerStore.addCoins(25);
+          Alert.alert('Reward!', 'You earned 25 coins!');
+          
+          if (playerStore.playerId) {
+            try {
+              await rewardApi.claim({
+                player_id: playerStore.playerId,
+                reward_type: 'coins',
+                ad_type: 'rewarded',
+              });
+            } catch (e) {
+              console.error('Error claiming reward:', e);
+            }
+          }
+          // Pre-load next ad
+          loadRewardedAd();
+        } else {
+          Alert.alert('No Reward', 'You need to watch the full ad to earn coins.');
+        }
+      } catch (e) {
+        console.error('Error showing ad:', e);
+        Alert.alert('Error', 'Failed to show ad. Please try again.');
+      } finally {
+        setAdLoading(false);
+      }
+    } else if (nativeAdsReady && !isRewardedAdReady()) {
+      // Ad not loaded yet - try to load
+      setAdLoading(true);
+      Alert.alert('Loading Ad', 'Please wait while we load an ad...');
+      const loaded = await loadRewardedAd();
+      setAdLoading(false);
+      if (loaded) {
+        // Retry showing
+        handleWatchAdForCoins();
+      } else {
+        Alert.alert('Ad Unavailable', 'No ads available right now. Please try again later.');
+      }
+    } else {
+      // Non-native environment (web/Expo Go) - simulate for testing
+      Alert.alert(
+        'Watch Ad',
+        'Rewarded ads require a native build.\n\nSimulate watching ad for 25 coins?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Simulate',
+            onPress: async () => {
+              playerStore.addCoins(25);
+              Alert.alert('Reward!', 'You earned 25 coins! (Simulated)');
+              
+              if (playerStore.playerId) {
+                try {
+                  await rewardApi.claim({
+                    player_id: playerStore.playerId,
+                    reward_type: 'coins',
+                    ad_type: 'rewarded',
+                  });
+                } catch (e) {
+                  console.error('Error claiming reward:', e);
+                }
+              }
+            },
+          },
+        ]
+      );
+    }
   };
 
   // Render tower unlock/upgrade card
@@ -441,17 +632,36 @@ export default function ShopScreen() {
               </Text>
             </View>
             
-            {/* Premium upgrade */}
+            {/* Premium upgrade - Remove Ads */}
             <View style={styles.premiumCard}>
               <Ionicons name="star" size={32} color="#FFD700" />
               <View style={styles.premiumInfo}>
-                <Text style={styles.premiumTitle}>Premium Upgrade</Text>
-                <Text style={styles.premiumDesc}>Remove all ads permanently</Text>
+                <Text style={styles.premiumTitle}>Remove Ads</Text>
+                <Text style={styles.premiumDesc}>Remove all banner ads permanently</Text>
               </View>
-              <TouchableOpacity style={styles.premiumButton}>
-                <Text style={styles.premiumPriceText}>$4.99</Text>
+              <TouchableOpacity 
+                style={styles.premiumButton}
+                onPress={handlePurchaseRemoveAds}
+                disabled={purchaseLoading || playerStore.premium}
+              >
+                {playerStore.premium ? (
+                  <Text style={styles.premiumPriceText}>Owned ✓</Text>
+                ) : purchaseLoading ? (
+                  <ActivityIndicator size="small" color="#1a1a2e" />
+                ) : (
+                  <Text style={styles.premiumPriceText}>{IAP_PRICES[IAP_PRODUCTS.REMOVE_ADS]}</Text>
+                )}
               </TouchableOpacity>
             </View>
+
+            {/* Restore Purchases */}
+            <TouchableOpacity 
+              style={styles.restoreButton}
+              onPress={handleRestorePurchases}
+            >
+              <Ionicons name="refresh" size={16} color="#4A90D9" />
+              <Text style={styles.restoreText}>Restore Purchases</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -493,12 +703,25 @@ export default function ShopScreen() {
 
         {/* Watch Ad for Coins */}
         <View style={styles.adSection}>
-          <TouchableOpacity style={styles.watchAdButton} onPress={handleWatchAdForCoins}>
-            <Ionicons name="videocam" size={24} color="#fff" />
-            <Text style={styles.watchAdText}>Watch Ad for 25 Coins</Text>
+          <TouchableOpacity 
+            style={[styles.watchAdButton, adLoading && styles.disabledButton]} 
+            onPress={handleWatchAdForCoins}
+            disabled={adLoading}
+          >
+            {adLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="videocam" size={24} color="#fff" />
+            )}
+            <Text style={styles.watchAdText}>
+              {adLoading ? 'Loading Ad...' : 'Watch Ad for 25 Coins'}
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Banner Ad at bottom */}
+      <BannerAdComponent isPremium={playerStore.premium} />
     </SafeAreaView>
   );
 }
@@ -853,5 +1076,17 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  restoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginTop: 12,
+    gap: 6,
+  },
+  restoreText: {
+    color: '#4A90D9',
+    fontSize: 14,
   },
 });
