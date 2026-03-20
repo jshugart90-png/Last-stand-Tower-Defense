@@ -870,7 +870,7 @@ export default function GameScreen() {
       pauseGame();
       setShowExitWarning(true);
     } else {
-      router.back();
+      router.replace('/');
     }
   }, [isPlaying, isGameOver, currentWave, pauseGame, router]);
 
@@ -888,7 +888,7 @@ export default function GameScreen() {
     saveGameState();
     await handleSaveCoins(getCurrentCoins());
     playerStore.recordGame(currentWave);
-    router.back();
+    router.replace('/');
   }, [saveGameState, getCurrentCoins, currentWave, router]);
 
   const handleCancelExit = useCallback(() => {
@@ -1031,7 +1031,7 @@ export default function GameScreen() {
 
   const handleExit = useCallback(() => {
     playerStore.clearSavedGame(); // Clear saved game on exit after game over
-    router.back();
+    router.replace('/');
   }, [router, playerStore]);
 
   const formatTimer = (ms: number) => {
@@ -1198,8 +1198,21 @@ export default function GameScreen() {
       {isPaused && !isGameOver && !showExitWarning && !showResumePrompt && (
         <View style={styles.pauseOverlay}>
           <Text style={styles.pauseText}>PAUSED</Text>
-          <TouchableOpacity style={styles.resumeButton} onPress={resumeGame}>
-            <Text style={styles.resumeText}>Tap to Resume</Text>
+          <Text style={styles.pauseSubtext}>Wave {currentWave} • {coins} coins</Text>
+          
+          <TouchableOpacity style={styles.pauseResumeButton} onPress={resumeGame}>
+            <Ionicons name="play" size={20} color="#fff" />
+            <Text style={styles.pauseButtonText}>Resume Game</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.pauseShopButton} onPress={handleGoToShop}>
+            <FontAwesome5 name="store" size={16} color="#fff" />
+            <Text style={styles.pauseButtonText}>Go to Shop</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.pauseMainMenuButton} onPress={handleExitAttempt}>
+            <Ionicons name="home" size={18} color="#fff" />
+            <Text style={styles.pauseButtonText}>Main Menu</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1829,15 +1842,62 @@ const styles = StyleSheet.create({
   },
   pauseOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
   },
   pauseText: {
     color: '#fff',
-    fontSize: 48,
+    fontSize: 42,
     fontWeight: 'bold',
-    marginBottom: 24,
+    marginBottom: 8,
+  },
+  pauseSubtext: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 32,
+  },
+  pauseResumeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2ECC71',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    gap: 10,
+    width: '100%',
+    marginBottom: 12,
+  },
+  pauseShopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#9B59B6',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    gap: 10,
+    width: '100%',
+    marginBottom: 12,
+  },
+  pauseMainMenuButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E74C3C',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    gap: 10,
+    width: '100%',
+  },
+  pauseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   resumeButton: {
     backgroundColor: '#4A90D9',
