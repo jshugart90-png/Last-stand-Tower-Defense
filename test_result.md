@@ -134,6 +134,9 @@ backend:
       - working: true
         agent: "testing"
         comment: "TESTED: Game end API works correctly. XP calculation (75 XP for wave 5 + 25 enemies), coin rewards, and progression system all functioning as expected."
+      - working: true
+        agent: "testing"
+        comment: "VERIFIED: new_balance field functionality confirmed. Created player 'BalanceTest' with 100 starting coins, submitted game with 150 coins_earned, verified response contains new_balance=250 (100+150). Player balance correctly updated to 250 coins. Critical check passed."
 
   - task: "Leaderboard API"
     implemented: true
@@ -306,4 +309,6 @@ agent_communication:
     message: "ADMOB + IAP INTEGRATION COMPLETE ✅ Integrated real AdMob with user's credentials (App ID, Rewarded Ad Unit, Banner Ad Unit) and expo-iap for in-app purchases. Platform-specific files (.web.ts/.native.ts) ensure web preview works while native builds use real ads/IAP. Banner ads on Home, Leaderboard, Shop screens (hidden for premium users). Rewarded ads for coins and revive. IAP for Remove Ads ($2.99) and Arena Expansion ($2.99) with placeholder product IDs. Restore purchases functionality added."
   - agent: "testing"
     message: "COMPREHENSIVE RE-TESTING COMPLETE ✅ All 11/11 backend API endpoints tested successfully with new requirements: 1) POST /api/players - Player creation working ✅, 2) GET /api/players/device/{id} - Device lookup working ✅, 3) POST /api/games/end - Game scoring and progression working ✅, 4) GET /api/leaderboard - Global rankings working ✅, 5) POST /api/rewards/claim with ad_type:'rewarded' - Coin/revive rewards working ✅, 6) POST /api/purchases with item_type:'premium' and 'arena_expansion' using proper product IDs (com.laststanddefense.remove_ads) working ✅, 7) GET /api/skins - 6 available skins returned ✅, 8) POST /api/analytics - Event tracking working ✅. Test suite created at /app/backend_test.py with detailed results at /app/backend_test_results.json. 100% success rate with proper IAP product ID format validation."
+  - agent: "testing"
+    message: "NEW_BALANCE FIELD VERIFICATION COMPLETE ✅ Focused test confirmed game end endpoint returns correct new_balance field. Created player 'BalanceTest' with 100 starting coins, submitted game with wave_reached=5, coins_earned=150, enemies_killed=20, towers_placed=3, duration_seconds=60. Response correctly returned new_balance=250 (100+150). Player balance verified at 250 coins. Critical functionality working as expected."
 

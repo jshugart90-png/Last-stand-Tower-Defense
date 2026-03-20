@@ -270,6 +270,7 @@ async def end_game(game_result: GameResult):
             "new_xp": new_xp,
             "new_level": new_level,
             "coins_earned": game_result.coins_earned,
+            "new_balance": player.get("coins", 0) + game_result.coins_earned,
             "new_best_wave": best_wave > player.get("best_wave", 0),
             "newly_unlocked_towers": newly_unlocked
         }

@@ -107,22 +107,13 @@ export default function ShopScreen() {
       return;
     }
     
-    Alert.alert(
-      'Unlock Tower',
-      `Unlock ${towerDef.name} for ${price} coins?\n\n${towerDef.description}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unlock',
-          onPress: () => {
-            const success = playerStore.purchaseTower(towerType);
-            if (success) {
-              Alert.alert('Success!', `${towerDef.name} unlocked! You can now use it in battle.`);
-            }
-          },
-        },
-      ]
-    );
+    // Execute purchase directly (price is shown on button)
+    const success = playerStore.purchaseTower(towerType);
+    if (success) {
+      Alert.alert('Unlocked!', `${towerDef.name} unlocked! You can now use it in battle.`);
+    } else {
+      Alert.alert('Error', 'Unlock failed. Please try again.');
+    }
   };
 
   // Handle tower upgrade purchase (permanent stat boost)
@@ -149,22 +140,13 @@ export default function ShopScreen() {
       return;
     }
     
-    Alert.alert(
-      'Upgrade Tower',
-      `Upgrade ${towerDef.name} to Level ${currentLevel + 2}?\n\nCost: ${price} coins\n\n+5% damage and +2% range permanently for all ${towerDef.name} towers!`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Upgrade',
-          onPress: () => {
-            const success = playerStore.purchaseTowerUpgrade(towerType);
-            if (success) {
-              Alert.alert('Success!', `${towerDef.name} upgraded to Level ${currentLevel + 2}!`);
-            }
-          },
-        },
-      ]
-    );
+    // Execute purchase directly (price is already shown on button)
+    const success = playerStore.purchaseTowerUpgrade(towerType);
+    if (success) {
+      Alert.alert('Upgraded!', `${towerDef.name} upgraded to Level ${currentLevel + 2}!\n\n+5% damage, +2% range permanently.`);
+    } else {
+      Alert.alert('Error', 'Upgrade failed. Please try again.');
+    }
   };
 
   // Handle speed unlock purchase
@@ -179,28 +161,22 @@ export default function ShopScreen() {
     if (playerStore.coins < price) {
       Alert.alert(
         'Not Enough Coins',
-        `You need ${price - playerStore.coins} more coins.`,
-        [{ text: 'OK' }]
+        `You need ${price} coins but only have ${playerStore.coins}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Buy Coins', onPress: () => setSelectedTab('coins') },
+        ]
       );
       return;
     }
     
-    Alert.alert(
-      'Unlock Speed',
-      `Unlock ${speed}x game speed for ${price} coins?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unlock',
-          onPress: () => {
-            const success = playerStore.purchaseSpeed(speed);
-            if (success) {
-              Alert.alert('Success!', `${speed}x speed unlocked!`);
-            }
-          },
-        },
-      ]
-    );
+    // Execute purchase directly
+    const success = playerStore.purchaseSpeed(speed);
+    if (success) {
+      Alert.alert('Unlocked!', `${speed}x speed unlocked!`);
+    } else {
+      Alert.alert('Error', 'Unlock failed. Please try again.');
+    }
   };
 
   // Handle arena expansion (real money via IAP)
