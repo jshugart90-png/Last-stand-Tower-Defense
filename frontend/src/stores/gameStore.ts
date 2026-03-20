@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, EnemyType, 
   SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getInfiniteUpgradeStats, 
-  getInfiniteUpgradeCost, TargetingMode, GameSpeed
+  getInfiniteUpgradeCost, TargetingMode, GameSpeed, getWaveCompletionBonus
 } from '../constants/game';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
 
@@ -113,6 +113,10 @@ export interface GameState {
   selectedTowerType: TowerType | null;
   selectedPlacedTower: PlacedTower | null;
   
+  // Wave completion bonus display
+  lastWaveBonus: number;
+  showBonusPopup: boolean;
+  
   // Zoom
   zoomLevel: number;
 }
@@ -137,6 +141,7 @@ interface GameActions {
   // Wave management
   startWave: () => void;
   endWave: () => void;
+  dismissBonusPopup: () => void;
   
   // Tower actions
   selectTower: (type: TowerType | null) => void;
@@ -280,6 +285,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   autoWaveTimer: 0,
   selectedTowerType: null,
   selectedPlacedTower: null,
+  lastWaveBonus: 0,
+  showBonusPopup: false,
   zoomLevel: 1,
 
   // Game flow
@@ -363,20 +370,32 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       currentWave: state.currentWave + 1,
       waveInProgress: true,
       autoWaveTimer: 0,
+      showBonusPopup: false,
     }));
   },
 
   endWave: () => {
     const state = get();
-    // Add wave completion bonus
-    const bonus = GAME_CONFIG.WAVE_COMPLETION_BONUS;
+    // Calculate wave completion bonus based on wave number
+    const bonus = getWaveCompletionBonus(state.currentWave);
     set({ 
       waveInProgress: false,
       waveEndTime: Date.now(),
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
       coins: state.coins + bonus,
       score: state.score + bonus,
+      lastWaveBonus: bonus,
+      showBonusPopup: true,
     });
+    
+    // Auto-dismiss the bonus popup after 2 seconds
+    setTimeout(() => {
+      useGameStore.setState({ showBonusPopup: false });
+    }, 2000);
+  },
+
+  dismissBonusPopup: () => {
+    set({ showBonusPopup: false });
   },
 
   // Tower actions

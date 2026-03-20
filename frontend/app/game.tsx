@@ -688,6 +688,9 @@ export default function GameScreen() {
     grantRevive,
     canUseAdRevive,
     getCurrentCoins,
+    lastWaveBonus,
+    showBonusPopup,
+    dismissBonusPopup,
   } = gameStore;
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
@@ -1079,14 +1082,27 @@ export default function GameScreen() {
       {/* Wave info bar */}
       {!waveInProgress && !isGameOver && isPlaying && (
         <View style={styles.waveInfoBar}>
-          <Text style={styles.waveInfoText}>
-            {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
-          </Text>
+          <View>
+            <Text style={styles.waveInfoText}>
+              {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
+            </Text>
+            {showBonusPopup && lastWaveBonus > 0 && (
+              <Text style={styles.bonusText}>+{lastWaveBonus} bonus coins!</Text>
+            )}
+          </View>
           <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
             <Text style={styles.startWaveText}>
               Start Wave {currentWave + 1} {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
             </Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Bonus popup notification */}
+      {showBonusPopup && lastWaveBonus > 0 && waveInProgress === false && (
+        <View style={styles.bonusPopup}>
+          <FontAwesome5 name="coins" size={16} color="#FFD700" />
+          <Text style={styles.bonusPopupText}>+{lastWaveBonus} Wave Bonus!</Text>
         </View>
       )}
 
@@ -1285,6 +1301,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  bonusText: {
+    color: '#2ECC71',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  bonusPopup: {
+    position: 'absolute',
+    top: 150,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
+    zIndex: 100,
+    shadowColor: '#2ECC71',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 12,
+  },
+  bonusPopupText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
   zoomControls: {
     flexDirection: 'row',

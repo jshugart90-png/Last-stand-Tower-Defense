@@ -178,15 +178,26 @@ export const GAME_CONFIG = {
   GRID_ROWS: 14,
   CELL_SIZE: 32,
   BASE_HEALTH: 20,
-  STARTING_COINS: 100,              // Reduced starting coins
+  STARTING_COINS: 100,
   WAVE_DELAY: 3000,
   ENEMY_SPAWN_DELAY: 800,
   XP_PER_WAVE: 10,
   XP_PER_KILL: 1,
   BOSS_WAVE_INTERVAL: 10,
-  TOWER_COST_INCREASE: 1.20,        // 20% cost increase per tower of same type
-  UPGRADE_COST_MULTIPLIER: 1.8,     // Higher upgrade cost multiplier
-  WAVE_COMPLETION_BONUS: 5,         // Bonus coins per wave completed
+  TOWER_COST_INCREASE: 1.20,
+  UPGRADE_COST_MULTIPLIER: 1.8,
+  // Wave completion bonus: base + (wave * scaling)
+  WAVE_BONUS_BASE: 10,      // Base bonus coins
+  WAVE_BONUS_SCALING: 3,    // Additional coins per wave number
+};
+
+// Calculate wave completion bonus
+export const getWaveCompletionBonus = (waveNumber: number): number => {
+  return GAME_CONFIG.WAVE_BONUS_BASE + (waveNumber * GAME_CONFIG.WAVE_BONUS_SCALING);
+  // Wave 1: 10 + 3 = 13 coins
+  // Wave 5: 10 + 15 = 25 coins
+  // Wave 10: 10 + 30 = 40 coins
+  // Wave 20: 10 + 60 = 70 coins
 };
 
 // Wave configuration - Boss every 10 waves
