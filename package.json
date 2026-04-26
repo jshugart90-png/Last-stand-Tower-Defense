@@ -10,6 +10,7 @@
     "android": "npm --prefix frontend run android",
     "ios": "npm --prefix frontend run ios",
     "web": "npm --prefix frontend run web",
-    "lint": "npm --prefix frontend run lint"
+    "lint": "npm --prefix frontend run lint",
+    "qc:release": "node ./scripts/release-preflight.mjs"
   }
 }

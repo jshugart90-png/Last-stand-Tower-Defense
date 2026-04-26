@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Database config (Mongo active, Supabase-ready env supported)
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").strip().lower()
 DB_PROVIDER = os.environ.get("DB_PROVIDER", "mongo").strip().lower()
 mongo_url = os.environ.get('MONGO_URL', '')
 db_name = os.environ.get('DB_NAME', 'last_stand_defense')
@@ -36,6 +37,14 @@ if DB_PROVIDER == "supabase" and not supabase:
     raise RuntimeError(
         "DB_PROVIDER is 'supabase' but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing."
     )
+
+raw_cors_origins = os.environ.get("CORS_ORIGINS", "*").strip()
+if raw_cors_origins == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = [origin.strip() for origin in raw_cors_origins.split(",") if origin.strip()]
+if not cors_origins:
+    cors_origins = ["*"]
 
 # Create the main app without a prefix
 app = FastAPI(title="Last Stand Defense API")
@@ -664,15 +673,19 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
-    return {"status": "healthy", "db_provider": DB_PROVIDER}
+    return {
+        "status": "healthy",
+        "db_provider": DB_PROVIDER,
+        "environment": ENVIRONMENT,
+    }
 
 # Include the router in the main app
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    allow_credentials=cors_origins != ["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

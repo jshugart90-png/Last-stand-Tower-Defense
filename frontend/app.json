@@ -1,23 +1,15 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Last Stand Tower Defense",
+    "slug": "last-stand-tower-defense",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "laststandtd",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSUserTrackingUsageDescription": "Personalize ads for better game rewards",
-        "SKAdNetworkItems": [
-          {
-            "SKAdNetworkIdentifier": "cstr6suwn9.skadnetwork"
-          }
-        ]
-      }
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -27,8 +19,7 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "com.android.vending.BILLING",
-        "android.permission.INTERNET",
-        "com.google.android.gms.permission.AD_ID"
+        "android.permission.INTERNET"
       ]
     },
     "web": {
@@ -48,13 +39,6 @@
         }
       ],
       [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-9533265028371895~3363655461",
-          "iosAppId": "ca-app-pub-9533265028371895~3363655461"
-        }
-      ],
-      [
         "expo-build-properties",
         {
           "ios": {
@@ -62,9 +46,11 @@
           }
         }
       ],
-      "expo-tracking-transparency",
       "expo-iap"
     ],
+    "extra": {
+      "EXPO_PUBLIC_BACKEND_URL": ""
+    },
     "experiments": {
       "typedRoutes": true
     }
