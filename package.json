@@ -1,0 +1,15 @@
+{
+  "name": "last-stand-tower-defense",
+  "private": true,
+  "description": "Expo app is in ./frontend — use npm scripts here or: cd frontend",
+  "scripts": {
+    "start": "npm --prefix frontend start",
+    "start:clear": "npm --prefix frontend run start -- --clear",
+    "start:tunnel": "npm --prefix frontend run start -- --tunnel",
+    "expo": "npm --prefix frontend exec -- expo",
+    "android": "npm --prefix frontend run android",
+    "ios": "npm --prefix frontend run ios",
+    "web": "npm --prefix frontend run web",
+    "lint": "npm --prefix frontend run lint"
+  }
+}
