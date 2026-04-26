@@ -75,6 +75,8 @@ agenthub/agents/youtube/db
 
 # Build caches
 .cache/
+frontend/.metro-cache/
+.emergent/
 
 # Mobile development
 android-sdk/ -e 
