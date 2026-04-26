@@ -11,6 +11,7 @@
     "ios": "npm --prefix frontend run ios",
     "web": "npm --prefix frontend run web",
     "lint": "npm --prefix frontend run lint",
-    "qc:release": "node ./scripts/release-preflight.mjs"
+    "qc:release": "node ./scripts/release-preflight.mjs",
+    "smoke:backend": "node ./scripts/smoke-backend.mjs"
   }
 }

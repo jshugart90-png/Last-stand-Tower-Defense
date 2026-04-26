@@ -22,7 +22,7 @@
 2. Run checks:
    - `npm run lint`
    - `npm run qc:release`
-3. Deploy backend using `DEPLOY_BACKEND.md`.
+3. Deploy backend using `DEPLOY_BACKEND.md` (or `render.yaml` blueprint).
 4. Build app binaries with EAS preview profile.
 5. Run final device QA.
 6. Submit to Play/TestFlight.
@@ -31,3 +31,12 @@
 
 - Keep Supabase service role key in backend env only.
 - Rotate any previously exposed secrets before production release.
+- Verify deploy with `BACKEND_URL=https://<your-api-host> npm run smoke:backend`.
+
+## Hard Blockers Requiring Your Account Actions
+
+These cannot be completed from this headless session:
+
+1. Expo authentication (`eas login`) is required before EAS can configure/build.
+2. Cloud provider auth (Render/Railway/Fly) is required to create the production service.
+3. Play Console / App Store Connect submissions require your account approvals and legal forms.
