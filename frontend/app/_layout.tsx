@@ -3,30 +3,23 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { initializeAds, loadRewardedAd, loadInterstitialAd } from '../src/services/adService';
 import { initializeIAP } from '../src/services/iapService';
+import { isBackendConfigured } from '../src/hooks/useApi';
+import { initializeAudio } from '../src/services/audioService';
 
 const queryClient = new QueryClient();
 
 export default function RootLayout() {
   useEffect(() => {
-    // Initialize ads and IAP on app launch
+    // Initialize IAP on app launch when backend is configured
     const init = async () => {
-      try {
-        const adsReady = await initializeAds();
-        if (adsReady) {
-          // Pre-load rewarded and interstitial ads
-          await loadRewardedAd();
-          await loadInterstitialAd();
+      await initializeAudio();
+      if (isBackendConfigured()) {
+        try {
+          await initializeIAP();
+        } catch (e) {
+          console.log('IAP init skipped:', e);
         }
-      } catch (e) {
-        console.log('Ads init skipped:', e);
-      }
-
-      try {
-        await initializeIAP();
-      } catch (e) {
-        console.log('IAP init skipped:', e);
       }
     };
 
@@ -49,6 +42,8 @@ export default function RootLayout() {
           <Stack.Screen name="leaderboard" />
           <Stack.Screen name="shop" />
           <Stack.Screen name="settings" />
+          <Stack.Screen name="progression" />
+          <Stack.Screen name="run-results" />
         </Stack>
       </SafeAreaProvider>
     </QueryClientProvider>

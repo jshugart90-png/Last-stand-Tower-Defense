@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { 
-  TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, EnemyType, 
+  TOWERS, ENEMIES, GAME_CONFIG, TowerType, EnemyType, 
   SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getInfiniteUpgradeStats, 
   getInfiniteUpgradeCost, TargetingMode, GameSpeed, getWaveCompletionBonus
 } from '../constants/game';
@@ -37,6 +37,12 @@ export interface Enemy {
   coinReward: number;
   spawnTime: number;
   path: Position[];
+  damageReduction?: number;
+  healPerSecond?: number;
+  auraRange?: number;
+  splitOnDeath?: boolean;
+  splitCount?: number;
+  splitInto?: EnemyType;
 }
 
 export interface Projectile {
@@ -464,12 +470,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return enemy;
     });
 
-    set(s => ({
+    set((s) => ({
       towers: allTowers,
       enemies: updatedEnemies,
       coins: s.coins - cost,
       towersPlaced: s.towersPlaced + 1,
       towerPurchaseCount: newPurchaseCount,
+      selectedTowerType: null,
     }));
 
     return true;
@@ -554,6 +561,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       coinReward: enemyDef.coinReward,
       spawnTime: Date.now(),
       path,
+      damageReduction: (enemyDef as any).damageReduction,
+      healPerSecond: (enemyDef as any).healPerSecond,
+      auraRange: (enemyDef as any).auraRange,
+      splitOnDeath: (enemyDef as any).splitOnDeath,
+      splitCount: (enemyDef as any).splitCount,
+      splitInto: (enemyDef as any).splitInto,
     };
 
     set(s => ({ enemies: [...s.enemies, enemy] }));
@@ -578,7 +591,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }
 
     // ====== MOVE ENEMIES ======
-    let enemiesToRemove: string[] = [];
+    const enemiesToRemove: string[] = [];
     let baseDamage = 0;
 
     const updatedEnemies = state.enemies.map(enemy => {
@@ -623,21 +636,37 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
     });
 
+    const exploding = new Set(enemiesToRemove);
+
+    // Healer aura pass (applies before tower damage this tick)
+    const healedByAura = new Map<string, number>();
+    for (const healer of updatedEnemies) {
+      if (!healer.healPerSecond || !healer.auraRange) continue;
+      const healAmount = healer.healPerSecond * adjustedDelta * 0.001;
+      const rangeSq = healer.auraRange * healer.auraRange;
+      for (const ally of updatedEnemies) {
+        if (ally.id === healer.id || exploding.has(ally.id)) continue;
+        const dx = ally.position.x - healer.position.x;
+        const dy = ally.position.y - healer.position.y;
+        if (dx * dx + dy * dy <= rangeSq) {
+          healedByAura.set(ally.id, (healedByAura.get(ally.id) || 0) + healAmount);
+        }
+      }
+    }
+    const enemiesForTowers = updatedEnemies.filter((e) => !exploding.has(e.id));
+
     // ====== TOWER FIRING ======
-    let newProjectiles: Projectile[] = [];
-    let newLaserBeams: LaserBeam[] = [];
-    
-    // Get shop upgrade levels for stat boost
+    const newProjectiles: Projectile[] = [];
+    const newLaserBeams: LaserBeam[] = [];
+
     const shopUpgradeLevels = state.towerUpgradeLevels;
-    
-    const updatedTowers = state.towers.map(tower => {
+
+    const updatedTowers = state.towers.map((tower) => {
       const towerDef = TOWERS[tower.type];
-      
-      // Apply both in-game upgrades and shop upgrades
+
       const shopBonus = shopUpgradeLevels[tower.type] || 0;
       let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-      
-      // Apply shop upgrade bonus (5% per level)
+
       if (shopBonus > 0) {
         const shopMultiplier = Math.pow(1.05, shopBonus);
         stats = {
@@ -646,63 +675,61 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           range: stats.range * (1 + shopBonus * 0.02),
         };
       }
-      
-      // Check cooldown
+
       if (now - tower.lastFireTime < stats.fireRate / state.gameSpeed) {
-        // For laser, reset damage accumulator if not firing
         if (tower.type === 'laser') {
           return { ...tower, currentTargetId: null, damageAccumulator: 0 };
         }
         return tower;
       }
-      
-      // Find enemies in range
-      const enemiesInRange = updatedEnemies.filter(enemy => {
-        if (enemiesToRemove.includes(enemy.id)) return false;
-        const dx = enemy.position.x - tower.position.x;
-        const dy = enemy.position.y - tower.position.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        return dist <= stats.range;
-      });
-      
+
+      const rangeSq = stats.range * stats.range;
+      const tx = tower.position.x;
+      const ty = tower.position.y;
+      const enemiesInRange: Enemy[] = [];
+      for (const enemy of enemiesForTowers) {
+        const dx = enemy.position.x - tx;
+        const dy = enemy.position.y - ty;
+        if (dx * dx + dy * dy <= rangeSq) {
+          enemiesInRange.push(enemy);
+        }
+      }
+
       if (enemiesInRange.length === 0) {
         if (tower.type === 'laser') {
           return { ...tower, currentTargetId: null, damageAccumulator: 0 };
         }
         return tower;
       }
-      
-      // Select target based on targeting mode
-      let target: typeof enemiesInRange[0];
+
+      let target: Enemy;
       switch (tower.targetingMode) {
         case 'first':
-          target = enemiesInRange.reduce((a, b) => 
-            (a.pathIndex / a.path.length) > (b.pathIndex / b.path.length) ? a : b
+          target = enemiesInRange.reduce((a, b) =>
+            a.pathIndex / a.path.length > b.pathIndex / b.path.length ? a : b
           );
           break;
         case 'last':
-          target = enemiesInRange.reduce((a, b) => 
-            a.spawnTime > b.spawnTime ? a : b
-          );
+          target = enemiesInRange.reduce((a, b) => (a.spawnTime > b.spawnTime ? a : b));
           break;
         case 'strongest':
-          target = enemiesInRange.reduce((a, b) => 
-            a.health > b.health ? a : b
-          );
+          target = enemiesInRange.reduce((a, b) => (a.health > b.health ? a : b));
           break;
-        case 'closest':
-          target = enemiesInRange.reduce((a, b) => {
-            const distA = Math.sqrt(
-              Math.pow(a.position.x - tower.position.x, 2) +
-              Math.pow(a.position.y - tower.position.y, 2)
-            );
-            const distB = Math.sqrt(
-              Math.pow(b.position.x - tower.position.x, 2) +
-              Math.pow(b.position.y - tower.position.y, 2)
-            );
-            return distA < distB ? a : b;
-          });
+        case 'closest': {
+          let best = enemiesInRange[0];
+          let bestSq =
+            (best.position.x - tx) ** 2 + (best.position.y - ty) ** 2;
+          for (let i = 1; i < enemiesInRange.length; i++) {
+            const e = enemiesInRange[i];
+            const dsq = (e.position.x - tx) ** 2 + (e.position.y - ty) ** 2;
+            if (dsq < bestSq) {
+              best = e;
+              bestSq = dsq;
+            }
+          }
+          target = best;
           break;
+        }
         default:
           target = enemiesInRange[0];
       }
@@ -759,19 +786,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     });
 
     // ====== PROCESS LASER BEAMS (instant damage) ======
-    let laserDamage: { id: string; damage: number }[] = [];
-    newLaserBeams.forEach(beam => {
+    const laserDamage: { id: string; damage: number }[] = [];
+    for (const beam of newLaserBeams) {
       laserDamage.push({ id: beam.targetId, damage: beam.damage });
-    });
+    }
 
     // ====== MOVE PROJECTILES ======
-    let projectilesToRemove: string[] = [];
-    let enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [...laserDamage];
+    const projectilesToRemove = new Set<string>();
+    const enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [...laserDamage];
+    const enemyById = new Map<string, Enemy>();
+    for (const enemy of updatedEnemies) {
+      enemyById.set(enemy.id, enemy);
+    }
 
     const updatedProjectiles = [...state.projectiles, ...newProjectiles].map(proj => {
-      const target = updatedEnemies.find(e => e.id === proj.targetId);
-      if (!target || enemiesToRemove.includes(target.id)) {
-        projectilesToRemove.push(proj.id);
+      const target = enemyById.get(proj.targetId);
+      if (!target || exploding.has(target.id)) {
+        projectilesToRemove.add(proj.id);
         return proj;
       }
 
@@ -781,14 +812,14 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const moveAmount = proj.speed * adjustedDelta * 0.001;
 
       if (dist < moveAmount + 0.2) {
-        projectilesToRemove.push(proj.id);
+        projectilesToRemove.add(proj.id);
         
         if (proj.isSplash && proj.splashRadius) {
+          const splashRadiusSq = proj.splashRadius * proj.splashRadius;
           updatedEnemies.forEach(e => {
             const edx = e.position.x - target.position.x;
             const edy = e.position.y - target.position.y;
-            const eDist = Math.sqrt(edx * edx + edy * edy);
-            if (eDist <= proj.splashRadius!) {
+            if (edx * edx + edy * edy <= splashRadiusSq) {
               enemyDamage.push({ id: e.id, damage: proj.damage });
             }
           });
@@ -818,28 +849,80 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     let enemiesKilledThisTick = 0;
     let coinsEarned = 0;
     const doubleDamage = now < state.doubleDamageUntil;
+    const splitSpawns: Enemy[] = [];
+
+    type SlowPayload = { amount: number; duration: number };
+    const damageAgg = new Map<string, { totalDamage: number; slow?: SlowPayload }>();
+    for (const d of enemyDamage) {
+      let entry = damageAgg.get(d.id);
+      if (!entry) {
+        entry = { totalDamage: 0 };
+        damageAgg.set(d.id, entry);
+      }
+      entry.totalDamage += d.damage;
+      if (d.slow) {
+        if (!entry.slow || d.slow.duration > entry.slow.duration) {
+          entry.slow = d.slow;
+        }
+      }
+    }
 
     const finalEnemies = updatedEnemies
-      .filter(e => !enemiesToRemove.includes(e.id))
-      .map(enemy => {
-        const damageEntries = enemyDamage.filter(d => d.id === enemy.id);
-        if (damageEntries.length === 0) return enemy;
+      .filter((e) => !exploding.has(e.id))
+      .map((enemy) => {
+        const agg = damageAgg.get(enemy.id);
+        if (!agg) return enemy;
 
-        let totalDamage = damageEntries.reduce((sum, d) => sum + d.damage, 0);
+        let totalDamage = agg.totalDamage;
         if (doubleDamage) totalDamage *= 2;
+        if (enemy.damageReduction) {
+          totalDamage *= (1 - enemy.damageReduction);
+        }
 
-        const newHealth = enemy.health - totalDamage;
-        
+        const healAmount = healedByAura.get(enemy.id) || 0;
+        const newHealth = Math.min(enemy.maxHealth, enemy.health + healAmount - totalDamage);
+
         let slowedUntil = enemy.slowedUntil;
-        damageEntries.forEach(d => {
-          if (d.slow) {
-            slowedUntil = Math.max(slowedUntil, now + d.slow.duration);
-          }
-        });
+        if (agg.slow) {
+          slowedUntil = Math.max(slowedUntil, now + agg.slow.duration);
+        }
 
         if (newHealth <= 0) {
           enemiesKilledThisTick++;
           coinsEarned += enemy.coinReward;
+          if (enemy.splitOnDeath && enemy.splitInto && enemy.splitCount) {
+            const splitDef = ENEMIES[enemy.splitInto];
+            const blockedCells = getBlockedCells(state.towers);
+            const start = {
+              x: Math.max(0, Math.min(state.gridCols - 1, Math.round(enemy.position.x))),
+              y: Math.max(0, Math.min(state.gridRows - 1, Math.round(enemy.position.y))),
+            };
+            const splitPath =
+              findPath(start, state.basePosition, state.gridCols, state.gridRows, blockedCells) ??
+              enemy.path;
+
+            for (let i = 0; i < enemy.splitCount; i++) {
+              splitSpawns.push({
+                id: generateId(),
+                type: enemy.splitInto,
+                position: { x: enemy.position.x, y: enemy.position.y },
+                health: Math.max(1, Math.floor(splitDef.baseHealth * 0.55)),
+                maxHealth: Math.max(1, Math.floor(splitDef.baseHealth * 0.55)),
+                speed: splitDef.baseSpeed * 1.15,
+                pathIndex: 0,
+                slowedUntil: 0,
+                coinReward: Math.max(1, Math.floor(splitDef.coinReward * 0.5)),
+                spawnTime: now,
+                path: splitPath,
+                damageReduction: (splitDef as any).damageReduction,
+                healPerSecond: (splitDef as any).healPerSecond,
+                auraRange: (splitDef as any).auraRange,
+                splitOnDeath: false,
+                splitCount: 0,
+                splitInto: undefined,
+              });
+            }
+          }
           return null;
         }
 
@@ -847,14 +930,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       })
       .filter(Boolean) as Enemy[];
 
-    // ====== UPDATE STATE ======
     const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
     const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
 
+    const sel = state.selectedPlacedTower;
+    const nextSelected =
+      sel === null ? null : updatedTowers.find((t) => t.id === sel.id) ?? null;
+
     set({
-      enemies: finalEnemies,
+      enemies: [...finalEnemies, ...splitSpawns],
       towers: updatedTowers,
-      projectiles: updatedProjectiles.filter(p => !projectilesToRemove.includes(p.id)),
+      projectiles: updatedProjectiles.filter((p) => !projectilesToRemove.has(p.id)),
       laserBeams: newLaserBeams,
       baseHealth: newBaseHealth,
       isGameOver,
@@ -862,6 +948,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       coins: state.coins + coinsEarned,
       score: state.score + coinsEarned,
       enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
+      selectedPlacedTower: nextSelected,
     });
   },
 

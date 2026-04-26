@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
-import { leaderboardApi } from '../src/hooks/useApi';
+import { isBackendConfigured, isServerBackedPlayerId, leaderboardApi } from '../src/hooks/useApi';
 import BannerAdComponent from '../src/components/BannerAdComponent';
 
 interface LeaderboardEntry {
@@ -28,24 +28,66 @@ export default function LeaderboardScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [dailyEntries, setDailyEntries] = useState<LeaderboardEntry[]>([]);
   const [playerRank, setPlayerRank] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [mode, setMode] = useState<'global' | 'daily'>('global');
 
-  useEffect(() => {
-    loadLeaderboard();
-  }, []);
+  const getDailySeed = () => {
+    const d = new Date();
+    return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+  };
 
-  const loadLeaderboard = async () => {
+  const hash = (v: string) => {
+    let h = 0;
+    for (let i = 0; i < v.length; i++) h = (h * 31 + v.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  };
+
+  const dailyBucketEntries = useMemo(() => {
+    const seed = getDailySeed();
+    return entries
+      .filter((e) => hash(`${e.player_id}:${seed}`) % 4 === 0)
+      .sort((a, b) => b.best_wave - a.best_wave || b.total_waves_survived - a.total_waves_survived);
+  }, [entries]);
+
+  const activeDailyEntries = dailyEntries.length > 0 ? dailyEntries : dailyBucketEntries;
+  const activeEntries = mode === 'daily' ? activeDailyEntries : entries;
+  const activePlayerRank = useMemo(() => {
+    if (mode === 'global') return playerRank;
+    if (!playerStore.playerId) return null;
+    const idx = activeDailyEntries.findIndex((e) => e.player_id === playerStore.playerId);
+    return idx >= 0 ? idx + 1 : null;
+  }, [mode, playerRank, playerStore.playerId, activeDailyEntries]);
+
+  const loadLeaderboard = useCallback(async () => {
+    if (!isBackendConfigured()) {
+      setEntries([]);
+      setPlayerRank(null);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
       const [leaderboardRes, rankRes] = await Promise.all([
         leaderboardApi.getGlobal(100),
-        playerStore.playerId ? leaderboardApi.getPlayerRank(playerStore.playerId) : null,
+        playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)
+          ? leaderboardApi.getPlayerRank(playerStore.playerId)
+          : null,
       ]);
 
       setEntries(leaderboardRes.data);
       if (rankRes?.data) {
         setPlayerRank(rankRes.data.rank);
+      }
+
+      try {
+        const dailyRes = await leaderboardApi.getDailyChallenge(getDailySeed(), 100, 0);
+        setDailyEntries(dailyRes.data || []);
+      } catch {
+        // Backend may not support daily bucket yet; fallback to client-seeded bucket.
+        setDailyEntries([]);
       }
     } catch (error) {
       console.error('Error loading leaderboard:', error);
@@ -53,7 +95,11 @@ export default function LeaderboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [playerStore.playerId]);
+
+  useEffect(() => {
+    loadLeaderboard();
+  }, [loadLeaderboard]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -108,12 +154,27 @@ export default function LeaderboardScreen() {
       </View>
 
       {/* Player rank banner */}
-      {playerRank && (
+      {activePlayerRank && (
         <View style={styles.rankBanner}>
-          <Text style={styles.rankBannerText}>Your Rank: #{playerRank}</Text>
+          <Text style={styles.rankBannerText}>Your Rank: #{activePlayerRank}</Text>
           <Text style={styles.rankBannerSubtext}>Best Wave: {playerStore.bestWave}</Text>
         </View>
       )}
+
+      <View style={styles.modeTabs}>
+        <TouchableOpacity
+          style={[styles.modeTab, mode === 'global' && styles.modeTabActive]}
+          onPress={() => setMode('global')}
+        >
+          <Text style={[styles.modeTabText, mode === 'global' && styles.modeTabTextActive]}>Global</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.modeTab, mode === 'daily' && styles.modeTabActive]}
+          onPress={() => setMode('daily')}
+        >
+          <Text style={[styles.modeTabText, mode === 'daily' && styles.modeTabTextActive]}>Daily Seed</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Leaderboard list */}
       {loading ? (
@@ -122,7 +183,7 @@ export default function LeaderboardScreen() {
         </View>
       ) : (
         <FlatList
-          data={entries}
+          data={activeEntries}
           keyExtractor={(item) => item._id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
@@ -192,6 +253,34 @@ const styles = StyleSheet.create({
     color: '#4A90D9',
     fontSize: 16,
     marginTop: 4,
+  },
+  modeTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  modeTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#16213e',
+    borderWidth: 1,
+    borderColor: '#2a2a4e',
+  },
+  modeTabActive: {
+    backgroundColor: '#4A90D9',
+    borderColor: '#4A90D9',
+  },
+  modeTabText: {
+    color: '#96a6c4',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modeTabTextActive: {
+    color: '#fff',
   },
   loadingContainer: {
     flex: 1,

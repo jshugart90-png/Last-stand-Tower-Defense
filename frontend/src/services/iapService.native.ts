@@ -50,7 +50,7 @@ export const getProducts = async (): Promise<any[]> => {
 
   try {
     const skus = Object.values(IAP_PRODUCTS);
-    const products = await ExpoIAP.getProducts({ skus });
+    const products = await (ExpoIAP as any).getProducts({ skus });
     return products;
   } catch (error) {
     console.error('Failed to get products:', error);
@@ -66,8 +66,8 @@ export const requestPurchase = async (productId: string): Promise<{ success: boo
   try {
     const purchase = await ExpoIAP.requestPurchase({ sku: productId });
     if (purchase) {
-      const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || 
-        productId.includes('coins_');
+      const isGemPack = Object.prototype.hasOwnProperty.call(GEM_PACK_AMOUNTS, productId);
+      const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || isGemPack;
       await ExpoIAP.finishTransaction({ purchase, isConsumable });
       return { success: true, receipt: purchase.transactionReceipt };
     }

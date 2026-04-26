@@ -3,6 +3,16 @@ import Constants from 'expo-constants';
 
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || '';
 
+/** True when a real HTTP(S) backend base URL is set (Expo env or app.json extra). */
+export const isBackendConfigured = (): boolean => {
+  const u = API_URL.trim();
+  return u.startsWith('http://') || u.startsWith('https://');
+};
+
+/** Local-only profiles use this prefix and must not call Mongo-backed routes. */
+export const isServerBackedPlayerId = (playerId: string | null | undefined): boolean =>
+  Boolean(playerId && !String(playerId).startsWith('local_'));
+
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   timeout: 10000,
@@ -44,6 +54,9 @@ export const leaderboardApi = {
   
   getPlayerRank: (playerId: string) =>
     api.get(`/leaderboard/player/${playerId}`),
+
+  getDailyChallenge: (seed: string, limit = 100, skip = 0) =>
+    api.get(`/leaderboard/daily?seed=${encodeURIComponent(seed)}&limit=${limit}&skip=${skip}`),
 };
 
 // Reward APIs

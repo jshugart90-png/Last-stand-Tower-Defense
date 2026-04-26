@@ -7,7 +7,6 @@ import {
   TextInput,
   Modal,
   Alert,
-  Dimensions,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,11 +15,10 @@ import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-ico
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
-import { playerApi, analyticsApi } from '../src/hooks/useApi';
+import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
 import BannerAdComponent from '../src/components/BannerAdComponent';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { playSfx } from '../src/services/audioService';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -225,15 +223,17 @@ const nicknameStyles = StyleSheet.create({
 export default function HomeScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
+  const refreshDailyMissions = usePlayerStore((s) => s.refreshDailyMissions);
+  const canClaimDailyBonus = usePlayerStore((s) => s.canClaimDailyBonus);
+  const claimDailyBonus = usePlayerStore((s) => s.claimDailyBonus);
+  const canClaimSessionQuest = usePlayerStore((s) => s.canClaimSessionQuest);
+  const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
-
-  // Initialize player on mount
-  useEffect(() => {
-    initializePlayer();
-  }, []);
+  const completedDailyMissions = playerStore.dailyMissions.filter((m) => m.completed).length;
+  const unlockedAchievements = playerStore.achievements.filter((a) => a.unlocked).length;
 
   // Show splash screen for minimum 2.5 seconds
   useEffect(() => {
@@ -244,22 +244,34 @@ export default function HomeScreen() {
     return () => clearTimeout(splashTimer);
   }, []);
 
-  const initializePlayer = async () => {
+  const initializePlayer = useCallback(async () => {
     try {
       // Generate or get device ID
       let deviceId = playerStore.deviceId;
       if (!deviceId) {
         try {
           deviceId = await Crypto.randomUUID();
-        } catch (e) {
+        } catch {
           // Fallback for web
           deviceId = 'web-' + Math.random().toString(36).substring(2, 15);
         }
         playerStore.setDeviceId(deviceId);
       }
 
+      // If we already have a local-only profile, skip the server
+      if (playerStore.playerId && !isServerBackedPlayerId(playerStore.playerId)) {
+        setLoading(false);
+        return;
+      }
+
+      // Had a server account in memory but no API URL (misconfig) — keep session without re-fetching
+      if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId) && !isBackendConfigured()) {
+        setLoading(false);
+        return;
+      }
+
       // If we already have a player ID in local storage, use that
-      if (playerStore.playerId) {
+      if (playerStore.playerId && isBackendConfigured()) {
         try {
           const response = await playerApi.getById(playerStore.playerId);
           if (response.data) {
@@ -279,12 +291,18 @@ export default function HomeScreen() {
             setLoading(false);
             return;
           }
-        } catch (e) {
+        } catch {
           console.log('Stored player not found, checking by device ID...');
         }
       }
 
       // Try to get existing player from server by device ID
+      if (!isBackendConfigured()) {
+        setShowNicknameModal(true);
+        setLoading(false);
+        return;
+      }
+
       try {
         const response = await playerApi.getByDevice(deviceId);
         if (response.data) {
@@ -292,7 +310,7 @@ export default function HomeScreen() {
           playerStore.syncFromServer({
             xp: response.data.xp,
             level: response.data.level,
-            coins: response.data.coins,
+            gems: response.data.gems ?? 0,
             totalWavesSurvived: response.data.total_waves_survived,
             gamesPlayed: response.data.games_played,
             bestWave: response.data.best_wave,
@@ -300,12 +318,12 @@ export default function HomeScreen() {
             unlockedSkins: response.data.unlocked_skins,
             equippedSkins: response.data.equipped_skins,
             premium: response.data.premium,
-            arenaExpanded: response.data.arena_expanded,
+            arenaExpansions: response.data.arena_expansions || 0,
           });
           setLoading(false);
           return;
         }
-      } catch (e) {
+      } catch {
         console.log('Player not found by device ID, showing nickname modal');
       }
 
@@ -318,27 +336,64 @@ export default function HomeScreen() {
       setShowNicknameModal(true);
       setLoading(false);
     }
+  }, [playerStore]);
+
+  // Initialize player on mount
+  useEffect(() => {
+    refreshDailyMissions();
+    initializePlayer();
+  }, [initializePlayer, refreshDailyMissions]);
+
+  const registerLocalPlayer = async (nickname: string) => {
+    let id = `local_${Date.now()}`;
+    try {
+      id = `local_${await Crypto.randomUUID()}`;
+    } catch {
+      // keep fallback id
+    }
+    playerStore.setPlayer(id, nickname);
   };
 
   const handleNicknameSubmit = async (nickname: string) => {
     try {
       setLoading(true);
-      const response = await playerApi.create(nickname, playerStore.deviceId);
-      if (response.data) {
-        playerStore.setPlayer(response.data._id, response.data.nickname);
-        playerStore.syncFromServer({
-          xp: response.data.xp,
-          level: response.data.level,
-          coins: response.data.coins,
-          unlockedTowers: response.data.unlocked_towers,
-          unlockedSkins: response.data.unlocked_skins,
-        });
+
+      if (!isBackendConfigured()) {
+        await registerLocalPlayer(nickname);
+        setShowNicknameModal(false);
+        setShowTutorial(true);
+        return;
       }
+
+      try {
+        const response = await playerApi.create(nickname, playerStore.deviceId);
+        if (response.data?._id) {
+          playerStore.setPlayer(response.data._id, response.data.nickname);
+          playerStore.syncFromServer({
+            xp: response.data.xp,
+            level: response.data.level,
+            gems: response.data.gems ?? 0,
+            unlockedTowers: response.data.unlocked_towers,
+            unlockedSkins: response.data.unlocked_skins,
+          });
+        } else {
+          await registerLocalPlayer(nickname);
+        }
+      } catch (error) {
+        console.error('Error creating player:', error);
+        await registerLocalPlayer(nickname);
+        Alert.alert(
+          'Offline mode',
+          'Could not reach the game server. You can still play; progress is stored on this device only.',
+          [{ text: 'OK' }]
+        );
+      }
+
       setShowNicknameModal(false);
       setShowTutorial(true);
     } catch (error) {
-      console.error('Error creating player:', error);
-      Alert.alert('Error', 'Failed to create player. Please try again.');
+      console.error('Error registering player:', error);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -383,6 +438,38 @@ export default function HomeScreen() {
     router.push('/settings');
   }, [router, playerStore.hapticEnabled]);
 
+  const handleProgressPress = useCallback(() => {
+    if (playerStore.hapticEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    router.push('/progression');
+  }, [router, playerStore.hapticEnabled]);
+
+  const handleClaimDailyBonus = useCallback(() => {
+    const result = claimDailyBonus();
+    if (result.reward > 0) {
+      playSfx('chest', playerStore.soundEnabled);
+      const milestoneText =
+        result.milestoneBonus > 0 ? `\nMilestone chest: +${result.milestoneBonus} gems!` : '';
+      Alert.alert(
+        'Daily Bonus Claimed',
+        `+${result.reward} gems${milestoneText}\nStreak: ${result.streak} day(s)`
+      );
+    } else {
+      Alert.alert('Already Claimed', 'Come back tomorrow for your next daily bonus.');
+    }
+  }, [claimDailyBonus, playerStore.soundEnabled]);
+
+  const handleClaimSessionQuest = useCallback(() => {
+    const reward = claimSessionQuest();
+    if (reward > 0) {
+      playSfx('chest', playerStore.soundEnabled);
+      Alert.alert('Session Quest Complete', `Bonus chest opened: +${reward} gems!`);
+    } else {
+      Alert.alert('Session Quest', 'Win 2 runs (reach wave 10+) this session to claim.');
+    }
+  }, [claimSessionQuest, playerStore.soundEnabled]);
+
   // Show splash screen while loading OR during minimum splash time
   if (loading || showSplash) {
     return (
@@ -426,6 +513,36 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
 
+        <View style={styles.dailyBonusCard}>
+          <View>
+            <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
+            <Text style={styles.dailyBonusSub}>
+              Streak: {playerStore.loginStreak} day{playerStore.loginStreak === 1 ? '' : 's'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.dailyBonusButton, !canClaimDailyBonus() && styles.dailyBonusButtonDisabled]}
+            onPress={handleClaimDailyBonus}
+            disabled={!canClaimDailyBonus()}
+          >
+            <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.dailyBonusCard}>
+          <View>
+            <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
+            <Text style={styles.dailyBonusSub}>Wins this session: {playerStore.sessionWins}/2</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
+            onPress={handleClaimSessionQuest}
+            disabled={!canClaimSessionQuest()}
+          >
+            <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Best wave */}
         {playerStore.bestWave > 0 && (
           <View style={styles.bestWaveContainer}>
@@ -433,6 +550,21 @@ export default function HomeScreen() {
             <Text style={styles.bestWaveText}>Best: Wave {playerStore.bestWave}</Text>
           </View>
         )}
+
+        <View style={styles.progressionCard}>
+          <Text style={styles.progressionTitle}>Daily Missions</Text>
+          {playerStore.dailyMissions.map((mission) => (
+            <View key={mission.id} style={styles.missionRow}>
+              <Text style={styles.missionLabel}>{mission.label}</Text>
+              <Text style={styles.missionValue}>
+                {mission.completed ? 'Done' : `${mission.progress}/${mission.target}`} (+{mission.rewardGems})
+              </Text>
+            </View>
+          ))}
+          <Text style={styles.progressionFooter}>
+            {completedDailyMissions}/{playerStore.dailyMissions.length} done • Achievements {unlockedAchievements}/{playerStore.achievements.length}
+          </Text>
+        </View>
 
         {/* Play button */}
         <TouchableOpacity
@@ -468,6 +600,14 @@ export default function HomeScreen() {
           >
             <Ionicons name="settings-outline" size={28} color="#4A90D9" />
             <Text style={styles.menuButtonText}>Settings</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={handleProgressPress}
+          >
+            <Ionicons name="stats-chart-outline" size={28} color="#2ECC71" />
+            <Text style={styles.menuButtonText}>Progress</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -614,6 +754,79 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
+  dailyBonusCard: {
+    width: '100%',
+    backgroundColor: '#16213e',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2a2a4e',
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dailyBonusTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  dailyBonusSub: {
+    color: '#9bb0cc',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  dailyBonusButton: {
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  dailyBonusButtonDisabled: {
+    backgroundColor: '#2a2a4e',
+  },
+  dailyBonusButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  progressionCard: {
+    width: '100%',
+    backgroundColor: '#16213e',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#2a2a4e',
+  },
+  progressionTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  missionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  missionLabel: {
+    color: '#d7d7d7',
+    fontSize: 12,
+    flex: 1,
+    marginRight: 8,
+  },
+  missionValue: {
+    color: '#4A90D9',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressionFooter: {
+    color: '#888',
+    fontSize: 11,
+    marginTop: 4,
+  },
   playButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -637,6 +850,8 @@ const styles = StyleSheet.create({
   },
   menuButtons: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: 16,
   },
   menuButton: {

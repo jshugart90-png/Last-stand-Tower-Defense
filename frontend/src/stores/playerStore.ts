@@ -1,5 +1,17 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShopUpgradeCost, TargetingMode } from '../constants/game';
+import {
+  Achievement,
+  createDefaultAchievements,
+  createDefaultDailyMissions,
+  createDefaultWeeklyMissions,
+  DailyMission,
+  DAILY_RESET_HOURS,
+  WeeklyMission,
+  WEEKLY_RESET_DAYS,
+} from '../constants/progression';
 
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
@@ -72,6 +84,8 @@ interface PlayerState {
   totalWavesSurvived: number;
   gamesPlayed: number;
   bestWave: number;
+  lifetimeEnemiesKilled: number;
+  lifetimeTowersPlaced: number;
   
   // Tower unlocks (purchased in shop with gems)
   unlockedTowers: TowerType[];
@@ -94,12 +108,28 @@ interface PlayerState {
   soundEnabled: boolean;
   musicEnabled: boolean;
   hapticEnabled: boolean;
+  performanceMode: boolean;
+  vfxQuality: 0 | 1 | 2; // 0 low, 1 medium, 2 high
+  autoStartWaves: boolean;
   
   // Ad tracking
   gamesPlayedSinceAd: number;
   
   // Tutorial
   tutorialCompleted: boolean;
+
+  // Progression systems
+  dailyMissions: DailyMission[];
+  lastDailyResetAt: number;
+  weeklyMissions: WeeklyMission[];
+  lastWeeklyResetAt: number;
+  achievements: Achievement[];
+  loginStreak: number;
+  lastDailyBonusClaimAt: number | null;
+  sessionWins: number;
+  sessionQuestClaimed: boolean;
+  dailyChallengeRunCombo: number;
+  lastDailyChallengeRunAt: number | null;
   
   // SAVED GAME STATE - for resume functionality
   savedGame: SavedGameState | null;
@@ -118,8 +148,16 @@ interface PlayerActions {
   addGems: (amount: number) => void;
   
   // Stats
-  recordGame: (wavesReached: number) => void;
+  recordGame: (wavesReached: number, enemiesKilled?: number, towersPlaced?: number) => void;
   setBestWave: (wave: number) => void;
+  refreshDailyMissions: () => void;
+  refreshWeeklyMissions: () => void;
+  canClaimDailyBonus: () => boolean;
+  claimDailyBonus: () => { reward: number; streak: number; milestoneBonus: number };
+  recordSessionWin: () => void;
+  canClaimSessionQuest: () => boolean;
+  claimSessionQuest: () => number;
+  recordDailyChallengeRun: () => { combo: number; bonusGems: number };
   
   // Tower unlocks (gems)
   purchaseTower: (tower: TowerType) => boolean;
@@ -148,6 +186,9 @@ interface PlayerActions {
   toggleSound: () => void;
   toggleMusic: () => void;
   toggleHaptic: () => void;
+  togglePerformanceMode: () => void;
+  setVfxQuality: (quality: 0 | 1 | 2) => void;
+  toggleAutoStartWaves: () => void;
   
   // Ad tracking
   incrementGamesPlayedSinceAd: () => void;
@@ -181,6 +222,8 @@ const initialState: PlayerState = {
   totalWavesSurvived: 0,
   gamesPlayed: 0,
   bestWave: 0,
+  lifetimeEnemiesKilled: 0,
+  lifetimeTowersPlaced: 0,
   unlockedTowers: ['machine_gun'],
   towerUpgradeLevels: {
     machine_gun: 0,
@@ -198,13 +241,141 @@ const initialState: PlayerState = {
   soundEnabled: true,
   musicEnabled: true,
   hapticEnabled: true,
+  performanceMode: false,
+  vfxQuality: 2,
+  autoStartWaves: false,
   gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
+  dailyMissions: createDefaultDailyMissions(),
+  lastDailyResetAt: Date.now(),
+  weeklyMissions: createDefaultWeeklyMissions(),
+  lastWeeklyResetAt: Date.now(),
+  achievements: createDefaultAchievements(),
+  loginStreak: 0,
+  lastDailyBonusClaimAt: null,
+  sessionWins: 0,
+  sessionQuestClaimed: false,
+  dailyChallengeRunCombo: 0,
+  lastDailyChallengeRunAt: null,
   savedGame: null,
 };
 
+const playerPersistKeys = [
+  'playerId',
+  'deviceId',
+  'nickname',
+  'xp',
+  'level',
+  'gems',
+  'totalWavesSurvived',
+  'gamesPlayed',
+  'bestWave',
+  'lifetimeEnemiesKilled',
+  'lifetimeTowersPlaced',
+  'unlockedTowers',
+  'towerUpgradeLevels',
+  'unlockedSpeeds',
+  'unlockedSkins',
+  'equippedSkins',
+  'premium',
+  'arenaExpansions',
+  'soundEnabled',
+  'musicEnabled',
+  'hapticEnabled',
+  'performanceMode',
+  'vfxQuality',
+  'autoStartWaves',
+  'gamesPlayedSinceAd',
+  'tutorialCompleted',
+  'dailyMissions',
+  'lastDailyResetAt',
+  'weeklyMissions',
+  'lastWeeklyResetAt',
+  'achievements',
+  'loginStreak',
+  'lastDailyBonusClaimAt',
+  'sessionWins',
+  'sessionQuestClaimed',
+  'dailyChallengeRunCombo',
+  'lastDailyChallengeRunAt',
+  'savedGame',
+] as const;
+
+const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
+  const elapsed = Date.now() - state.lastDailyResetAt;
+  const resetMs = DAILY_RESET_HOURS * 60 * 60 * 1000;
+  if (elapsed < resetMs) return {};
+  return {
+    dailyMissions: createDefaultDailyMissions(),
+    lastDailyResetAt: Date.now(),
+  };
+};
+
+const maybeResetWeeklyMissions = (state: PlayerState): Partial<PlayerState> => {
+  const elapsed = Date.now() - state.lastWeeklyResetAt;
+  const resetMs = WEEKLY_RESET_DAYS * 24 * 60 * 60 * 1000;
+  if (elapsed < resetMs) return {};
+  return {
+    weeklyMissions: createDefaultWeeklyMissions(),
+    lastWeeklyResetAt: Date.now(),
+  };
+};
+
+const applyMissionProgress = (
+  missions: DailyMission[],
+  id: DailyMission['id'],
+  amount: number
+): { missions: DailyMission[]; gemsEarned: number } => {
+  if (amount <= 0) return { missions, gemsEarned: 0 };
+  let gemsEarned = 0;
+  const next = missions.map((mission) => {
+    if (mission.id !== id || mission.completed) return mission;
+    const progress = Math.min(mission.target, mission.progress + amount);
+    const completed = progress >= mission.target;
+    if (completed && !mission.completed) gemsEarned += mission.rewardGems;
+    return { ...mission, progress, completed };
+  });
+  return { missions: next, gemsEarned };
+};
+
+const applyWeeklyMissionProgress = (
+  missions: WeeklyMission[],
+  id: WeeklyMission['id'],
+  amount: number
+): { missions: WeeklyMission[]; gemsEarned: number } => {
+  if (amount <= 0) return { missions, gemsEarned: 0 };
+  let gemsEarned = 0;
+  const next = missions.map((mission) => {
+    if (mission.id !== id || mission.completed) return mission;
+    const progress = Math.min(mission.target, mission.progress + amount);
+    const completed = progress >= mission.target;
+    if (completed && !mission.completed) gemsEarned += mission.rewardGems;
+    return { ...mission, progress, completed };
+  });
+  return { missions: next, gemsEarned };
+};
+
+const unlockAchievement = (
+  achievements: Achievement[],
+  id: string
+): { achievements: Achievement[]; gemsEarned: number } => {
+  let gemsEarned = 0;
+  const next = achievements.map((a) => {
+    if (a.id !== id || a.unlocked) return a;
+    gemsEarned += a.rewardGems;
+    return { ...a, unlocked: true };
+  });
+  return { achievements: next, gemsEarned };
+};
+
+const getUtcDayKey = (ts: number): number => {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+};
+
 export const usePlayerStore = create<PlayerState & PlayerActions>()(
-  (set, get) => ({
+  persist(
+    (set, get) => ({
     ...initialState,
 
     // Identity
@@ -225,14 +396,158 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
     // Stats
-    recordGame: (wavesReached) => {
-      set(state => ({
-        totalWavesSurvived: state.totalWavesSurvived + wavesReached,
-        gamesPlayed: state.gamesPlayed + 1,
-        bestWave: Math.max(state.bestWave, wavesReached),
-      }));
+    recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0) => {
+      set((state) => {
+        const dailyResetPatch = maybeResetDailyMissions(state);
+        const weeklyResetPatch = maybeResetWeeklyMissions(state);
+        let missions = dailyResetPatch.dailyMissions ?? state.dailyMissions;
+        let weeklyMissions = weeklyResetPatch.weeklyMissions ?? state.weeklyMissions;
+        let gemsFromMissions = 0;
+        let gemsFromAchievements = 0;
+
+        const gamesMission = applyMissionProgress(missions, 'play_games', 1);
+        missions = gamesMission.missions;
+        gemsFromMissions += gamesMission.gemsEarned;
+
+        const enemiesMission = applyMissionProgress(missions, 'kill_enemies', enemiesKilled);
+        missions = enemiesMission.missions;
+        gemsFromMissions += enemiesMission.gemsEarned;
+
+        const wavesMission = applyMissionProgress(missions, 'survive_waves', wavesReached);
+        missions = wavesMission.missions;
+        gemsFromMissions += wavesMission.gemsEarned;
+
+        const weeklyGamesMission = applyWeeklyMissionProgress(weeklyMissions, 'play_games', 1);
+        weeklyMissions = weeklyGamesMission.missions;
+        gemsFromMissions += weeklyGamesMission.gemsEarned;
+
+        const weeklyEnemiesMission = applyWeeklyMissionProgress(weeklyMissions, 'kill_enemies', enemiesKilled);
+        weeklyMissions = weeklyEnemiesMission.missions;
+        gemsFromMissions += weeklyEnemiesMission.gemsEarned;
+
+        const weeklyWavesMission = applyWeeklyMissionProgress(weeklyMissions, 'survive_waves', wavesReached);
+        weeklyMissions = weeklyWavesMission.missions;
+        gemsFromMissions += weeklyWavesMission.gemsEarned;
+
+        const nextEnemiesKilled = state.lifetimeEnemiesKilled + enemiesKilled;
+        const nextTowersPlaced = state.lifetimeTowersPlaced + towersPlaced;
+        const nextBestWave = Math.max(state.bestWave, wavesReached);
+        let achievements = state.achievements;
+
+        if (nextEnemiesKilled >= 1) {
+          const unlock = unlockAchievement(achievements, 'first_blood');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextBestWave >= 10) {
+          const unlock = unlockAchievement(achievements, 'wave_10');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextBestWave >= 25) {
+          const unlock = unlockAchievement(achievements, 'wave_25');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextTowersPlaced >= 100) {
+          const unlock = unlockAchievement(achievements, 'tower_architect');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+
+        return {
+          ...dailyResetPatch,
+          ...weeklyResetPatch,
+          totalWavesSurvived: state.totalWavesSurvived + wavesReached,
+          gamesPlayed: state.gamesPlayed + 1,
+          bestWave: nextBestWave,
+          lifetimeEnemiesKilled: nextEnemiesKilled,
+          lifetimeTowersPlaced: nextTowersPlaced,
+          dailyMissions: missions,
+          weeklyMissions,
+          gems: state.gems + gemsFromMissions + gemsFromAchievements,
+          achievements,
+        };
+      });
     },
     setBestWave: (wave) => set({ bestWave: wave }),
+    refreshDailyMissions: () => {
+      set((state) => ({ ...maybeResetDailyMissions(state) }));
+    },
+    refreshWeeklyMissions: () => {
+      set((state) => ({ ...maybeResetWeeklyMissions(state) }));
+    },
+    canClaimDailyBonus: () => {
+      const state = get();
+      if (!state.lastDailyBonusClaimAt) return true;
+      return getUtcDayKey(Date.now()) !== getUtcDayKey(state.lastDailyBonusClaimAt);
+    },
+    claimDailyBonus: () => {
+      const state = get();
+      const now = Date.now();
+      if (!get().canClaimDailyBonus()) {
+        return { reward: 0, streak: state.loginStreak, milestoneBonus: 0 };
+      }
+
+      let nextStreak = 1;
+      if (state.lastDailyBonusClaimAt) {
+        const lastDay = getUtcDayKey(state.lastDailyBonusClaimAt);
+        const today = getUtcDayKey(now);
+        const oneDay = 24 * 60 * 60 * 1000;
+        if (today - lastDay === oneDay) {
+          nextStreak = state.loginStreak + 1;
+        } else if (today === lastDay) {
+          nextStreak = state.loginStreak;
+        }
+      }
+
+      const streakCap = Math.min(nextStreak, 7);
+      const reward = 10 + (streakCap - 1) * 5;
+      const milestoneBonus =
+        streakCap % 7 === 0 ? 75 : streakCap % 3 === 0 ? 30 : 0;
+      set({
+        loginStreak: nextStreak,
+        lastDailyBonusClaimAt: now,
+        gems: state.gems + reward + milestoneBonus,
+      });
+      return { reward, streak: nextStreak, milestoneBonus };
+    },
+    recordSessionWin: () => {
+      set((state) => ({ sessionWins: state.sessionWins + 1 }));
+    },
+    canClaimSessionQuest: () => {
+      const state = get();
+      return state.sessionWins >= 2 && !state.sessionQuestClaimed;
+    },
+    claimSessionQuest: () => {
+      const state = get();
+      if (!get().canClaimSessionQuest()) return 0;
+      const reward = 50;
+      set({
+        gems: state.gems + reward,
+        sessionQuestClaimed: true,
+      });
+      return reward;
+    },
+    recordDailyChallengeRun: () => {
+      const state = get();
+      const now = Date.now();
+      const today = getUtcDayKey(now);
+      const lastDay = state.lastDailyChallengeRunAt
+        ? getUtcDayKey(state.lastDailyChallengeRunAt)
+        : null;
+
+      const combo = lastDay === today ? state.dailyChallengeRunCombo + 1 : 1;
+      const bonusGems = combo > 0 && combo % 3 === 0 ? 20 : 0;
+
+      set({
+        dailyChallengeRunCombo: combo,
+        lastDailyChallengeRunAt: now,
+        gems: state.gems + bonusGems,
+      });
+
+      return { combo, bonusGems };
+    },
 
     // Tower unlocks (gems)
     purchaseTower: (tower) => {
@@ -317,6 +632,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
     toggleMusic: () => set(state => ({ musicEnabled: !state.musicEnabled })),
     toggleHaptic: () => set(state => ({ hapticEnabled: !state.hapticEnabled })),
+    togglePerformanceMode: () => set(state => ({ performanceMode: !state.performanceMode })),
+    setVfxQuality: (quality) => set({ vfxQuality: quality }),
+    toggleAutoStartWaves: () => set(state => ({ autoStartWaves: !state.autoStartWaves })),
 
     // Ad tracking
     incrementGamesPlayedSinceAd: () => {
@@ -365,6 +683,18 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
 
     // Reset
-    resetPlayer: () => set(initialState),
-  })
+    resetPlayer: () => {
+      usePlayerStore.persist.clearStorage();
+      set(initialState);
+    },
+  }),
+  {
+    name: 'last-stand-player',
+    storage: createJSONStorage(() => AsyncStorage),
+    partialize: (state) =>
+      Object.fromEntries(
+        playerPersistKeys.map((key) => [key, state[key as keyof PlayerState]])
+      ) as unknown as PlayerState,
+  }
+  )
 );

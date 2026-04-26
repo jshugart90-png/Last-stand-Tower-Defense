@@ -168,6 +168,39 @@ export const ENEMIES = {
     color: '#F39C12',
     size: 28,
   },
+  shielded: {
+    id: 'shielded',
+    name: 'Shielded',
+    baseHealth: 180,
+    baseSpeed: 0.6,
+    coinReward: 3,
+    color: '#3498DB',
+    size: 18,
+    damageReduction: 0.35,
+  },
+  healer: {
+    id: 'healer',
+    name: 'Healer',
+    baseHealth: 90,
+    baseSpeed: 0.75,
+    coinReward: 4,
+    color: '#1ABC9C',
+    size: 16,
+    healPerSecond: 8,
+    auraRange: 1.8,
+  },
+  splitter: {
+    id: 'splitter',
+    name: 'Splitter',
+    baseHealth: 140,
+    baseSpeed: 0.7,
+    coinReward: 3,
+    color: '#9B59B6',
+    size: 18,
+    splitOnDeath: true,
+    splitCount: 2,
+    splitInto: 'fast',
+  },
 };
 
 export type EnemyType = keyof typeof ENEMIES;
@@ -223,10 +256,13 @@ export const getWaveConfig = (waveNumber: number) => {
     ];
   } else {
     enemies = [
-      { type: 'basic', count: Math.floor(baseEnemies * 0.4) },
-      { type: 'fast', count: Math.floor(baseEnemies * 0.25) },
-      { type: 'tank', count: Math.floor(baseEnemies * 0.25) },
+      { type: 'basic', count: Math.floor(baseEnemies * 0.3) },
+      { type: 'fast', count: Math.floor(baseEnemies * 0.2) },
+      { type: 'tank', count: Math.floor(baseEnemies * 0.2) },
     ];
+    if (waveNumber >= 12) enemies.push({ type: 'shielded', count: Math.max(1, Math.floor(baseEnemies * 0.15)) });
+    if (waveNumber >= 16) enemies.push({ type: 'healer', count: Math.max(1, Math.floor(baseEnemies * 0.1)) });
+    if (waveNumber >= 14) enemies.push({ type: 'splitter', count: Math.max(1, Math.floor(baseEnemies * 0.12)) });
   }
   
   // Boss every 10 waves

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,15 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
 import { skinsApi, rewardApi, purchaseApi } from '../src/hooks/useApi';
 import { 
-  TOWERS, TowerType, SKIN_COLORS, TOWER_UNLOCK_PRICES, 
-  SPEED_UNLOCK_PRICES, GameSpeed, getShopUpgradeCost 
+  TOWERS, TowerType, TOWER_UNLOCK_PRICES, 
+  SPEED_UNLOCK_PRICES, GameSpeed 
 } from '../src/constants/game';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
@@ -58,20 +57,32 @@ const getTowerIcon = (type: TowerType, size = 20, color = '#fff') => {
 
 export default function ShopScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ highlightTower?: string }>();
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins'>('towers');
   const [adLoading, setAdLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
+  const highlightedTower = useMemo(() => {
+    const raw = params.highlightTower;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (!value) return null;
+    return (Object.keys(TOWERS) as TowerType[]).includes(value as TowerType)
+      ? (value as TowerType)
+      : null;
+  }, [params.highlightTower]);
 
   useEffect(() => {
     loadSkins();
+    if (highlightedTower) {
+      setSelectedTab('towers');
+    }
     // Pre-load rewarded ad when shop opens
     if (isNativeAdsAvailable() && isAdsInitialized()) {
       loadRewardedAd();
     }
-  }, []);
+  }, [highlightedTower]);
 
   const loadSkins = async () => {
     try {
@@ -204,15 +215,15 @@ export default function ShopScreen() {
                         item_type: 'arena_expansion',
                         item_id: IAP_PRODUCTS.ARENA_EXPANSION,
                       });
-                    } catch (e) {
-                      console.error('Backend purchase report failed:', e);
+                    } catch (error) {
+                      console.error('Backend purchase report failed:', error);
                     }
                   }
                   Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
-              } catch (e) {
+              } catch {
                 Alert.alert('Error', 'Purchase failed. Please try again.');
               } finally {
                 setPurchaseLoading(false);
@@ -269,15 +280,15 @@ export default function ShopScreen() {
                         item_type: 'premium',
                         item_id: IAP_PRODUCTS.REMOVE_ADS,
                       });
-                    } catch (e) {
-                      console.error('Backend purchase report failed:', e);
+                    } catch (error) {
+                      console.error('Backend purchase report failed:', error);
                     }
                   }
                   Alert.alert('Success!', 'All ads have been removed. Thank you!');
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
-              } catch (e) {
+              } catch {
                 Alert.alert('Error', 'Purchase failed. Please try again.');
               } finally {
                 setPurchaseLoading(false);
@@ -328,7 +339,7 @@ export default function ShopScreen() {
         } else {
           Alert.alert('No Purchases', 'No previous purchases found to restore.');
         }
-      } catch (e) {
+      } catch {
         Alert.alert('Error', 'Failed to restore purchases. Please try again.');
       } finally {
         setPurchaseLoading(false);
@@ -360,15 +371,15 @@ export default function ShopScreen() {
                 item_type: 'gems',
                 item_id: productId,
               });
-            } catch (e) {
-              console.error('Backend purchase report failed:', e);
+            } catch (error) {
+              console.error('Backend purchase report failed:', error);
             }
           }
           Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems have been added to your balance!`);
         } else if (result.error && result.error !== 'Purchase cancelled') {
           Alert.alert('Purchase Failed', result.error);
         }
-      } catch (e) {
+      } catch {
         Alert.alert('Error', 'Purchase failed. Please try again.');
       } finally {
         setPurchaseLoading(false);
@@ -482,7 +493,13 @@ export default function ShopScreen() {
     const canAffordUpgrade = playerStore.gems >= upgradePrice;
 
     return (
-      <View key={towerType} style={styles.towerCard}>
+      <View
+        key={towerType}
+        style={[
+          styles.towerCard,
+          highlightedTower === towerType && styles.towerCardHighlighted,
+        ]}
+      >
         <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
           {getTowerIcon(towerType, 28)}
         </View>
@@ -958,6 +975,15 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     marginBottom: 10,
+  },
+  towerCardHighlighted: {
+    borderWidth: 2,
+    borderColor: '#2ECC71',
+    shadowColor: '#2ECC71',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   towerIconLarge: {
     width: 48,

@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Dimensions,
   Modal,
   Alert,
@@ -21,15 +23,21 @@ import {
   TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
   GameSpeed, SPEED_UNLOCK_PRICES
 } from '../src/constants/game';
-import { gameApi, analyticsApi, rewardApi } from '../src/hooks/useApi';
+import { gameApi, analyticsApi, rewardApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
   isNativeAdsAvailable, isAdsInitialized,
   showInterstitialAd, loadInterstitialAd, isInterstitialAdReady
 } from '../src/services/adService';
+import { getDailyChallenge } from '../src/constants/challenges';
+import { playSfx } from '../src/services/audioService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const getUtcDayKey = (ts: number) => {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+};
 
 // Helper function for tower icons
 const getTowerIcon = (type: TowerType, size = 20) => {
@@ -274,14 +282,18 @@ const TowerOptionsPanel = ({
 };
 
 // Game board component with laser beam rendering
-const GameBoard = ({ 
+const GameBoard = React.memo(({ 
   onCellPress, 
   scale,
   zoomLevel,
+  performanceMode,
+  vfxQuality,
 }: { 
   onCellPress: (x: number, y: number) => void; 
   scale: number;
   zoomLevel: number;
+  performanceMode: boolean;
+  vfxQuality: 0 | 1 | 2;
 }) => {
   const { 
     towers, enemies, projectiles, laserBeams, gridCols, gridRows, cellSize, 
@@ -294,9 +306,46 @@ const GameBoard = ({
   const boardWidth = gridCols * scaledCellSize;
   const boardHeight = gridRows * scaledCellSize;
 
-  const blockedCells = new Set(towers.map(t => `${t.position.x},${t.position.y}`));
-  const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
-  const pathSet = new Set((currentPath || []).map(p => `${p.x},${p.y}`));
+  const blockedCells = useMemo(
+    () => new Set(towers.map(t => `${t.position.x},${t.position.y}`)),
+    [towers]
+  );
+  const pathSet = useMemo(() => {
+    const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
+    return new Set((currentPath || []).map(p => `${p.x},${p.y}`));
+  }, [spawnPoint, basePosition, gridCols, gridRows, blockedCells]);
+  const gridCells = useMemo(
+    () => Array.from({ length: gridRows * gridCols }, (_, index) => ({
+      row: Math.floor(index / gridCols),
+      col: index % gridCols,
+    })),
+    [gridRows, gridCols]
+  );
+  const visibleLaserBeams = useMemo(() => {
+    if (vfxQuality >= 2 && !performanceMode) return laserBeams;
+    const maxBeams = vfxQuality === 0 || performanceMode ? 48 : 80;
+    if (laserBeams.length <= maxBeams) return laserBeams;
+    const step = Math.max(1, Math.ceil(laserBeams.length / maxBeams));
+    return laserBeams.filter((_, idx) => idx % step === 0);
+  }, [laserBeams, performanceMode, vfxQuality]);
+  const visibleProjectiles = useMemo(() => {
+    const maxProjectiles =
+      vfxQuality === 0 || performanceMode ? 80 : vfxQuality === 1 ? 130 : 200;
+    if (projectiles.length <= maxProjectiles) return projectiles;
+    const step = Math.max(1, Math.ceil(projectiles.length / maxProjectiles));
+    return projectiles.filter((_, idx) => idx % step === 0);
+  }, [projectiles, performanceMode, vfxQuality]);
+  const towerById = useMemo(() => {
+    const map = new Map<string, PlacedTower>();
+    for (const t of towers) map.set(t.id, t);
+    return map;
+  }, [towers]);
+  const enemyById = useMemo(() => {
+    const map = new Map<string, (typeof enemies)[number]>();
+    for (const e of enemies) map.set(e.id, e);
+    return map;
+  }, [enemies]);
+  const nowTs = Date.now();
 
   return (
     <ScrollView 
@@ -311,56 +360,59 @@ const GameBoard = ({
         contentContainerStyle={{ alignItems: 'center', justifyContent: 'center' }}
       >
         <View style={[styles.gameBoard, { width: boardWidth, height: boardHeight }]}>
-          {/* Grid cells */}
-          {Array.from({ length: gridRows }).map((_, row) =>
-            Array.from({ length: gridCols }).map((_, col) => {
-              const isPath = pathSet.has(`${col},${row}`);
-              const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
-              const isBase = col === basePosition.x && row === basePosition.y;
-              const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
-              
-              return (
-                <TouchableOpacity
-                  key={`${col}-${row}`}
-                  style={[
-                    styles.cell,
-                    {
-                      width: scaledCellSize,
-                      height: scaledCellSize,
-                      left: col * scaledCellSize,
-                      top: row * scaledCellSize,
-                    },
-                    isPath && !isSpawn && !isBase && styles.pathCell,
-                    canPlace && styles.canPlaceCell,
-                    isSpawn && styles.spawnCell,
-                    isBase && styles.baseCell,
-                  ]}
-                  onPress={() => onCellPress(col, row)}
-                  activeOpacity={0.7}
-                />
-              );
-            })
-          )}
+          {gridCells.map(({ row, col }) => {
+            const isPath = pathSet.has(`${col},${row}`);
+            const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
+            const isBase = col === basePosition.x && row === basePosition.y;
+            const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
+            const hasTowerHere = blockedCells.has(`${col},${row}`);
+            const cellStyle = [
+              styles.cell,
+              {
+                width: scaledCellSize,
+                height: scaledCellSize,
+                left: col * scaledCellSize,
+                top: row * scaledCellSize,
+              },
+              isPath && !isSpawn && !isBase && styles.pathCell,
+              canPlace && styles.canPlaceCell,
+              isSpawn && styles.spawnCell,
+              isBase && styles.baseCell,
+            ];
 
-          {/* Laser beams */}
-          {laserBeams.map((beam, idx) => {
-            const tower = towers.find(t => t.id === beam.towerId);
-            const enemy = enemies.find(e => e.id === beam.targetId);
+            if (hasTowerHere) {
+              return <View key={`${col}-${row}`} style={cellStyle} />;
+            }
+
+            return (
+              <TouchableOpacity
+                key={`${col}-${row}`}
+                style={cellStyle}
+                onPress={() => onCellPress(col, row)}
+                activeOpacity={0.7}
+              />
+            );
+          })}
+
+          {visibleLaserBeams.map((beam, idx) => {
+            const tower = towerById.get(beam.towerId);
+            const enemy = enemyById.get(beam.targetId);
             if (!tower || !enemy) return null;
-            
+
             const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
             const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
             const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
             const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
-            
+
             const dx = endX - startX;
             const dy = endY - startY;
             const length = Math.sqrt(dx * dx + dy * dy);
             const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-            
+
             return (
               <View
                 key={`laser-${idx}`}
+                pointerEvents="none"
                 style={[
                   styles.laserBeam,
                   {
@@ -375,71 +427,16 @@ const GameBoard = ({
             );
           })}
 
-          {/* Towers */}
-          {towers.map((tower) => {
-            const towerDef = TOWERS[tower.type];
-            const shopBonus = towerUpgradeLevels[tower.type] || 0;
-            let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-            if (shopBonus > 0) {
-              stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
-            }
-            const rangeRadius = stats.range * scaledCellSize;
-            const isSelected = selectedPlacedTower?.id === tower.id;
-            
-            return (
-              <React.Fragment key={tower.id}>
-                {isSelected && (
-                  <View
-                    style={[
-                      styles.rangeIndicator,
-                      {
-                        left: tower.position.x * scaledCellSize + scaledCellSize / 2 - rangeRadius,
-                        top: tower.position.y * scaledCellSize + scaledCellSize / 2 - rangeRadius,
-                        width: rangeRadius * 2,
-                        height: rangeRadius * 2,
-                        borderRadius: rangeRadius,
-                      },
-                    ]}
-                  />
-                )}
-                <View
-                  style={[
-                    styles.tower,
-                    {
-                      left: tower.position.x * scaledCellSize + scaledCellSize * 0.1,
-                      top: tower.position.y * scaledCellSize + scaledCellSize * 0.1,
-                      width: scaledCellSize * 0.8,
-                      height: scaledCellSize * 0.8,
-                      backgroundColor: getTowerColor(tower),
-                      borderWidth: isSelected ? 3 : tower.level > 0 ? 2 : 0,
-                      borderColor: isSelected ? '#FFD700' : 
-                        tower.level >= 5 ? '#FF00FF' :
-                        tower.level >= 3 ? '#00FF88' : 
-                        tower.level >= 1 ? '#C0C0C0' : 'transparent',
-                    },
-                  ]}
-                >
-                  {getTowerIcon(tower.type, scaledCellSize * 0.4)}
-                  {tower.level > 0 && (
-                    <View style={styles.levelBadge}>
-                      <Text style={styles.levelText}>{tower.level}</Text>
-                    </View>
-                  )}
-                </View>
-              </React.Fragment>
-            );
-          })}
-
-          {/* Enemies */}
           {enemies.map((enemy) => {
             const enemyDef = ENEMIES[enemy.type];
             const healthPercent = enemy.health / enemy.maxHealth;
-            const isSlowed = Date.now() < enemy.slowedUntil;
+            const isSlowed = nowTs < enemy.slowedUntil;
             const enemySize = enemyDef.size * finalScale;
-            
+
             return (
               <View
                 key={enemy.id}
+                pointerEvents="none"
                 style={[
                   styles.enemy,
                   {
@@ -458,55 +455,146 @@ const GameBoard = ({
             );
           })}
 
-          {/* Projectiles */}
-          {projectiles.map((proj) => (
-            <View
-              key={proj.id}
-              style={[
-                styles.projectile,
-                {
-                  left: proj.position.x * scaledCellSize + scaledCellSize / 2 - 4,
-                  top: proj.position.y * scaledCellSize + scaledCellSize / 2 - 4,
-                  backgroundColor: proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700',
-                },
-              ]}
-            />
-          ))}
-
-          {/* Spawn point */}
-          <View style={[
-            styles.spawnPoint,
-            {
-              left: spawnPoint.x * scaledCellSize,
-              top: spawnPoint.y * scaledCellSize,
-              width: scaledCellSize,
-              height: scaledCellSize,
+          {visibleProjectiles.map((proj) => {
+            const target = enemyById.get(proj.targetId);
+            let px = proj.position.x;
+            let py = proj.position.y;
+            if (target) {
+              const dx = target.position.x - proj.position.x;
+              const dy = target.position.y - proj.position.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist > 0.001) {
+                const renderLead = proj.speed * 0.016 * (performanceMode ? 0.2 : 0.35);
+                const lead = Math.min(renderLead, dist * 0.6);
+                px += (dx / dist) * lead;
+                py += (dy / dist) * lead;
+              }
             }
-          ]}>
+            return (
+              <View
+                key={proj.id}
+                pointerEvents="none"
+                style={[
+                  styles.projectile,
+                  {
+                    left: px * scaledCellSize + scaledCellSize / 2 - 4,
+                    top: py * scaledCellSize + scaledCellSize / 2 - 4,
+                    backgroundColor: proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700',
+                  },
+                ]}
+              />
+            );
+          })}
+
+          {towers.map((tower) => {
+            const towerDef = TOWERS[tower.type];
+            const shopBonus = towerUpgradeLevels[tower.type] || 0;
+            let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+            if (shopBonus > 0) {
+              stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
+            }
+            const rangeRadius = stats.range * scaledCellSize;
+            const isSelected = selectedPlacedTower?.id === tower.id;
+            const cx = tower.position.x * scaledCellSize;
+            const cy = tower.position.y * scaledCellSize;
+
+            return (
+              <React.Fragment key={tower.id}>
+                {isSelected && (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.rangeIndicator,
+                      {
+                        left: cx + scaledCellSize / 2 - rangeRadius,
+                        top: cy + scaledCellSize / 2 - rangeRadius,
+                        width: rangeRadius * 2,
+                        height: rangeRadius * 2,
+                        borderRadius: rangeRadius,
+                      },
+                    ]}
+                  />
+                )}
+                <Pressable
+                  hitSlop={12}
+                  style={[
+                    styles.towerHit,
+                    {
+                      left: cx,
+                      top: cy,
+                      width: scaledCellSize,
+                      height: scaledCellSize,
+                    },
+                  ]}
+                  onPress={() => onCellPress(tower.position.x, tower.position.y)}
+                >
+                  <View
+                    style={[
+                      styles.tower,
+                      {
+                        width: scaledCellSize * 0.8,
+                        height: scaledCellSize * 0.8,
+                        backgroundColor: getTowerColor(tower),
+                        borderWidth: isSelected ? 3 : tower.level > 0 ? 2 : 0,
+                        borderColor: isSelected ? '#FFD700' :
+                          tower.level >= 5 ? '#FF00FF' :
+                          tower.level >= 3 ? '#00FF88' :
+                          tower.level >= 1 ? '#C0C0C0' : 'transparent',
+                      },
+                    ]}
+                  >
+                    {getTowerIcon(tower.type, scaledCellSize * 0.4)}
+                    {tower.level > 0 && (
+                      <View style={styles.levelBadge}>
+                        <Text style={styles.levelText}>{tower.level}</Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
+              </React.Fragment>
+            );
+          })}
+
+          <View
+            pointerEvents="none"
+            style={[
+              styles.spawnPoint,
+              {
+                left: spawnPoint.x * scaledCellSize,
+                top: spawnPoint.y * scaledCellSize,
+                width: scaledCellSize,
+                height: scaledCellSize,
+              },
+            ]}
+          >
             <MaterialCommunityIcons name="location-enter" size={scaledCellSize * 0.5} color="#E74C3C" />
           </View>
 
-          {/* Base */}
-          <View style={[
-            styles.base,
-            {
-              left: basePosition.x * scaledCellSize,
-              top: basePosition.y * scaledCellSize,
-              width: scaledCellSize,
-              height: scaledCellSize,
-            }
-          ]}>
+          <View
+            pointerEvents="none"
+            style={[
+              styles.base,
+              {
+                left: basePosition.x * scaledCellSize,
+                top: basePosition.y * scaledCellSize,
+                width: scaledCellSize,
+                height: scaledCellSize,
+              },
+            ]}
+          >
             <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
           </View>
         </View>
       </ScrollView>
     </ScrollView>
   );
-};
+});
+
+GameBoard.displayName = 'GameBoard';
 
 // Game Over Modal
-const GameOverModal = ({ 
-  visible, wave, score, onRestart, onWatchAd, onExit, canWatchAd 
+const GameOverModal = ({
+  visible, wave, score, onRestart, onWatchAd, onExit, onViewResults, canWatchAd, rewardSummary
 }: {
   visible: boolean;
   wave: number;
@@ -514,7 +602,13 @@ const GameOverModal = ({
   onRestart: () => void;
   onWatchAd: () => void;
   onExit: () => void;
+  onViewResults: () => void;
   canWatchAd: boolean;
+  rewardSummary: {
+    challengeName: string;
+    xpEarned: number;
+    gemsEarned: number;
+  };
 }) => {
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -523,6 +617,11 @@ const GameOverModal = ({
           <Text style={styles.gameOverTitle}>GAME OVER</Text>
           <Text style={styles.gameOverWave}>Wave {wave}</Text>
           <Text style={styles.gameOverScore}>Score: {score}</Text>
+          <View style={styles.rewardSummaryBox}>
+            <Text style={styles.rewardSummaryTitle}>{rewardSummary.challengeName}</Text>
+            <Text style={styles.rewardSummaryText}>XP Earned: +{rewardSummary.xpEarned}</Text>
+            <Text style={styles.rewardSummaryText}>Gems Earned: +{rewardSummary.gemsEarned}</Text>
+          </View>
           
           {canWatchAd && (
             <TouchableOpacity style={styles.watchAdButton} onPress={onWatchAd}>
@@ -530,6 +629,10 @@ const GameOverModal = ({
               <Text style={styles.watchAdText}>Watch Ad to Revive (1x only)</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={styles.resultsButton} onPress={onViewResults}>
+            <Text style={styles.resultsText}>View Full Results</Text>
+          </TouchableOpacity>
           
           <TouchableOpacity style={styles.restartButton} onPress={onRestart}>
             <Text style={styles.restartText}>Play Again</Text>
@@ -634,14 +737,31 @@ const ResumeGameModal = ({
 
 export default function GameScreen() {
   const router = useRouter();
+  const dailyChallenge = useMemo(() => getDailyChallenge(), []);
+  const runStartBestWaveRef = useRef<number>(0);
+  const lastMissionCompletedCountRef = useRef<number>(0);
+  const initializedRef = useRef(false);
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number>(Date.now());
   const spawnTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const spawningCompleteRef = useRef<boolean>(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
+  const [eliteWaveNotice, setEliteWaveNotice] = useState<string | null>(null);
   
   const playerStore = usePlayerStore();
-  const gameStore = useGameStore();
+  const dailyMissions = usePlayerStore((s) => s.dailyMissions);
+  const vfxQuality = usePlayerStore((s) => s.vfxQuality);
+  useEffect(() => {
+    if (runStartBestWaveRef.current === 0) {
+      runStartBestWaveRef.current = playerStore.bestWave;
+    }
+  }, [playerStore.bestWave]);
+
+  useEffect(() => {
+    if (isPlaying && currentWave <= 1) {
+      runStartBestWaveRef.current = playerStore.bestWave;
+    }
+  }, [isPlaying, currentWave, playerStore.bestWave]);
 
   const {
     isPlaying,
@@ -654,8 +774,7 @@ export default function GameScreen() {
     score,
     enemiesKilled,
     towersPlaced,
-    enemies,
-    towers,
+    towersCount,
     unlockedTowers,
     unlockedSpeeds,
     towerUpgradeLevels,
@@ -681,7 +800,6 @@ export default function GameScreen() {
     restartGame,
     startWave,
     endWave,
-    spawnEnemy,
     canPlaceTower,
     getTowerAt,
     getTowerCost,
@@ -689,14 +807,65 @@ export default function GameScreen() {
     getSellValue,
     setGameSpeed,
     setZoomLevel,
-    useRevive,
+    consumeRevive,
     grantRevive,
     canUseAdRevive,
     getCurrentCoins,
     lastWaveBonus,
     showBonusPopup,
-    dismissBonusPopup,
-  } = gameStore;
+  } = useGameStore(
+    useShallow((s) => ({
+      isPlaying: s.isPlaying,
+      isPaused: s.isPaused,
+      isGameOver: s.isGameOver,
+      currentWave: s.currentWave,
+      waveInProgress: s.waveInProgress,
+      coins: s.coins,
+      baseHealth: s.baseHealth,
+      score: s.score,
+      enemiesKilled: s.enemiesKilled,
+      towersPlaced: s.towersPlaced,
+      towersCount: s.towers.length,
+      unlockedTowers: s.unlockedTowers,
+      unlockedSpeeds: s.unlockedSpeeds,
+      towerUpgradeLevels: s.towerUpgradeLevels,
+      selectedTowerType: s.selectedTowerType,
+      selectedPlacedTower: s.selectedPlacedTower,
+      gameStartTime: s.gameStartTime,
+      gameSpeed: s.gameSpeed,
+      autoWaveTimer: s.autoWaveTimer,
+      gridCols: s.gridCols,
+      gridRows: s.gridRows,
+      cellSize: s.cellSize,
+      zoomLevel: s.zoomLevel,
+      arenaExpansions: s.arenaExpansions,
+      selectTower: s.selectTower,
+      selectPlacedTower: s.selectPlacedTower,
+      placeTower: s.placeTower,
+      upgradeTower: s.upgradeTower,
+      sellTower: s.sellTower,
+      setTowerTargeting: s.setTowerTargeting,
+      startGame: s.startGame,
+      pauseGame: s.pauseGame,
+      resumeGame: s.resumeGame,
+      restartGame: s.restartGame,
+      startWave: s.startWave,
+      endWave: s.endWave,
+      canPlaceTower: s.canPlaceTower,
+      getTowerAt: s.getTowerAt,
+      getTowerCost: s.getTowerCost,
+      getUpgradeCost: s.getUpgradeCost,
+      getSellValue: s.getSellValue,
+      setGameSpeed: s.setGameSpeed,
+      setZoomLevel: s.setZoomLevel,
+      consumeRevive: s.useRevive,
+      grantRevive: s.grantRevive,
+      canUseAdRevive: s.canUseAdRevive,
+      getCurrentCoins: s.getCurrentCoins,
+      lastWaveBonus: s.lastWaveBonus,
+      showBonusPopup: s.showBonusPopup,
+    }))
+  );
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
 
@@ -709,6 +878,9 @@ export default function GameScreen() {
 
   // Initialize game on mount - check for saved game
   useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
     const savedGame = playerStore.getSavedGame();
     
     if (savedGame && savedGame.currentWave > 0) {
@@ -725,7 +897,7 @@ export default function GameScreen() {
       );
     }
     
-    if (playerStore.playerId) {
+    if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
       analyticsApi.log({
         player_id: playerStore.playerId,
         event_type: 'game_start',
@@ -736,13 +908,13 @@ export default function GameScreen() {
       if (gameLoopRef.current) clearInterval(gameLoopRef.current);
       spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
     };
-  }, []);
+  }, [playerStore, startGame]);
 
   // Handle resume saved game
   const handleResumeGame = useCallback(() => {
     const savedGame = playerStore.getSavedGame();
     if (savedGame) {
-      gameStore.resumeFromSavedGame(savedGame as SavedGameStateForExport, {
+      useGameStore.getState().resumeFromSavedGame(savedGame as SavedGameStateForExport, {
         unlockedTowers: playerStore.unlockedTowers,
         unlockedSpeeds: playerStore.unlockedSpeeds,
         towerUpgradeLevels: playerStore.towerUpgradeLevels,
@@ -750,7 +922,7 @@ export default function GameScreen() {
       });
     }
     setShowResumePrompt(false);
-  }, [playerStore, gameStore]);
+  }, [playerStore]);
 
   // Handle start new game (discard saved)
   const handleStartNewGame = useCallback(() => {
@@ -795,7 +967,7 @@ export default function GameScreen() {
       const deltaTime = Math.min(now - lastUpdateRef.current, 100);
       lastUpdateRef.current = now;
 
-      gameStore.gameTick(deltaTime);
+      useGameStore.getState().gameTick(deltaTime);
       
       const state = useGameStore.getState();
       if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
@@ -817,7 +989,7 @@ export default function GameScreen() {
     return () => {
       if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     };
-  }, [isPlaying, isPaused]);
+  }, [isPlaying, isPaused, endWave, playerStore.premium]);
 
   // Wave spawning
   useEffect(() => {
@@ -828,6 +1000,8 @@ export default function GameScreen() {
     spawningCompleteRef.current = false;
 
     const waveConfig = getWaveConfig(currentWave);
+    const challengeHealthMultiplier = dailyChallenge.enemyHealthMultiplier;
+    const challengeSpeedMultiplier = dailyChallenge.enemySpeedMultiplier;
     let delay = 500;
 
     waveConfig.enemies.forEach(({ type, count }) => {
@@ -835,7 +1009,11 @@ export default function GameScreen() {
         const timeoutId = setTimeout(() => {
           const state = useGameStore.getState();
           if (state.isPlaying && !state.isPaused && state.waveInProgress) {
-            state.spawnEnemy(type as any, waveConfig.healthMultiplier, waveConfig.speedMultiplier);
+            state.spawnEnemy(
+              type as any,
+              waveConfig.healthMultiplier * challengeHealthMultiplier,
+              waveConfig.speedMultiplier * challengeSpeedMultiplier
+            );
           }
         }, delay / gameSpeed);
         spawnTimeoutsRef.current.push(timeoutId);
@@ -851,7 +1029,23 @@ export default function GameScreen() {
       spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
       clearTimeout(completionTimeout);
     };
-  }, [waveInProgress, currentWave, isPlaying, gameSpeed]);
+  }, [waveInProgress, currentWave, isPlaying, gameSpeed, dailyChallenge]);
+
+  useEffect(() => {
+    if (!waveInProgress || currentWave <= 0) return;
+    const waveConfig = getWaveConfig(currentWave);
+    const enemyTypes = waveConfig.enemies.map((e) => e.type);
+    if (enemyTypes.includes('boss')) {
+      setEliteWaveNotice('Boss wave incoming!');
+    } else if (enemyTypes.includes('splitter') || enemyTypes.includes('healer') || enemyTypes.includes('shielded')) {
+      setEliteWaveNotice('Elite enemies incoming!');
+    } else {
+      setEliteWaveNotice(null);
+      return;
+    }
+    const t = setTimeout(() => setEliteWaveNotice(null), 2200);
+    return () => clearTimeout(t);
+  }, [waveInProgress, currentWave]);
 
   // Auto-save between waves (in-game coins NOT synced to gems - separate systems)
   const handleSaveCoins = async (_currentCoins: number) => {
@@ -862,9 +1056,9 @@ export default function GameScreen() {
 
   // Save full game state for resume
   const saveGameState = useCallback(() => {
-    const gameState = gameStore.getGameStateForSave();
+    const gameState = useGameStore.getState().getGameStateForSave();
     playerStore.saveGame(gameState as any);
-  }, [gameStore, playerStore]);
+  }, [playerStore]);
 
   // Handle exit with warning
   const handleExitAttempt = useCallback(() => {
@@ -889,9 +1083,9 @@ export default function GameScreen() {
     // Save game state for resume
     saveGameState();
     await handleSaveCoins(getCurrentCoins());
-    playerStore.recordGame(currentWave);
+    playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
     router.replace('/');
-  }, [saveGameState, getCurrentCoins, currentWave, router]);
+  }, [saveGameState, getCurrentCoins, currentWave, enemiesKilled, towersPlaced, router, playerStore]);
 
   const handleCancelExit = useCallback(() => {
     setShowExitWarning(false);
@@ -967,29 +1161,53 @@ export default function GameScreen() {
     if (!playerStore.playerId) return;
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
-    
-    try {
-      const response = await gameApi.endGame({
-        player_id: playerStore.playerId,
-        wave_reached: currentWave,
-        enemies_killed: enemiesKilled,
-        towers_placed: towersPlaced,
-        duration_seconds: duration,
-      });
+    const baseXpReward = Math.max(1, currentWave * 2);
+    const performanceGems = Math.max(0, Math.floor(currentWave * 0.75) + Math.floor(enemiesKilled / 20));
+    const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
+    const challengeGemReward = Math.floor(performanceGems * Math.max(0, dailyChallenge.gemMultiplier - 1));
+    const totalXpReward = baseXpReward + challengeXpReward;
+    const totalGemReward = performanceGems + challengeGemReward;
 
-      if (response.data) {
-        playerStore.addXp(response.data.xp_earned);
-        // Sync gems from server (the authoritative source for persistent currency)
-        if (response.data.new_gem_balance !== undefined) {
-          playerStore.setGems(response.data.new_gem_balance);
-        }
-      }
+    const comboResult = playerStore.recordDailyChallengeRun();
+    const totalGemRewardWithCombo = totalGemReward + comboResult.bonusGems;
+    if (comboResult.bonusGems > 0) {
+      playSfx('combo', playerStore.soundEnabled);
+    }
 
-      playerStore.recordGame(currentWave);
+    if (!isServerBackedPlayerId(playerStore.playerId)) {
+      playerStore.addXp(totalXpReward);
+      if (totalGemRewardWithCombo > 0) playerStore.addGems(totalGemRewardWithCombo);
+      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
+      if (currentWave >= 10) playerStore.recordSessionWin();
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
-    } catch (error) {
-      console.error('Error saving game:', error);
+    } else {
+      try {
+        const response = await gameApi.endGame({
+          player_id: playerStore.playerId,
+          wave_reached: currentWave,
+          enemies_killed: enemiesKilled,
+          towers_placed: towersPlaced,
+          duration_seconds: duration,
+        });
+
+        if (response.data) {
+          playerStore.addXp(response.data.xp_earned + challengeXpReward);
+          if (response.data.new_gem_balance !== undefined) {
+            playerStore.setGems(response.data.new_gem_balance);
+          }
+          if (totalGemRewardWithCombo > 0) {
+            playerStore.addGems(totalGemRewardWithCombo);
+          }
+        }
+
+        playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
+        if (currentWave >= 10) playerStore.recordSessionWin();
+        playerStore.incrementGamesPlayedSinceAd();
+        playerStore.clearCurrentGameProgress();
+      } catch (error) {
+        console.error('Error saving game:', error);
+      }
     }
 
     // Show interstitial ad after game over (skip for premium users)
@@ -1004,13 +1222,38 @@ export default function GameScreen() {
         });
       }
     }
-  }, [playerStore.playerId, gameStartTime, currentWave, score, enemiesKilled, towersPlaced, playerStore.premium]);
+  }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
     if (isGameOver) {
       handleGameEnd();
     }
-  }, [isGameOver]);
+  }, [isGameOver, handleGameEnd]);
+
+  useEffect(() => {
+    const completed = dailyMissions.filter((m) => m.completed).length;
+    if (completed > lastMissionCompletedCountRef.current) {
+      playSfx('mission', playerStore.soundEnabled);
+    }
+    lastMissionCompletedCountRef.current = completed;
+  }, [dailyMissions, playerStore.soundEnabled]);
+
+  useEffect(() => {
+    if (!playerStore.autoStartWaves) return;
+    if (!isPlaying || isPaused || isGameOver || waveInProgress) return;
+    if (currentWave === 0 && towersCount > 0) {
+      startWave();
+    }
+  }, [
+    playerStore.autoStartWaves,
+    isPlaying,
+    isPaused,
+    isGameOver,
+    waveInProgress,
+    currentWave,
+    towersCount,
+    startWave,
+  ]);
 
   const handleWatchAdForRevive = useCallback(async () => {
     const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
@@ -1021,9 +1264,9 @@ export default function GameScreen() {
         const reward = await showRewardedAd();
         if (reward) {
           grantRevive();
-          useRevive();
+          consumeRevive();
           
-          if (playerStore.playerId) {
+          if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
             try {
               await rewardApi.claim({
                 player_id: playerStore.playerId,
@@ -1063,9 +1306,9 @@ export default function GameScreen() {
             text: 'Simulate',
             onPress: async () => {
               grantRevive();
-              useRevive();
+              consumeRevive();
               
-              if (playerStore.playerId) {
+              if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
                 try {
                   await rewardApi.claim({
                     player_id: playerStore.playerId,
@@ -1081,7 +1324,7 @@ export default function GameScreen() {
         ]
       );
     }
-  }, [playerStore.playerId, grantRevive, useRevive]);
+  }, [playerStore, grantRevive, consumeRevive]);
 
   const handleRestart = useCallback(() => {
     playerStore.clearSavedGame(); // Clear saved game on restart
@@ -1097,6 +1340,59 @@ export default function GameScreen() {
     const seconds = Math.ceil(ms / 1000);
     return `${seconds}s`;
   };
+
+  const rewardSummary = useMemo(() => {
+    const baseXpReward = Math.max(1, currentWave * 2);
+    const performanceGems = Math.max(0, Math.floor(currentWave * 0.75) + Math.floor(enemiesKilled / 20));
+    const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
+    const challengeGemReward = Math.floor(performanceGems * Math.max(0, dailyChallenge.gemMultiplier - 1));
+    const nowKey = getUtcDayKey(Date.now());
+    const lastComboKey = playerStore.lastDailyChallengeRunAt
+      ? getUtcDayKey(playerStore.lastDailyChallengeRunAt)
+      : null;
+    const nextCombo = lastComboKey === nowKey ? playerStore.dailyChallengeRunCombo + 1 : 1;
+    const comboBonus = nextCombo % 3 === 0 ? 20 : 0;
+    return {
+      challengeName: dailyChallenge.name,
+      xpEarned: baseXpReward + challengeXpReward,
+      gemsEarned: performanceGems + challengeGemReward + comboBonus,
+      comboBonus,
+      comboCount: nextCombo,
+    };
+  }, [currentWave, enemiesKilled, dailyChallenge, playerStore.lastDailyChallengeRunAt, playerStore.dailyChallengeRunCombo]);
+
+  const missionNudge = useMemo(() => {
+    const unfinished = dailyMissions
+      .filter((m) => !m.completed)
+      .map((m) => ({ ...m, remaining: Math.max(0, m.target - m.progress) }))
+      .sort((a, b) => a.remaining - b.remaining);
+    if (unfinished.length === 0) return null as null | { text: string; oneMoreRun: boolean };
+    const m = unfinished[0];
+    if (m.remaining > Math.max(5, Math.floor(m.target * 0.4))) return null;
+    return {
+      text: `${m.remaining} left: ${m.label} (+${m.rewardGems} gems)`,
+      oneMoreRun: m.remaining <= 2,
+    };
+  }, [dailyMissions]);
+
+  const handleViewResults = useCallback(() => {
+    router.push({
+      pathname: '/run-results',
+      params: {
+        wave: String(currentWave),
+        score: String(score),
+        kills: String(enemiesKilled),
+        towers: String(towersPlaced),
+        xp: String(rewardSummary.xpEarned),
+        gems: String(rewardSummary.gemsEarned),
+        challenge: rewardSummary.challengeName,
+        bestDelta: String(Math.max(0, currentWave - runStartBestWaveRef.current)),
+        comboBonus: String(rewardSummary.comboBonus),
+        comboCount: String(rewardSummary.comboCount),
+        oneMoreRun: missionNudge?.oneMoreRun ? '1' : '0',
+      },
+    });
+  }, [router, currentWave, score, enemiesKilled, towersPlaced, rewardSummary, missionNudge]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1145,8 +1441,14 @@ export default function GameScreen() {
             <Text style={styles.waveInfoText}>
               {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
             </Text>
+            <Text style={styles.challengeInfoText}>
+              Daily Challenge: {dailyChallenge.name}
+            </Text>
             {showBonusPopup && lastWaveBonus > 0 && (
               <Text style={styles.bonusText}>+{lastWaveBonus} bonus coins!</Text>
+            )}
+            {missionNudge && (
+              <Text style={styles.missionNudgeText}>{missionNudge.text}</Text>
             )}
           </View>
           <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
@@ -1162,6 +1464,12 @@ export default function GameScreen() {
         <View style={styles.bonusPopup}>
           <FontAwesome5 name="coins" size={16} color="#FFD700" />
           <Text style={styles.bonusPopupText}>+{lastWaveBonus} Wave Bonus!</Text>
+        </View>
+      )}
+
+      {eliteWaveNotice && (
+        <View style={styles.eliteNotice}>
+          <Text style={styles.eliteNoticeText}>{eliteWaveNotice}</Text>
         </View>
       )}
 
@@ -1186,7 +1494,13 @@ export default function GameScreen() {
 
       {/* Game board */}
       <View style={styles.boardContainer}>
-        <GameBoard onCellPress={handleCellPress} scale={scale} zoomLevel={zoomLevel} />
+        <GameBoard
+          onCellPress={handleCellPress}
+          scale={scale}
+          zoomLevel={zoomLevel}
+          performanceMode={playerStore.performanceMode}
+          vfxQuality={vfxQuality}
+        />
       </View>
 
       {/* Tower options panel */}
@@ -1229,9 +1543,11 @@ export default function GameScreen() {
         visible={isGameOver}
         wave={currentWave}
         score={score}
+        rewardSummary={rewardSummary}
         onRestart={handleRestart}
         onWatchAd={handleWatchAdForRevive}
         onExit={handleExit}
+        onViewResults={handleViewResults}
         canWatchAd={canUseAdRevive()}
       />
 
@@ -1363,6 +1679,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
+  challengeInfoText: {
+    color: '#8fb4e5',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  missionNudgeText: {
+    color: '#FFD700',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
   startWaveButton: {
     backgroundColor: '#2ECC71',
     paddingHorizontal: 16,
@@ -1401,6 +1728,21 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  eliteNotice: {
+    position: 'absolute',
+    top: 155,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(155, 89, 182, 0.95)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+    zIndex: 120,
+  },
+  eliteNoticeText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
   },
   zoomControls: {
     flexDirection: 'row',
@@ -1443,6 +1785,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
+  towerHit: {
+    position: 'absolute',
+    zIndex: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   cell: {
     position: 'absolute',
     backgroundColor: '#1a1a2e',
@@ -1465,6 +1813,7 @@ const styles = StyleSheet.create({
   },
   rangeIndicator: {
     position: 'absolute',
+    zIndex: 8,
     backgroundColor: 'rgba(74, 144, 217, 0.15)',
     borderWidth: 2,
     borderColor: 'rgba(74, 144, 217, 0.4)',
@@ -1473,18 +1822,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     height: 4,
     backgroundColor: '#FF00FF',
-    zIndex: 20,
+    zIndex: 12,
     shadowColor: '#FF00FF',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 8,
   },
   tower: {
-    position: 'absolute',
     borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
   },
   levelBadge: {
     position: 'absolute',
@@ -1505,7 +1852,7 @@ const styles = StyleSheet.create({
   enemy: {
     position: 'absolute',
     borderRadius: 50,
-    zIndex: 5,
+    zIndex: 14,
   },
   healthBarContainer: {
     position: 'absolute',
@@ -1526,7 +1873,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    zIndex: 15,
+    zIndex: 16,
   },
   base: {
     position: 'absolute',
@@ -1742,6 +2089,25 @@ const styles = StyleSheet.create({
     fontSize: 20,
     marginBottom: 24,
   },
+  rewardSummaryBox: {
+    width: '100%',
+    backgroundColor: '#1f2c4a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#385a8f',
+    padding: 10,
+    marginBottom: 14,
+  },
+  rewardSummaryTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  rewardSummaryText: {
+    color: '#d6e3f7',
+    fontSize: 12,
+  },
   watchAdButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1772,6 +2138,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  resultsButton: {
+    backgroundColor: '#2a3f67',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    marginBottom: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  resultsText: {
+    color: '#d8e6fb',
+    fontSize: 15,
+    fontWeight: '700',
   },
   exitButton: {
     paddingVertical: 12,
@@ -1956,17 +2336,6 @@ const styles = StyleSheet.create({
   pauseButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
-  },
-  resumeButton: {
-    backgroundColor: '#4A90D9',
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 8,
-  },
-  resumeText: {
-    color: '#fff',
-    fontSize: 18,
     fontWeight: 'bold',
   },
 });

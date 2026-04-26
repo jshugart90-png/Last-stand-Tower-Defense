@@ -7,12 +7,12 @@ import {
   ScrollView,
   Switch,
   Alert,
-  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
+import { TOWERS } from '../src/constants/game';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -129,6 +129,55 @@ export default function SettingsScreen() {
               thumbColor={playerStore.hapticEnabled ? '#fff' : '#666'}
             />
           </View>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <MaterialCommunityIcons name="speedometer" size={24} color="#2ECC71" />
+              <Text style={styles.settingLabel}>Performance Mode</Text>
+            </View>
+            <Switch
+              value={playerStore.performanceMode}
+              onValueChange={playerStore.togglePerformanceMode}
+              trackColor={{ false: '#333', true: '#2ECC71' }}
+              thumbColor={playerStore.performanceMode ? '#fff' : '#666'}
+            />
+          </View>
+          <Text style={styles.settingHint}>
+            Reduces visual effects in large waves for smoother combat.
+          </Text>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Ionicons name="sparkles-outline" size={24} color="#FFD700" />
+              <Text style={styles.settingLabel}>VFX Quality</Text>
+            </View>
+            <View style={styles.vfxSegment}>
+              {[0, 1, 2].map((q) => (
+                <TouchableOpacity
+                  key={q}
+                  style={[styles.vfxButton, playerStore.vfxQuality === q && styles.vfxButtonActive]}
+                  onPress={() => playerStore.setVfxQuality(q as 0 | 1 | 2)}
+                >
+                  <Text style={[styles.vfxButtonText, playerStore.vfxQuality === q && styles.vfxButtonTextActive]}>
+                    {q === 0 ? 'Low' : q === 1 ? 'Med' : 'High'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Ionicons name="play-forward" size={24} color="#4A90D9" />
+              <Text style={styles.settingLabel}>Auto-Start Waves</Text>
+            </View>
+            <Switch
+              value={playerStore.autoStartWaves}
+              onValueChange={playerStore.toggleAutoStartWaves}
+              trackColor={{ false: '#333', true: '#4A90D9' }}
+              thumbColor={playerStore.autoStartWaves ? '#fff' : '#666'}
+            />
+          </View>
         </View>
 
         {/* Account Section */}
@@ -164,7 +213,7 @@ export default function SettingsScreen() {
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Unlocked Towers</Text>
-            <Text style={styles.infoValue}>{playerStore.unlockedTowers.length}/5</Text>
+            <Text style={styles.infoValue}>{playerStore.unlockedTowers.length}/{Object.keys(TOWERS).length}</Text>
           </View>
         </View>
 
@@ -238,7 +287,7 @@ export default function SettingsScreen() {
         {/* Version */}
         <View style={styles.versionContainer}>
           <Text style={styles.versionText}>Last Stand Defense v1.0.0</Text>
-          <Text style={styles.copyrightText}>Made with Emergent</Text>
+          <Text style={styles.copyrightText}>Last Stand Defense</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -300,6 +349,34 @@ const styles = StyleSheet.create({
   settingLabel: {
     color: '#fff',
     fontSize: 16,
+  },
+  settingHint: {
+    color: '#8da3c0',
+    fontSize: 12,
+    marginTop: -6,
+    marginBottom: 8,
+    marginLeft: 36,
+  },
+  vfxSegment: {
+    flexDirection: 'row',
+    backgroundColor: '#0f0f23',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  vfxButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  vfxButtonActive: {
+    backgroundColor: '#4A90D9',
+  },
+  vfxButtonText: {
+    color: '#97a7c2',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  vfxButtonTextActive: {
+    color: '#fff',
   },
   infoRow: {
     flexDirection: 'row',
