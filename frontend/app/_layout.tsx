@@ -3,7 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { initializeIAP } from '../src/services/iapService';
+import { InteractionManager } from 'react-native';
 import { isBackendConfigured } from '../src/hooks/useApi';
 import { initializeAudio } from '../src/services/audioService';
 
@@ -11,19 +11,23 @@ const queryClient = new QueryClient();
 
 export default function RootLayout() {
   useEffect(() => {
-    // Initialize IAP on app launch when backend is configured
-    const init = async () => {
-      await initializeAudio();
-      if (isBackendConfigured()) {
+    const task = InteractionManager.runAfterInteractions(() => {
+      void (async () => {
         try {
+          await initializeAudio();
+        } catch {
+          // audio is optional; never crash launch
+        }
+        if (!isBackendConfigured()) return;
+        try {
+          const { initializeIAP } = await import('../src/services/iapService');
           await initializeIAP();
         } catch (e) {
           console.log('IAP init skipped:', e);
         }
-      }
-    };
-
-    init();
+      })();
+    });
+    return () => task.cancel();
   }, []);
 
   return (

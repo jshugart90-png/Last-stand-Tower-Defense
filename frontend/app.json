@@ -7,20 +7,25 @@
     "icon": "./assets/images/icon.png",
     "scheme": "laststandtd",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.horseshoeroundme.laststandtowerdefense",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
         "com.android.vending.BILLING",
         "android.permission.INTERNET"
-      ]
+      ],
+      "package": "com.horseshoeroundme.laststandtowerdefense"
     },
     "web": {
       "bundler": "metro",
@@ -32,10 +37,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000"
+          "backgroundColor": "#000000"
         }
       ],
       [
@@ -46,10 +51,15 @@
           }
         }
       ],
-      "expo-iap"
+      "expo-iap",
+      "expo-web-browser"
     ],
     "extra": {
-      "EXPO_PUBLIC_BACKEND_URL": ""
+      "EXPO_PUBLIC_BACKEND_URL": "",
+      "router": {},
+      "eas": {
+        "projectId": "7b990481-5fbc-492f-905e-6e0c24a31bf7"
+      }
     },
     "experiments": {
       "typedRoutes": true
