@@ -21,6 +21,10 @@ import {
   GameSpeed,
   COSMETIC_SKINS,
   SKIN_COLORS,
+  STARTING_COINS_UPGRADE_MAX,
+  STARTING_COINS_BONUS_PER_LEVEL,
+  getStartingCoinsUpgradePrice,
+  GAME_CONFIG,
 } from '../src/constants/game';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
@@ -191,6 +195,30 @@ export default function ShopScreen() {
   };
 
   // Handle speed unlock purchase
+  const handlePurchaseStartingCoins = () => {
+    const level = playerStore.startingCoinUpgradeLevel;
+    if (level >= STARTING_COINS_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Starting coins upgrade is maxed out.');
+      return;
+    }
+    const price = getStartingCoinsUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`, [
+        { text: 'OK' },
+        { text: 'Gems', onPress: () => setSelectedTab('gems') },
+      ]);
+      return;
+    }
+    const ok = playerStore.purchaseStartingCoinsUpgrade();
+    if (ok) {
+      const lv = usePlayerStore.getState().startingCoinUpgradeLevel;
+      Alert.alert(
+        'Upgraded!',
+        `Each run starts with ${GAME_CONFIG.STARTING_COINS + lv * STARTING_COINS_BONUS_PER_LEVEL} coins (${lv} upgrade levels).`
+      );
+    }
+  };
+
   const handlePurchaseSpeed = (speed: GameSpeed) => {
     const price = SPEED_UNLOCK_PRICES[speed];
     
@@ -667,11 +695,40 @@ export default function ShopScreen() {
         {/* Towers Tab */}
         {selectedTab === 'towers' && (
           <View>
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Starting coins (each run)</Text>
+              <Text style={styles.startingCoinsDesc}>
+                Base {GAME_CONFIG.STARTING_COINS} +{' '}
+                {playerStore.startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL} from upgrades.
+                Higher tower upgrades in this shop also raise that tower&apos;s in-match purchase price.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.startingCoinUpgradeLevel}/{STARTING_COINS_UPGRADE_MAX}
+                </Text>
+                {playerStore.startingCoinUpgradeLevel >= STARTING_COINS_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.startingCoinsBuy}
+                    onPress={handlePurchaseStartingCoins}
+                  >
+                    <FontAwesome5 name="gem" size={12} color="#4A90D9" />
+                    <Text style={styles.buttonText}>
+                      {getStartingCoinsUpgradePrice(playerStore.startingCoinUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
             <Text style={styles.sectionSubtitle}>
-              Unlock new towers and permanently upgrade their stats
+              Unlock towers and upgrade stats. Higher upgrade levels increase that tower&apos;s cost in battle.
             </Text>
-            
+
             {(Object.keys(TOWERS) as TowerType[]).map(renderTowerCard)}
           </View>
         )}
@@ -1001,6 +1058,45 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 14,
     marginBottom: 16,
+  },
+  startingCoinsCard: {
+    backgroundColor: '#16213e',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#2a4a7a',
+  },
+  startingCoinsTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: 'bold',
+    marginBottom: 6,
+  },
+  startingCoinsDesc: {
+    color: '#9bb0cc',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  startingCoinsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  startingCoinsMeta: {
+    color: '#4A90D9',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  startingCoinsBuy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   // Tower cards
   towerCard: {

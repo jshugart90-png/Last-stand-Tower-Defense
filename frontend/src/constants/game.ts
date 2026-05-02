@@ -218,6 +218,8 @@ export const GAME_CONFIG = {
   XP_PER_KILL: 1,
   BOSS_WAVE_INTERVAL: 10,
   TOWER_COST_INCREASE: 1.20,
+  /** Extra in-game $ on tower prices per permanent shop upgrade level (same base curve) */
+  SHOP_LEVEL_COST_MULT: 0.11,
   UPGRADE_COST_MULTIPLIER: 1.8,
   // Wave completion bonus: base + (wave * scaling)
   WAVE_BONUS_BASE: 10,      // Base bonus coins
@@ -232,6 +234,11 @@ export const getWaveCompletionBonus = (waveNumber: number): number => {
   // Wave 10: 10 + 30 = 40 coins
   // Wave 20: 10 + 60 = 70 coins
 };
+
+export const STARTING_COINS_UPGRADE_MAX = 20;
+export const STARTING_COINS_BONUS_PER_LEVEL = 40;
+export const getStartingCoinsUpgradePrice = (currentLevel: number): number =>
+  Math.floor(40 * Math.pow(1.4, currentLevel));
 
 // Wave configuration - Boss every 10 waves
 export const getWaveConfig = (waveNumber: number) => {

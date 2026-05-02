@@ -9,6 +9,8 @@ import {
   getShopUpgradeCost,
   TargetingMode,
   TOWERS,
+  STARTING_COINS_UPGRADE_MAX,
+  getStartingCoinsUpgradePrice,
 } from '../constants/game';
 import {
   Achievement,
@@ -82,6 +84,8 @@ interface PlayerState {
   playerId: string | null;
   deviceId: string;
   nickname: string;
+  /** False until user submits name or synced profile loads */
+  hasEnteredNameOnce: boolean;
   
   // Progression
   xp: number;
@@ -100,6 +104,9 @@ interface PlayerState {
   
   // Tower upgrades (purchased in shop with gems - permanent stat boosts)
   towerUpgradeLevels: Record<TowerType, number>;
+
+  /** Permanent: bonus starting in-game coins each run (shop upgrade) */
+  startingCoinUpgradeLevel: number;
   
   // Speed unlocks (purchased in shop with gems)
   unlockedSpeeds: GameSpeed[];
@@ -176,7 +183,9 @@ interface PlayerActions {
   purchaseTowerUpgrade: (tower: TowerType) => boolean;
   getTowerUpgradeLevel: (tower: TowerType) => number;
   getTowerUpgradePrice: (tower: TowerType) => number;
-  
+
+  purchaseStartingCoinsUpgrade: () => boolean;
+
   // Speed unlocks (gems)
   purchaseSpeed: (speed: GameSpeed) => boolean;
   isSpeedUnlocked: (speed: GameSpeed) => boolean;
@@ -226,6 +235,7 @@ const initialState: PlayerState = {
   playerId: null,
   deviceId: '',
   nickname: 'Player',
+  hasEnteredNameOnce: false,
   xp: 0,
   level: 1,
   gems: 0,  // Start with 0 gems - earn through gameplay
@@ -243,6 +253,7 @@ const initialState: PlayerState = {
     missile: 0,
     laser: 0,
   },
+  startingCoinUpgradeLevel: 0,
   unlockedSpeeds: [1],  // 1x is free
   unlockedSkins: ['default'],
   equippedSkins: {},
@@ -274,6 +285,7 @@ const playerPersistKeys = [
   'playerId',
   'deviceId',
   'nickname',
+  'hasEnteredNameOnce',
   'xp',
   'level',
   'gems',
@@ -284,6 +296,7 @@ const playerPersistKeys = [
   'lifetimeTowersPlaced',
   'unlockedTowers',
   'towerUpgradeLevels',
+  'startingCoinUpgradeLevel',
   'unlockedSpeeds',
   'unlockedSkins',
   'equippedSkins',
@@ -365,6 +378,16 @@ const applyWeeklyMissionProgress = (
   return { missions: next, gemsEarned };
 };
 
+const mergeAchievementLists = (stored: Achievement[] | undefined): Achievement[] => {
+  const defaults = createDefaultAchievements();
+  if (!stored?.length) return defaults;
+  const map = new Map(stored.map((a) => [a.id, a]));
+  return defaults.map((d) => {
+    const s = map.get(d.id);
+    return { ...d, unlocked: s?.unlocked ?? false };
+  });
+};
+
 const unlockAchievement = (
   achievements: Achievement[],
   id: string
@@ -389,7 +412,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     ...initialState,
 
     // Identity
-    setPlayer: (playerId, nickname) => set({ playerId, nickname }),
+    setPlayer: (playerId, nickname) => set({ playerId, nickname, hasEnteredNameOnce: true }),
     setDeviceId: (deviceId) => set({ deviceId }),
     setNickname: (nickname) => set({ nickname }),
 
@@ -464,12 +487,48 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           achievements = unlock.achievements;
           gemsFromAchievements += unlock.gemsEarned;
         }
+        if (nextTowersPlaced >= 500) {
+          const unlock = unlockAchievement(achievements, 'master_builder');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextBestWave >= 50) {
+          const unlock = unlockAchievement(achievements, 'wave_50');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextBestWave >= 75) {
+          const unlock = unlockAchievement(achievements, 'wave_75');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextEnemiesKilled >= 500) {
+          const unlock = unlockAchievement(achievements, 'slayer_500');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextEnemiesKilled >= 5000) {
+          const unlock = unlockAchievement(achievements, 'slayer_5000');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        const nextGamesPlayed = state.gamesPlayed + 1;
+        if (nextGamesPlayed >= 25) {
+          const unlock = unlockAchievement(achievements, 'games_25');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (state.gems >= 2500) {
+          const unlock = unlockAchievement(achievements, 'gem_hoarder');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
 
         return {
           ...dailyResetPatch,
           ...weeklyResetPatch,
           totalWavesSurvived: state.totalWavesSurvived + wavesReached,
-          gamesPlayed: state.gamesPlayed + 1,
+          gamesPlayed: nextGamesPlayed,
           bestWave: nextBestWave,
           lifetimeEnemiesKilled: nextEnemiesKilled,
           lifetimeTowersPlaced: nextTowersPlaced,
@@ -599,6 +658,18 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       const currentLevel = get().towerUpgradeLevels[tower] || 0;
       return getShopUpgradeCost(tower, currentLevel);
     },
+
+    purchaseStartingCoinsUpgrade: () => {
+      const state = get();
+      if (state.startingCoinUpgradeLevel >= STARTING_COINS_UPGRADE_MAX) return false;
+      const price = getStartingCoinsUpgradePrice(state.startingCoinUpgradeLevel);
+      if (state.gems < price) return false;
+      set({
+        gems: state.gems - price,
+        startingCoinUpgradeLevel: state.startingCoinUpgradeLevel + 1,
+      });
+      return true;
+    },
     
     // Speed unlocks (gems)
     purchaseSpeed: (speed) => {
@@ -701,9 +772,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
 
     // Sync from server
     syncFromServer: (data) => {
-      set(state => ({
+      set((state) => ({
         ...state,
         ...data,
+        hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
         unlockedSpeeds: (data.unlockedSpeeds as GameSpeed[]) || state.unlockedSpeeds,
       }));
@@ -722,6 +794,16 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       Object.fromEntries(
         playerPersistKeys.map((key) => [key, state[key as keyof PlayerState]])
       ) as unknown as PlayerState,
+    merge: (persisted, current) => {
+      const p = persisted as Partial<PlayerState> | undefined;
+      return {
+        ...current,
+        ...p,
+        achievements: mergeAchievementLists(p?.achievements),
+        hasEnteredNameOnce: p?.hasEnteredNameOnce ?? !!p?.playerId,
+        startingCoinUpgradeLevel: p?.startingCoinUpgradeLevel ?? 0,
+      };
+    },
   }
   )
 );

@@ -338,7 +338,7 @@ const GameBoard = React.memo(({
     const canPlaceDrag = !!selectedTowerType && !selectedPlacedTower;
     return Gesture.Pan()
       .enabled(canPlaceDrag)
-      .minDistance(14)
+      .minDistance(6)
       .onEnd((e) => {
         const col = Math.floor(e.x / scaledCellSize);
         const row = Math.floor(e.y / scaledCellSize);
@@ -422,6 +422,7 @@ const GameBoard = React.memo(({
             const isBase = col === basePosition.x && row === basePosition.y;
             const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
             const hasTowerHere = blockedCells.has(`${col},${row}`);
+            const onPath = isPath && !isSpawn && !isBase;
             const cellStyle = [
               styles.cell,
               {
@@ -430,8 +431,9 @@ const GameBoard = React.memo(({
                 left: col * scaledCellSize,
                 top: row * scaledCellSize,
               },
-              isPath && !isSpawn && !isBase && styles.pathCell,
-              canPlace && styles.canPlaceCell,
+              onPath && styles.pathCell,
+              canPlace && onPath && styles.canPlaceOnPath,
+              canPlace && !onPath && styles.canPlaceCell,
               isSpawn && styles.spawnCell,
               isBase && styles.baseCell,
             ];
@@ -1842,12 +1844,17 @@ const styles = StyleSheet.create({
     borderColor: '#2a2a4e',
   },
   pathCell: {
-    backgroundColor: '#2a2a4e',
+    backgroundColor: '#2a3a55',
+  },
+  canPlaceOnPath: {
+    backgroundColor: 'rgba(74, 144, 217, 0.22)',
+    borderWidth: 2,
+    borderColor: '#6CB8FF',
   },
   canPlaceCell: {
-    backgroundColor: 'rgba(74, 144, 217, 0.4)',
-    borderColor: '#4A90D9',
-    borderWidth: 1,
+    backgroundColor: 'rgba(74, 144, 217, 0.28)',
+    borderColor: '#5CADFF',
+    borderWidth: 2,
   },
   spawnCell: {
     backgroundColor: 'rgba(231, 76, 60, 0.3)',

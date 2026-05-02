@@ -244,8 +244,8 @@ export default function HomeScreen() {
   }, []);
 
   const initializePlayer = useCallback(async () => {
-    const store = usePlayerStore.getState();
     try {
+      let store = usePlayerStore.getState();
       // Legacy / partial persist: had nickname but no id — attach a stable local id
       if (!store.playerId && store.nickname?.trim() && store.nickname !== 'Player') {
         let id = `local_${Date.now()}`;
@@ -255,6 +255,7 @@ export default function HomeScreen() {
           /* keep fallback */
         }
         store.setPlayer(id, store.nickname.trim());
+        store = usePlayerStore.getState();
       }
 
       // Generate or get device ID
@@ -308,11 +309,6 @@ export default function HomeScreen() {
       }
 
       if (!isBackendConfigured()) {
-        if (store.playerId) {
-          setLoading(false);
-          return;
-        }
-        setShowNicknameModal(true);
         setLoading(false);
         return;
       }
@@ -341,21 +337,9 @@ export default function HomeScreen() {
         console.log('Player not found by device ID, showing nickname modal');
       }
 
-      if (store.playerId) {
-        setLoading(false);
-        return;
-      }
-
-      setShowNicknameModal(true);
       setLoading(false);
     } catch (error) {
       console.error('Error initializing player:', error);
-      const st = usePlayerStore.getState();
-      if (st.playerId) {
-        setLoading(false);
-        return;
-      }
-      setShowNicknameModal(true);
       setLoading(false);
     }
   }, []);
@@ -363,7 +347,13 @@ export default function HomeScreen() {
   // Initialize player on mount
   useEffect(() => {
     refreshDailyMissions();
-    initializePlayer();
+    void (async () => {
+      await initializePlayer();
+      const st = usePlayerStore.getState();
+      if (!st.hasEnteredNameOnce) {
+        setShowNicknameModal(true);
+      }
+    })();
   }, [initializePlayer, refreshDailyMissions]);
 
   const registerLocalPlayer = async (nickname: string) => {
@@ -383,7 +373,9 @@ export default function HomeScreen() {
       if (!isBackendConfigured()) {
         await registerLocalPlayer(nickname);
         setShowNicknameModal(false);
-        setShowTutorial(true);
+        if (!usePlayerStore.getState().tutorialCompleted) {
+          setShowTutorial(true);
+        }
         return;
       }
 
@@ -412,7 +404,9 @@ export default function HomeScreen() {
       }
 
       setShowNicknameModal(false);
-      setShowTutorial(true);
+      if (!usePlayerStore.getState().tutorialCompleted) {
+        setShowTutorial(true);
+      }
     } catch (error) {
       console.error('Error registering player:', error);
       Alert.alert('Error', 'Something went wrong. Please try again.');

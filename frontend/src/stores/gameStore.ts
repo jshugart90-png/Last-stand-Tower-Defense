@@ -13,13 +13,11 @@ import {
   TargetingMode,
   GameSpeed,
   getWaveCompletionBonus,
+  STARTING_COINS_BONUS_PER_LEVEL,
 } from '../constants/game';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
-import { playSfx } from '../services/audioService';
+import { playWeaponSfx } from '../services/audioService';
 import { usePlayerStore } from './playerStore';
-
-let lastGunSfxAt = 0;
-let lastLaserSfxAt = 0;
 
 export interface Position {
   x: number;
@@ -317,19 +315,22 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
     const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
     
-    const spawnPoint = { x: arenaExpansions, y: arenaExpansions };
-    const basePosition = { 
-      x: gridCols - 1 - arenaExpansions, 
-      y: gridRows - 1 - arenaExpansions 
+    const spawnPoint = { x: 0, y: 0 };
+    const basePosition = {
+      x: gridCols - 1,
+      y: gridRows - 1,
     };
-    
+
+    const coinBonus =
+      usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
+
     set({
       isPlaying: true,
       isPaused: false,
       isGameOver: false,
       currentWave: 0,
       waveInProgress: false,
-      coins: GAME_CONFIG.STARTING_COINS,
+      coins: GAME_CONFIG.STARTING_COINS + coinBonus,
       baseHealth: GAME_CONFIG.BASE_HEALTH,
       score: 0,
       enemiesKilled: 0,
@@ -772,11 +773,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           damage: laserDamage,
         });
 
-        const ls = Date.now();
-        if (ls - lastLaserSfxAt >= 95) {
-          lastLaserSfxAt = ls;
-          void playSfx('laser_ping', usePlayerStore.getState().soundEnabled);
-        }
+        void playWeaponSfx('laser', usePlayerStore.getState().soundEnabled);
 
         return {
           ...tower,
@@ -803,11 +800,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
 
       newProjectiles.push(projectile);
-      const gs = Date.now();
-      if (gs - lastGunSfxAt >= 52) {
-        lastGunSfxAt = gs;
-        void playSfx('gunshot', usePlayerStore.getState().soundEnabled);
-      }
+      void playWeaponSfx(tower.type, usePlayerStore.getState().soundEnabled);
       return { ...tower, lastFireTime: now };
     });
 
@@ -1073,11 +1066,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const baseCost = TOWERS[type].baseCost;
     const purchaseCount = state.towerPurchaseCount[type];
-    return Math.floor(baseCost * Math.pow(GAME_CONFIG.TOWER_COST_INCREASE, purchaseCount));
+    const curve = Math.floor(baseCost * Math.pow(GAME_CONFIG.TOWER_COST_INCREASE, purchaseCount));
+    const shopLv = state.towerUpgradeLevels[type] ?? 0;
+    const mult = 1 + shopLv * GAME_CONFIG.SHOP_LEVEL_COST_MULT;
+    return Math.floor(curve * mult);
   },
 
   getUpgradeCost: (tower) => {
-    return getInfiniteUpgradeCost(TOWERS[tower.type].baseCost, tower.level);
+    const base = getInfiniteUpgradeCost(TOWERS[tower.type].baseCost, tower.level);
+    const shopLv = get().towerUpgradeLevels[tower.type] ?? 0;
+    const mult = 1 + shopLv * GAME_CONFIG.SHOP_LEVEL_COST_MULT;
+    return Math.floor(base * mult);
   },
 
   getSellValue: (tower) => {
@@ -1138,10 +1137,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const baseConfig = GAME_CONFIG;
     const cellSize = savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
     
-    const spawnPoint = { x: savedGame.arenaExpansions, y: savedGame.arenaExpansions };
-    const basePosition = { 
-      x: savedGame.gridCols - 1 - savedGame.arenaExpansions, 
-      y: savedGame.gridRows - 1 - savedGame.arenaExpansions 
+    const spawnPoint = { x: 0, y: 0 };
+    const basePosition = {
+      x: savedGame.gridCols - 1,
+      y: savedGame.gridRows - 1,
     };
     
     // Restore towers with full PlacedTower structure
