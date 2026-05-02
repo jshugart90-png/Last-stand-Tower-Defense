@@ -1,10 +1,25 @@
 import { create } from 'zustand';
-import { 
-  TOWERS, ENEMIES, GAME_CONFIG, TowerType, EnemyType, 
-  SKIN_COLORS, SPAWN_POINT, BASE_POSITION, getInfiniteUpgradeStats, 
-  getInfiniteUpgradeCost, TargetingMode, GameSpeed, getWaveCompletionBonus
+import {
+  TOWERS,
+  ENEMIES,
+  GAME_CONFIG,
+  TowerType,
+  EnemyType,
+  SKIN_COLORS,
+  SPAWN_POINT,
+  BASE_POSITION,
+  getInfiniteUpgradeStats,
+  getInfiniteUpgradeCost,
+  TargetingMode,
+  GameSpeed,
+  getWaveCompletionBonus,
 } from '../constants/game';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
+import { playSfx } from '../services/audioService';
+import { usePlayerStore } from './playerStore';
+
+let lastGunSfxAt = 0;
+let lastLaserSfxAt = 0;
 
 export interface Position {
   x: number;
@@ -756,15 +771,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           targetId: target.id,
           damage: laserDamage,
         });
-        
-        return { 
-          ...tower, 
+
+        const ls = Date.now();
+        if (ls - lastLaserSfxAt >= 95) {
+          lastLaserSfxAt = ls;
+          void playSfx('laser_ping', usePlayerStore.getState().soundEnabled);
+        }
+
+        return {
+          ...tower,
           lastFireTime: now,
           currentTargetId: target.id,
           damageAccumulator: newDamageAccumulator,
         };
       }
-      
+
       // Create projectile for non-laser towers
       const projectile: Projectile = {
         id: generateId(),
@@ -780,8 +801,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         slowAmount: (stats as any).slowAmount,
         slowDuration: (stats as any).slowDuration,
       };
-      
+
       newProjectiles.push(projectile);
+      const gs = Date.now();
+      if (gs - lastGunSfxAt >= 52) {
+        lastGunSfxAt = gs;
+        void playSfx('gunshot', usePlayerStore.getState().soundEnabled);
+      }
       return { ...tower, lastFireTime: now };
     });
 

@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TowerType, GameSpeed, TOWER_UNLOCK_PRICES, SPEED_UNLOCK_PRICES, getShopUpgradeCost, TargetingMode } from '../constants/game';
+import {
+  TowerType,
+  GameSpeed,
+  TOWER_UNLOCK_PRICES,
+  SPEED_UNLOCK_PRICES,
+  getShopUpgradeCost,
+  TargetingMode,
+  TOWERS,
+} from '../constants/game';
 import {
   Achievement,
   createDefaultAchievements,
@@ -174,10 +182,12 @@ interface PlayerActions {
   isSpeedUnlocked: (speed: GameSpeed) => boolean;
   getSpeedUnlockPrice: (speed: GameSpeed) => number;
   
-  // Skins
+  // Skins (gems)
   unlockSkin: (skinId: string) => void;
+  purchaseCosmeticSkin: (skinId: string, price: number) => boolean;
   setUnlockedSkins: (skins: string[]) => void;
   equipSkin: (towerType: string, skinId: string) => void;
+  equipSkinGlobally: (skinId: string) => void;
   
   // Arena expansion (real money)
   addArenaExpansion: () => void;
@@ -609,16 +619,33 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
 
     // Skins
     unlockSkin: (skinId) => {
-      set(state => {
+      set((state) => {
         if (state.unlockedSkins.includes(skinId)) return state;
         return { unlockedSkins: [...state.unlockedSkins, skinId] };
       });
     },
+    purchaseCosmeticSkin: (skinId, price) => {
+      const state = get();
+      if (state.unlockedSkins.includes(skinId)) return false;
+      if (price > 0 && state.gems < price) return false;
+      set({
+        gems: state.gems - price,
+        unlockedSkins: [...state.unlockedSkins, skinId],
+      });
+      return true;
+    },
     setUnlockedSkins: (skins) => set({ unlockedSkins: skins }),
     equipSkin: (towerType, skinId) => {
-      set(state => ({
+      set((state) => ({
         equippedSkins: { ...state.equippedSkins, [towerType]: skinId },
       }));
+    },
+    equipSkinGlobally: (skinId) => {
+      const next: Record<string, string> = {};
+      for (const t of Object.keys(TOWERS)) {
+        next[t] = skinId;
+      }
+      set({ equippedSkins: next });
     },
 
     // Arena expansion (real money IAP)

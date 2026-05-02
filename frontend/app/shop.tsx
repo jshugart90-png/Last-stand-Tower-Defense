@@ -12,10 +12,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
-import { skinsApi, rewardApi, purchaseApi } from '../src/hooks/useApi';
-import { 
-  TOWERS, TowerType, TOWER_UNLOCK_PRICES, 
-  SPEED_UNLOCK_PRICES, GameSpeed 
+import { rewardApi, purchaseApi } from '../src/hooks/useApi';
+import {
+  TOWERS,
+  TowerType,
+  TOWER_UNLOCK_PRICES,
+  SPEED_UNLOCK_PRICES,
+  GameSpeed,
+  COSMETIC_SKINS,
+  SKIN_COLORS,
 } from '../src/constants/game';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
@@ -25,13 +30,10 @@ import {
   IAP_PRODUCTS, IAP_PRICES, GEM_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
-import BannerAdComponent from '../src/components/BannerAdComponent';
-
 interface Skin {
   id: string;
   name: string;
   price: number;
-  price_type: string;
   color: string;
 }
 
@@ -84,14 +86,42 @@ export default function ShopScreen() {
     }
   }, [highlightedTower]);
 
-  const loadSkins = async () => {
-    try {
-      const response = await skinsApi.getAll();
-      setSkins(response.data);
-    } catch (error) {
-      console.error('Error loading skins:', error);
-    } finally {
-      setLoading(false);
+  const loadSkins = () => {
+    setSkins(
+      COSMETIC_SKINS.map((s) => ({
+        id: s.id,
+        name: s.name,
+        price: s.price,
+        color: SKIN_COLORS[s.id] ?? '#4A90D9',
+      }))
+    );
+    setLoading(false);
+  };
+
+  const handleBuySkin = (skin: Skin) => {
+    if (playerStore.unlockedSkins.includes(skin.id)) {
+      playerStore.equipSkinGlobally(skin.id);
+      Alert.alert('Equipped', `${skin.name} is now applied to all your towers.`);
+      return;
+    }
+    if (skin.price === 0) {
+      playerStore.purchaseCosmeticSkin(skin.id, 0);
+      playerStore.equipSkinGlobally(skin.id);
+      return;
+    }
+    if (playerStore.gems < skin.price) {
+      Alert.alert('Not enough gems', `You need ${skin.price} gems.`, [
+        { text: 'OK' },
+        { text: 'Gems', onPress: () => setSelectedTab('gems') },
+      ]);
+      return;
+    }
+    const ok = playerStore.purchaseCosmeticSkin(skin.id, skin.price);
+    if (ok) {
+      playerStore.equipSkinGlobally(skin.id);
+      Alert.alert('Unlocked & equipped', `${skin.name} is yours!`);
+    } else {
+      Alert.alert('Error', 'Could not unlock skin.');
     }
   };
 
@@ -567,7 +597,7 @@ export default function ShopScreen() {
             style={[styles.buySpeedButton, !canAfford && styles.disabledButton]}
             onPress={() => handlePurchaseSpeed(speed)}
           >
-            <FontAwesome5 name="coins" size={12} color="#FFD700" />
+            <FontAwesome5 name="gem" size={12} color="#4A90D9" />
             <Text style={styles.buttonText}>{price}</Text>
           </TouchableOpacity>
         )}
@@ -754,7 +784,7 @@ export default function ShopScreen() {
           <View>
             <Text style={styles.sectionTitle}>Game Speed</Text>
             <Text style={styles.sectionSubtitle}>
-              Unlock faster game speeds for quicker gameplay
+              Unlocks are purchased with gems only (earned in-game or from the Gems tab)
             </Text>
             
             {([1, 2, 3, 5, 10] as GameSpeed[]).map(renderSpeedCard)}
@@ -847,13 +877,21 @@ export default function ShopScreen() {
                       <View style={[styles.skinPreview, { backgroundColor: skin.color }]} />
                       <Text style={styles.skinName}>{skin.name}</Text>
                       {isOwned ? (
-                        <View style={styles.ownedBadge}>
-                          <Text style={styles.ownedText}>Owned</Text>
-                        </View>
+                        <TouchableOpacity
+                          style={styles.skinEquipButton}
+                          onPress={() => handleBuySkin(skin)}
+                        >
+                          <Text style={styles.skinEquipText}>Equip</Text>
+                        </TouchableOpacity>
                       ) : (
-                        <TouchableOpacity style={styles.skinBuyButton}>
-                          <FontAwesome5 name="coins" size={10} color="#FFD700" />
-                          <Text style={styles.skinPrice}>{skin.price}</Text>
+                        <TouchableOpacity
+                          style={styles.skinBuyButton}
+                          onPress={() => handleBuySkin(skin)}
+                        >
+                          <FontAwesome5 name="gem" size={10} color="#4A90D9" />
+                          <Text style={styles.skinPrice}>
+                            {skin.price === 0 ? 'Free' : skin.price}
+                          </Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -882,9 +920,6 @@ export default function ShopScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-
-      {/* Banner Ad at bottom */}
-      <BannerAdComponent isPremium={playerStore.premium} />
     </SafeAreaView>
   );
 }
@@ -1226,6 +1261,18 @@ const styles = StyleSheet.create({
   skinPrice: {
     color: '#fff',
     fontSize: 12,
+    fontWeight: 'bold',
+  },
+  skinEquipButton: {
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  skinEquipText: {
+    color: '#fff',
+    fontSize: 11,
     fontWeight: 'bold',
   },
   // Ad section

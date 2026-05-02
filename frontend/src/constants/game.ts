@@ -314,12 +314,28 @@ export const getShopUpgradeCost = (towerType: TowerType, currentLevel: number): 
   return Math.floor(basePrices[towerType] * Math.pow(1.5, currentLevel));
 };
 
-// Skin colors
+// Skin colors (equipped per tower type via player store)
 export const SKIN_COLORS: Record<string, string> = {
   default: '#4A90D9',
   neon: '#00FF88',
-  military: '#4A5D23',
+  military: '#5D6D3A',
   ice: '#00D4FF',
   gold: '#FFD700',
   cyber: '#FF00FF',
+  crimson: '#E74C3C',
+  sunset: '#FF8C42',
+  void: '#7B68EE',
 };
+
+/** Unlockable cosmetics (gems). `default` is free. */
+export const COSMETIC_SKINS: { id: keyof typeof SKIN_COLORS; name: string; price: number }[] = [
+  { id: 'default', name: 'Classic Blue', price: 0 },
+  { id: 'neon', name: 'Neon Strike', price: 45 },
+  { id: 'military', name: 'OD Green', price: 35 },
+  { id: 'ice', name: 'Frost', price: 40 },
+  { id: 'gold', name: 'Champion Gold', price: 120 },
+  { id: 'cyber', name: 'Cyber Magenta', price: 90 },
+  { id: 'crimson', name: 'Crimson', price: 55 },
+  { id: 'sunset', name: 'Sunset', price: 50 },
+  { id: 'void', name: 'Void Purple', price: 75 },
+];

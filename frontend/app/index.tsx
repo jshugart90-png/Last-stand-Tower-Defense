@@ -17,7 +17,6 @@ import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
-import BannerAdComponent from '../src/components/BannerAdComponent';
 import { playSfx } from '../src/services/audioService';
 
 // Tutorial overlay component
@@ -28,7 +27,7 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'finger-print',
       title: 'Place Towers',
-      description: 'Tap empty spots to place defensive towers',
+      description: 'Select a tower, then tap or drag on the field to place it',
     },
     {
       icon: 'shield-checkmark',
@@ -247,6 +246,17 @@ export default function HomeScreen() {
   const initializePlayer = useCallback(async () => {
     const store = usePlayerStore.getState();
     try {
+      // Legacy / partial persist: had nickname but no id — attach a stable local id
+      if (!store.playerId && store.nickname?.trim() && store.nickname !== 'Player') {
+        let id = `local_${Date.now()}`;
+        try {
+          id = `local_${await Crypto.randomUUID()}`;
+        } catch {
+          /* keep fallback */
+        }
+        store.setPlayer(id, store.nickname.trim());
+      }
+
       // Generate or get device ID
       let deviceId = store.deviceId;
       if (!deviceId) {
@@ -297,8 +307,11 @@ export default function HomeScreen() {
         }
       }
 
-      // Try to get existing player from server by device ID
       if (!isBackendConfigured()) {
+        if (store.playerId) {
+          setLoading(false);
+          return;
+        }
         setShowNicknameModal(true);
         setLoading(false);
         return;
@@ -328,12 +341,20 @@ export default function HomeScreen() {
         console.log('Player not found by device ID, showing nickname modal');
       }
 
-      // Show nickname modal for new players
+      if (store.playerId) {
+        setLoading(false);
+        return;
+      }
+
       setShowNicknameModal(true);
       setLoading(false);
     } catch (error) {
       console.error('Error initializing player:', error);
-      // On error, still show nickname modal so user can proceed
+      const st = usePlayerStore.getState();
+      if (st.playerId) {
+        setLoading(false);
+        return;
+      }
       setShowNicknameModal(true);
       setLoading(false);
     }
@@ -612,9 +633,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* Banner Ad */}
-      <BannerAdComponent isPremium={playerStore.premium} />
 
       {/* XP Progress bar */}
       <View style={styles.xpContainer}>

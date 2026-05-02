@@ -9,9 +9,9 @@ import {
   Dimensions,
   Modal,
   Alert,
-  ScrollView,
   BackHandler,
 } from 'react-native';
+import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -28,7 +28,7 @@ import { findPath } from '../src/utils/pathfinding';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
   isNativeAdsAvailable, isAdsInitialized,
-  showInterstitialAd, loadInterstitialAd, isInterstitialAdReady
+  showInterstitialAd, isInterstitialAdReady
 } from '../src/services/adService';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx } from '../src/services/audioService';
@@ -118,29 +118,29 @@ const TowerPanel = ({
   );
 };
 
-// Speed control buttons with purchase functionality
-const SpeedControls = ({ 
-  currentSpeed, 
+// Speed control buttons — unlocks cost gems only (see shop / player store)
+const SpeedControls = ({
+  currentSpeed,
   onSpeedChange,
   unlockedSpeeds,
   onPurchaseSpeed,
-  coins,
-}: { 
-  currentSpeed: GameSpeed; 
+  gems,
+}: {
+  currentSpeed: GameSpeed;
   onSpeedChange: (speed: GameSpeed) => void;
   unlockedSpeeds: GameSpeed[];
   onPurchaseSpeed: (speed: GameSpeed) => void;
-  coins: number;
+  gems: number;
 }) => {
   const speeds: GameSpeed[] = [1, 2, 3, 5, 10];
-  
+
   return (
     <View style={styles.speedControls}>
-      {speeds.map(speed => {
+      {speeds.map((speed) => {
         const isUnlocked = unlockedSpeeds.includes(speed);
         const price = SPEED_UNLOCK_PRICES[speed];
-        const canAfford = coins >= price;
-        
+        const canAfford = gems >= price;
+
         return (
           <TouchableOpacity
             key={speed}
@@ -152,17 +152,20 @@ const SpeedControls = ({
             onPress={() => {
               if (isUnlocked) {
                 onSpeedChange(speed);
-              } else if (canAfford) {
+              } else if (canAfford && price > 0) {
                 Alert.alert(
                   `Unlock ${speed}x Speed`,
-                  `Purchase ${speed}x speed for ${price} coins?`,
+                  `Spend ${price} gems to unlock ${speed}x speed forever?`,
                   [
                     { text: 'Cancel', style: 'cancel' },
-                    { text: 'Buy', onPress: () => onPurchaseSpeed(speed) },
+                    { text: 'Unlock', onPress: () => onPurchaseSpeed(speed) },
                   ]
                 );
-              } else {
-                Alert.alert('Not enough coins', `Need ${price} coins to unlock ${speed}x speed`);
+              } else if (!canAfford && price > 0) {
+                Alert.alert(
+                  'Not enough gems',
+                  `Need ${price} gems to unlock ${speed}x speed. Earn gems by playing or visit the Shop.`,
+                );
               }
             }}
           >
@@ -295,16 +298,68 @@ const GameBoard = React.memo(({
   performanceMode: boolean;
   vfxQuality: 0 | 1 | 2;
 }) => {
-  const { 
-    towers, enemies, projectiles, laserBeams, gridCols, gridRows, cellSize, 
-    getTowerColor, selectedTowerType, canPlaceTower, spawnPoint, basePosition,
-    selectedPlacedTower, towerUpgradeLevels,
+  const {
+    towers,
+    enemies,
+    projectiles,
+    laserBeams,
+    gridCols,
+    gridRows,
+    cellSize,
+    getTowerColor,
+    selectedTowerType,
+    canPlaceTower,
+    spawnPoint,
+    basePosition,
+    selectedPlacedTower,
+    towerUpgradeLevels,
   } = useGameStore();
-  
+
+  const pinchBaseRef = useRef(1);
+  const pinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .onBegin(() => {
+          pinchBaseRef.current = useGameStore.getState().zoomLevel;
+        })
+        .onUpdate((e) => {
+          const next = Math.max(0.5, Math.min(2, pinchBaseRef.current * e.scale));
+          useGameStore.getState().setZoomLevel(next);
+        }),
+    []
+  );
+
   const finalScale = scale * zoomLevel;
   const scaledCellSize = cellSize * finalScale;
   const boardWidth = gridCols * scaledCellSize;
   const boardHeight = gridRows * scaledCellSize;
+
+  const placePanGesture = useMemo(() => {
+    const canPlaceDrag = !!selectedTowerType && !selectedPlacedTower;
+    return Gesture.Pan()
+      .enabled(canPlaceDrag)
+      .minDistance(14)
+      .onEnd((e) => {
+        const col = Math.floor(e.x / scaledCellSize);
+        const row = Math.floor(e.y / scaledCellSize);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return;
+        const { placeTower, canPlaceTower: canPlace, selectedTowerType: type } =
+          useGameStore.getState();
+        if (!type || !canPlace({ x: col, y: row })) return;
+        placeTower({ x: col, y: row });
+      });
+  }, [
+    selectedTowerType,
+    selectedPlacedTower,
+    scaledCellSize,
+    gridCols,
+    gridRows,
+  ]);
+
+  const boardGestures = useMemo(
+    () => Gesture.Simultaneous(pinchGesture, placePanGesture),
+    [pinchGesture, placePanGesture]
+  );
 
   const blockedCells = useMemo(
     () => new Set(towers.map(t => `${t.position.x},${t.position.y}`)),
@@ -348,18 +403,19 @@ const GameBoard = React.memo(({
   const nowTs = Date.now();
 
   return (
-    <ScrollView 
+    <ScrollView
       style={styles.boardScrollContainer}
       contentContainerStyle={styles.boardScrollContent}
       horizontal
       showsHorizontalScrollIndicator={false}
       showsVerticalScrollIndicator={false}
     >
-      <ScrollView 
+      <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ alignItems: 'center', justifyContent: 'center' }}
       >
-        <View style={[styles.gameBoard, { width: boardWidth, height: boardHeight }]}>
+        <GestureDetector gesture={boardGestures}>
+          <View style={[styles.gameBoard, { width: boardWidth, height: boardHeight }]}>
           {gridCells.map(({ row, col }) => {
             const isPath = pathSet.has(`${col},${row}`);
             const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
@@ -584,7 +640,8 @@ const GameBoard = React.memo(({
           >
             <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
           </View>
-        </View>
+          </View>
+        </GestureDetector>
       </ScrollView>
     </ScrollView>
   );
@@ -592,56 +649,91 @@ const GameBoard = React.memo(({
 
 GameBoard.displayName = 'GameBoard';
 
-// Game Over Modal
-const GameOverModal = ({
-  visible, wave, score, onRestart, onWatchAd, onExit, onViewResults, canWatchAd, rewardSummary
+/** Step 1: short game over — step 2: results summary */
+const GameOverFlowModal = ({
+  visible,
+  step,
+  wave,
+  score,
+  enemiesKilled,
+  towersPlaced,
+  bestWaveRecord,
+  rewardSummary,
+  onSeeResults,
+  onHome,
+  onPlayAgain,
 }: {
   visible: boolean;
+  step: 'over' | 'results';
   wave: number;
   score: number;
-  onRestart: () => void;
-  onWatchAd: () => void;
-  onExit: () => void;
-  onViewResults: () => void;
-  canWatchAd: boolean;
+  enemiesKilled: number;
+  towersPlaced: number;
+  bestWaveRecord: number;
   rewardSummary: {
     challengeName: string;
     xpEarned: number;
     gemsEarned: number;
   };
+  onSeeResults: () => void;
+  onHome: () => void;
+  onPlayAgain: () => void;
 }) => {
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.modalOverlay}>
-        <View style={styles.gameOverModal}>
-          <Text style={styles.gameOverTitle}>GAME OVER</Text>
-          <Text style={styles.gameOverWave}>Wave {wave}</Text>
-          <Text style={styles.gameOverScore}>Score: {score}</Text>
-          <View style={styles.rewardSummaryBox}>
-            <Text style={styles.rewardSummaryTitle}>{rewardSummary.challengeName}</Text>
-            <Text style={styles.rewardSummaryText}>XP Earned: +{rewardSummary.xpEarned}</Text>
-            <Text style={styles.rewardSummaryText}>Gems Earned: +{rewardSummary.gemsEarned}</Text>
-          </View>
-          
-          {canWatchAd && (
-            <TouchableOpacity style={styles.watchAdButton} onPress={onWatchAd}>
-              <Ionicons name="videocam" size={20} color="#fff" />
-              <Text style={styles.watchAdText}>Watch Ad to Revive (1x only)</Text>
-            </TouchableOpacity>
-          )}
+  if (!visible) return null;
 
-          <TouchableOpacity style={styles.resultsButton} onPress={onViewResults}>
-            <Text style={styles.resultsText}>View Full Results</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.restartButton} onPress={onRestart}>
-            <Text style={styles.restartText}>Play Again</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.exitButton} onPress={onExit}>
-            <Text style={styles.exitText}>Exit</Text>
-          </TouchableOpacity>
-        </View>
+  return (
+    <Modal visible transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        {step === 'over' ? (
+          <View style={styles.gameOverModal}>
+            <Text style={styles.gameOverTitle}>Game over</Text>
+            <Text style={styles.gameOverWave}>You reached wave {wave}</Text>
+            <Text style={styles.gameOverScore}>Score {score}</Text>
+            <TouchableOpacity style={styles.resultsPrimaryButton} onPress={onSeeResults}>
+              <Text style={styles.resultsPrimaryText}>See results</Text>
+              <Ionicons name="chevron-forward" size={22} color="#1a1a2e" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.gameOverModal}>
+            <Text style={styles.resultsScreenTitle}>Run results</Text>
+            <Text style={styles.resultsChallenge}>{rewardSummary.challengeName}</Text>
+
+            <View style={styles.resultsStatGrid}>
+              <View style={styles.resultsStat}>
+                <Text style={styles.resultsStatLabel}>Enemies defeated</Text>
+                <Text style={styles.resultsStatValue}>{enemiesKilled}</Text>
+              </View>
+              <View style={styles.resultsStat}>
+                <Text style={styles.resultsStatLabel}>Wave reached</Text>
+                <Text style={styles.resultsStatValue}>{wave}</Text>
+              </View>
+              <View style={styles.resultsStat}>
+                <Text style={styles.resultsStatLabel}>Best wave (record)</Text>
+                <Text style={styles.resultsStatValue}>{bestWaveRecord}</Text>
+              </View>
+              <View style={styles.resultsStat}>
+                <Text style={styles.resultsStatLabel}>Towers placed</Text>
+                <Text style={styles.resultsStatValue}>{towersPlaced}</Text>
+              </View>
+            </View>
+
+            <View style={styles.rewardSummaryBox}>
+              <Text style={styles.rewardSummaryTitle}>Rewards</Text>
+              <Text style={styles.rewardSummaryText}>+{rewardSummary.xpEarned} XP</Text>
+              <Text style={styles.rewardSummaryText}>+{rewardSummary.gemsEarned} gems</Text>
+            </View>
+
+            <TouchableOpacity style={styles.homePrimaryButton} onPress={onHome}>
+              <Ionicons name="home" size={22} color="#fff" />
+              <Text style={styles.homePrimaryText}>Home</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.playAgainSecondary} onPress={onPlayAgain}>
+              <Text style={styles.playAgainSecondaryText}>Play again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -747,6 +839,7 @@ export default function GameScreen() {
   const spawningCompleteRef = useRef<boolean>(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [eliteWaveNotice, setEliteWaveNotice] = useState<string | null>(null);
+  const [gameOverStep, setGameOverStep] = useState<'over' | 'results'>('over');
   
   const playerStore = usePlayerStore();
   const dailyMissions = usePlayerStore((s) => s.dailyMissions);
@@ -787,7 +880,6 @@ export default function GameScreen() {
     gridRows,
     cellSize,
     zoomLevel,
-    arenaExpansions,
     selectTower,
     selectPlacedTower,
     placeTower,
@@ -806,10 +898,8 @@ export default function GameScreen() {
     getUpgradeCost,
     getSellValue,
     setGameSpeed,
-    setZoomLevel,
     consumeRevive,
     grantRevive,
-    canUseAdRevive,
     getCurrentCoins,
     lastWaveBonus,
     showBonusPopup,
@@ -838,7 +928,6 @@ export default function GameScreen() {
       gridRows: s.gridRows,
       cellSize: s.cellSize,
       zoomLevel: s.zoomLevel,
-      arenaExpansions: s.arenaExpansions,
       selectTower: s.selectTower,
       selectPlacedTower: s.selectPlacedTower,
       placeTower: s.placeTower,
@@ -857,15 +946,17 @@ export default function GameScreen() {
       getUpgradeCost: s.getUpgradeCost,
       getSellValue: s.getSellValue,
       setGameSpeed: s.setGameSpeed,
-      setZoomLevel: s.setZoomLevel,
       consumeRevive: s.useRevive,
       grantRevive: s.grantRevive,
-      canUseAdRevive: s.canUseAdRevive,
       getCurrentCoins: s.getCurrentCoins,
       lastWaveBonus: s.lastWaveBonus,
       showBonusPopup: s.showBonusPopup,
     }))
   );
+
+  useEffect(() => {
+    if (isGameOver) setGameOverStep('over');
+  }, [isGameOver]);
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
 
@@ -1092,17 +1183,19 @@ export default function GameScreen() {
     resumeGame();
   }, [resumeGame]);
 
-  // Handle speed purchase
-  const handlePurchaseSpeed = useCallback((speed: GameSpeed) => {
-    const success = playerStore.purchaseSpeed(speed);
-    if (success) {
-      // Update game store with new unlocked speeds
-      useGameStore.setState({ 
-        unlockedSpeeds: [...playerStore.unlockedSpeeds, speed].sort((a, b) => a - b) as GameSpeed[]
-      });
-      setGameSpeed(speed);
-    }
-  }, [playerStore, setGameSpeed]);
+  const handlePurchaseSpeed = useCallback(
+    (speed: GameSpeed) => {
+      const success = usePlayerStore.getState().purchaseSpeed(speed);
+      if (success) {
+        const unlocked = usePlayerStore.getState().unlockedSpeeds;
+        useGameStore.setState({
+          unlockedSpeeds: [...unlocked].sort((a, b) => a - b) as GameSpeed[],
+        });
+        setGameSpeed(speed);
+      }
+    },
+    [setGameSpeed]
+  );
 
   const handleStartWave = useCallback(() => {
     if (playerStore.hapticEnabled) {
@@ -1210,18 +1303,6 @@ export default function GameScreen() {
       }
     }
 
-    // Show interstitial ad after game over (skip for premium users)
-    if (!playerStore.premium) {
-      const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
-      if (nativeAdsReady && isInterstitialAdReady()) {
-        showInterstitialAd().catch(console.error);
-      } else if (nativeAdsReady) {
-        // Try to load and show
-        loadInterstitialAd().then(loaded => {
-          if (loaded) showInterstitialAd().catch(console.error);
-        });
-      }
-    }
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
@@ -1375,25 +1456,6 @@ export default function GameScreen() {
     };
   }, [dailyMissions]);
 
-  const handleViewResults = useCallback(() => {
-    router.push({
-      pathname: '/run-results',
-      params: {
-        wave: String(currentWave),
-        score: String(score),
-        kills: String(enemiesKilled),
-        towers: String(towersPlaced),
-        xp: String(rewardSummary.xpEarned),
-        gems: String(rewardSummary.gemsEarned),
-        challenge: rewardSummary.challengeName,
-        bestDelta: String(Math.max(0, currentWave - runStartBestWaveRef.current)),
-        comboBonus: String(rewardSummary.comboBonus),
-        comboCount: String(rewardSummary.comboCount),
-        oneMoreRun: missionNudge?.oneMoreRun ? '1' : '0',
-      },
-    });
-  }, [router, currentWave, score, enemiesKilled, towersPlaced, rewardSummary, missionNudge]);
-
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -1426,12 +1488,12 @@ export default function GameScreen() {
       </View>
 
       {/* Speed Controls */}
-      <SpeedControls 
-        currentSpeed={gameSpeed} 
+      <SpeedControls
+        currentSpeed={gameSpeed}
         onSpeedChange={setGameSpeed}
         unlockedSpeeds={unlockedSpeeds}
         onPurchaseSpeed={handlePurchaseSpeed}
-        coins={coins}
+        gems={playerStore.gems}
       />
 
       {/* Wave info bar */}
@@ -1473,26 +1535,7 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Zoom controls */}
-      {arenaExpansions > 0 && (
-        <View style={styles.zoomControls}>
-          <TouchableOpacity 
-            style={styles.zoomButton} 
-            onPress={() => setZoomLevel(zoomLevel - 0.2)}
-          >
-            <Ionicons name="remove" size={20} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.zoomText}>{Math.round(zoomLevel * 100)}%</Text>
-          <TouchableOpacity 
-            style={styles.zoomButton} 
-            onPress={() => setZoomLevel(zoomLevel + 0.2)}
-          >
-            <Ionicons name="add" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Game board */}
+      {/* Game board — pinch with two fingers to zoom */}
       <View style={styles.boardContainer}>
         <GameBoard
           onCellPress={handleCellPress}
@@ -1533,22 +1576,23 @@ export default function GameScreen() {
       {selectedTowerType && !selectedPlacedTower && (
         <View style={styles.instructionBar}>
           <Text style={styles.instructionText}>
-            Tap any empty cell to place {TOWERS[selectedTowerType].name}
+            Pinch to zoom · Tap or drag on the map to place {TOWERS[selectedTowerType].name}
           </Text>
         </View>
       )}
 
-      {/* Game over modal */}
-      <GameOverModal
+      <GameOverFlowModal
         visible={isGameOver}
+        step={gameOverStep}
         wave={currentWave}
         score={score}
+        enemiesKilled={enemiesKilled}
+        towersPlaced={towersPlaced}
+        bestWaveRecord={Math.max(playerStore.bestWave, currentWave)}
         rewardSummary={rewardSummary}
-        onRestart={handleRestart}
-        onWatchAd={handleWatchAdForRevive}
-        onExit={handleExit}
-        onViewResults={handleViewResults}
-        canWatchAd={canUseAdRevive()}
+        onSeeResults={() => setGameOverStep('results')}
+        onHome={handleExit}
+        onPlayAgain={handleRestart}
       />
 
       {/* Exit warning modal */}
@@ -2088,6 +2132,88 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 20,
     marginBottom: 24,
+  },
+  resultsPrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#4A90D9',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    width: '100%',
+  },
+  resultsPrimaryText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  resultsScreenTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 6,
+    alignSelf: 'flex-start',
+    width: '100%',
+  },
+  resultsChallenge: {
+    color: '#9bb0cc',
+    fontSize: 13,
+    marginBottom: 14,
+    alignSelf: 'flex-start',
+    width: '100%',
+  },
+  resultsStatGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    width: '100%',
+    marginBottom: 14,
+  },
+  resultsStat: {
+    width: '47%',
+    backgroundColor: '#1f2c4a',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#2a3f63',
+  },
+  resultsStatLabel: {
+    color: '#9bb0cc',
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  resultsStatValue: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  homePrimaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#2ECC71',
+    paddingVertical: 15,
+    borderRadius: 12,
+    width: '100%',
+    marginBottom: 10,
+  },
+  homePrimaryText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  playAgainSecondary: {
+    paddingVertical: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  playAgainSecondaryText: {
+    color: '#4A90D9',
+    fontSize: 16,
+    fontWeight: '600',
   },
   rewardSummaryBox: {
     width: '100%',

@@ -54,8 +54,14 @@ export default function RunResultsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.replace('/')} style={styles.closeButton}>
-          <Ionicons name="close" size={26} color="#fff" />
+        <TouchableOpacity
+          onPress={() => router.replace('/')}
+          style={styles.homeHeaderButton}
+          accessibilityRole="button"
+          accessibilityLabel="Home"
+        >
+          <Ionicons name="home" size={22} color="#fff" />
+          <Text style={styles.homeHeaderText}>Home</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Run Results</Text>
         <View style={styles.closeButton} />
@@ -137,9 +143,14 @@ export default function RunResultsScreen() {
         </View>
       )}
 
+      <TouchableOpacity style={styles.ctaHome} onPress={() => router.replace('/')}>
+        <Ionicons name="home" size={20} color="#fff" />
+        <Text style={styles.ctaText}>Back to home</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={styles.cta} onPress={() => router.replace('/game')}>
         <FontAwesome5 name="redo" size={16} color="#fff" />
-        <Text style={styles.ctaText}>Rematch Today&apos;s Challenge</Text>
+        <Text style={styles.ctaText}>Play again</Text>
       </TouchableOpacity>
       <Text style={styles.ctaHint}>
         {oneMoreRun
@@ -153,6 +164,16 @@ export default function RunResultsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1a1a2e', padding: 16 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  homeHeaderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2ECC71',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  homeHeaderText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   closeButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   challengeCard: { backgroundColor: '#16213e', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a4e', padding: 12, marginBottom: 12 },
@@ -173,7 +194,17 @@ const styles = StyleSheet.create({
   nextUnlockText: { color: '#c8d6ec', marginTop: 4, fontSize: 12 },
   unlockCta: { marginTop: 10, backgroundColor: '#2ECC71', borderRadius: 8, alignItems: 'center', paddingVertical: 10 },
   unlockCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  cta: { marginTop: 'auto', backgroundColor: '#4A90D9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  ctaHome: {
+    marginTop: 8,
+    backgroundColor: '#2ECC71',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cta: { marginTop: 10, backgroundColor: '#4A90D9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   ctaText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   ctaHint: { color: '#8da5c4', textAlign: 'center', fontSize: 12, marginTop: 8 },
 });

@@ -2,13 +2,15 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
 
-type SfxName = 'mission' | 'combo' | 'chest' | 'record';
+type SfxName = 'mission' | 'combo' | 'chest' | 'record' | 'gunshot' | 'laser_ping';
 
 const TONE_CONFIG: Record<SfxName, { freq: number; ms: number; volume: number }> = {
   mission: { freq: 880, ms: 90, volume: 0.45 },
   combo: { freq: 1040, ms: 110, volume: 0.5 },
   chest: { freq: 720, ms: 130, volume: 0.5 },
   record: { freq: 1180, ms: 120, volume: 0.55 },
+  gunshot: { freq: 380, ms: 42, volume: 0.38 },
+  laser_ping: { freq: 720, ms: 32, volume: 0.28 },
 };
 
 const SAMPLE_RATE = 22050;
