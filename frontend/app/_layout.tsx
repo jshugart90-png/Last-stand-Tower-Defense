@@ -1,4 +1,6 @@
-import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { enableScreens } from 'react-native-screens';
+import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,11 +9,18 @@ import React, { useEffect } from 'react';
 import { InteractionManager } from 'react-native';
 import { isBackendConfigured } from '../src/hooks/useApi';
 import { initializeAudio } from '../src/services/audioService';
+import { RootErrorBoundary } from './RootErrorBoundary';
+
+enableScreens(true);
+
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const queryClient = new QueryClient();
 
 export default function RootLayout() {
   useEffect(() => {
+    void SplashScreen.hideAsync().catch(() => {});
+
     const task = InteractionManager.runAfterInteractions(() => {
       void (async () => {
         try {
@@ -32,25 +41,29 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <SafeAreaProvider>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#1a1a2e' },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="game" options={{ gestureEnabled: false }} />
-          <Stack.Screen name="leaderboard" />
-          <Stack.Screen name="shop" />
-          <Stack.Screen name="settings" />
-          <Stack.Screen name="progression" />
-          <Stack.Screen name="run-results" />
-        </Stack>
-      </SafeAreaProvider>
-    </QueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <RootErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <SafeAreaProvider>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: '#1a1a2e' },
+                animation: 'slide_from_right',
+              }}
+            >
+              <Stack.Screen name="index" />
+              <Stack.Screen name="game" options={{ gestureEnabled: false }} />
+              <Stack.Screen name="leaderboard" />
+              <Stack.Screen name="shop" />
+              <Stack.Screen name="settings" />
+              <Stack.Screen name="progression" />
+              <Stack.Screen name="run-results" />
+            </Stack>
+          </SafeAreaProvider>
+        </QueryClientProvider>
+      </RootErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
