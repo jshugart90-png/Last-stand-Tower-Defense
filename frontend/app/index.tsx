@@ -245,9 +245,10 @@ export default function HomeScreen() {
   }, []);
 
   const initializePlayer = useCallback(async () => {
+    const store = usePlayerStore.getState();
     try {
       // Generate or get device ID
-      let deviceId = playerStore.deviceId;
+      let deviceId = store.deviceId;
       if (!deviceId) {
         try {
           deviceId = await Crypto.randomUUID();
@@ -255,27 +256,27 @@ export default function HomeScreen() {
           // Fallback for web
           deviceId = 'web-' + Math.random().toString(36).substring(2, 15);
         }
-        playerStore.setDeviceId(deviceId);
+        store.setDeviceId(deviceId);
       }
 
       // If we already have a local-only profile, skip the server
-      if (playerStore.playerId && !isServerBackedPlayerId(playerStore.playerId)) {
+      if (store.playerId && !isServerBackedPlayerId(store.playerId)) {
         setLoading(false);
         return;
       }
 
       // Had a server account in memory but no API URL (misconfig) — keep session without re-fetching
-      if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId) && !isBackendConfigured()) {
+      if (store.playerId && isServerBackedPlayerId(store.playerId) && !isBackendConfigured()) {
         setLoading(false);
         return;
       }
 
       // If we already have a player ID in local storage, use that
-      if (playerStore.playerId && isBackendConfigured()) {
+      if (store.playerId && isBackendConfigured()) {
         try {
-          const response = await playerApi.getById(playerStore.playerId);
+          const response = await playerApi.getById(store.playerId);
           if (response.data) {
-            playerStore.syncFromServer({
+            store.syncFromServer({
               xp: response.data.xp,
               level: response.data.level,
               gems: response.data.gems,
@@ -306,8 +307,8 @@ export default function HomeScreen() {
       try {
         const response = await playerApi.getByDevice(deviceId);
         if (response.data) {
-          playerStore.setPlayer(response.data._id, response.data.nickname);
-          playerStore.syncFromServer({
+          store.setPlayer(response.data._id, response.data.nickname);
+          store.syncFromServer({
             xp: response.data.xp,
             level: response.data.level,
             gems: response.data.gems ?? 0,
@@ -336,7 +337,7 @@ export default function HomeScreen() {
       setShowNicknameModal(true);
       setLoading(false);
     }
-  }, [playerStore]);
+  }, []);
 
   // Initialize player on mount
   useEffect(() => {
