@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
+import { MissionResetHints } from '../src/components/MissionResetHints';
 
 export default function ProgressionScreen() {
   const router = useRouter();
@@ -14,6 +15,16 @@ export default function ProgressionScreen() {
   useEffect(() => {
     refreshDailyMissions();
     refreshWeeklyMissions();
+  }, [refreshDailyMissions, refreshWeeklyMissions]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        refreshDailyMissions();
+        refreshWeeklyMissions();
+      }
+    });
+    return () => sub.remove();
   }, [refreshDailyMissions, refreshWeeklyMissions]);
 
   const unlockedAchievements = playerStore.achievements.filter((a) => a.unlocked).length;
@@ -55,6 +66,7 @@ export default function ProgressionScreen() {
         </View>
 
         <Text style={styles.sectionTitle}>Daily Missions</Text>
+        <MissionResetHints />
         {playerStore.dailyMissions.map((mission) => (
           <View key={`daily-${mission.id}`} style={styles.missionCard}>
             <Text style={styles.missionLabel}>{mission.label}</Text>

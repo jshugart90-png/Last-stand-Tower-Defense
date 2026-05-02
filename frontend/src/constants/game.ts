@@ -34,7 +34,7 @@ export const TOWERS = {
     id: 'machine_gun',
     name: 'Machine Gun',
     description: 'Fast fire rate, moderate damage',
-    baseCost: 50,
+    baseCost: 32,
     baseStats: {
       damage: 10,
       fireRate: 300,
@@ -49,7 +49,7 @@ export const TOWERS = {
     id: 'sniper',
     name: 'Sniper',
     description: 'Very long range, high damage, slow fire rate',
-    baseCost: 100,
+    baseCost: 65,
     baseStats: {
       damage: 50,
       fireRate: 2000,
@@ -64,7 +64,7 @@ export const TOWERS = {
     id: 'splash',
     name: 'Splash',
     description: 'Area damage against groups of enemies',
-    baseCost: 120,
+    baseCost: 78,
     baseStats: {
       damage: 25,
       fireRate: 1500,
@@ -80,7 +80,7 @@ export const TOWERS = {
     id: 'freeze',
     name: 'Freeze',
     description: 'Slows enemies significantly',
-    baseCost: 80,
+    baseCost: 52,
     baseStats: {
       damage: 5,
       fireRate: 1000,
@@ -97,7 +97,7 @@ export const TOWERS = {
     id: 'missile',
     name: 'Missile',
     description: 'High damage explosive rounds',
-    baseCost: 200,
+    baseCost: 130,
     baseStats: {
       damage: 100,
       fireRate: 3000,
@@ -113,7 +113,7 @@ export const TOWERS = {
     id: 'laser',
     name: 'Laser',
     description: 'Continuous beam - damage increases while targeting same enemy',
-    baseCost: 300,
+    baseCost: 195,
     baseStats: {
       damage: 5,              // Starting damage per tick
       fireRate: 100,          // Very fast ticks (continuous)
@@ -130,7 +130,7 @@ export const TOWERS = {
 
 export type TowerType = keyof typeof TOWERS;
 
-// Enemy definitions - VERY SLOW coin rewards for progression
+// Enemy definitions — base coinReward; in-run income uses getRunCoinIncomeMultiplier (shop)
 export const ENEMIES = {
   basic: {
     id: 'basic',
@@ -217,22 +217,66 @@ export const GAME_CONFIG = {
   XP_PER_WAVE: 10,
   XP_PER_KILL: 1,
   BOSS_WAVE_INTERVAL: 10,
-  TOWER_COST_INCREASE: 1.20,
+  /** Softer curve so 2nd/3rd tower stays affordable early */
+  TOWER_COST_INCREASE: 1.14,
   /** Extra in-game $ on tower prices per permanent shop upgrade level (same base curve) */
-  SHOP_LEVEL_COST_MULT: 0.11,
+  SHOP_LEVEL_COST_MULT: 0.10,
   UPGRADE_COST_MULTIPLIER: 1.8,
   // Wave completion bonus: base + (wave * scaling)
-  WAVE_BONUS_BASE: 10,      // Base bonus coins
-  WAVE_BONUS_SCALING: 3,    // Additional coins per wave number
+  WAVE_BONUS_BASE: 12,
+  WAVE_BONUS_SCALING: 4,
 };
 
-// Calculate wave completion bonus
+/** Global rebalance: +25% in-run coin from kills and wave bonus (before shop “coin income” upgrade) */
+export const RUN_KILL_COIN_BASE_MULT = 1.25;
+
+/** Tighter gem economy: pay out ~35% of legacy run gem rates (~65% reduction) */
+export const GEM_ECONOMY_MULT = 0.35;
+
+export const COMBO_BONUS_GEMS_LEGACY = 20;
+export const COMBO_BONUS_GEMS = Math.max(1, Math.floor(COMBO_BONUS_GEMS_LEGACY * GEM_ECONOMY_MULT));
+
+export function rawPerformanceGems(wave: number, kills: number): number {
+  return Math.max(0, Math.floor(wave * 0.75) + Math.floor(kills / 20));
+}
+
+export function scaledTotalPerformanceGems(wave: number, kills: number): number {
+  return Math.max(0, Math.floor(GEM_ECONOMY_MULT * rawPerformanceGems(wave, kills)));
+}
+
+/** Cumulative wave-linear share of scaled performance after finishing wave `wave`. */
+export function targetWavePerformanceGems(wave: number): number {
+  return Math.max(0, Math.floor(GEM_ECONOMY_MULT * Math.floor(0.75 * wave)));
+}
+
+export function endGamePerformanceRemainder(
+  wave: number,
+  kills: number,
+  runGemsFromWavePart: number
+): number {
+  const total = scaledTotalPerformanceGems(wave, kills);
+  return Math.max(0, total - runGemsFromWavePart);
+}
+
+/** Shop upgrade: +4% coin income per level (kills + wave completion), multiplies with base */
+export const COIN_INCOME_PER_LEVEL = 0.04;
+export const COIN_INCOME_UPGRADE_MAX = 12;
+
+export function getRunCoinIncomeMultiplier(coinIncomeUpgradeLevel: number): number {
+  const lv = Math.min(
+    Math.max(0, Math.floor(coinIncomeUpgradeLevel)),
+    COIN_INCOME_UPGRADE_MAX
+  );
+  return RUN_KILL_COIN_BASE_MULT * (1 + COIN_INCOME_PER_LEVEL * lv);
+}
+
+export function getCoinIncomeUpgradePrice(currentLevel: number): number {
+  return Math.floor(32 * Math.pow(1.36, currentLevel));
+}
+
+// Calculate wave completion bonus (before run coin multiplier from shop)
 export const getWaveCompletionBonus = (waveNumber: number): number => {
   return GAME_CONFIG.WAVE_BONUS_BASE + (waveNumber * GAME_CONFIG.WAVE_BONUS_SCALING);
-  // Wave 1: 10 + 3 = 13 coins
-  // Wave 5: 10 + 15 = 25 coins
-  // Wave 10: 10 + 30 = 40 coins
-  // Wave 20: 10 + 60 = 70 coins
 };
 
 export const STARTING_COINS_UPGRADE_MAX = 20;

@@ -175,6 +175,27 @@ async def repo_count_gt(table: str, field: str, value: Any) -> int:
             return 0
     return await getattr(db, table).count_documents({field: {"$gt": value}})
 
+
+def _lb_tuple(e: Dict[str, Any]) -> tuple:
+    """Sort key: primary score = lifetime kills + last run gems; tiebreak by lifetime kills then run gems."""
+    lk = int(e.get("lifetime_enemies_killed", 0) or 0)
+    g = int(e.get("last_run_gems", 0) or 0)
+    score = lk + g
+    return (score, lk, g)
+
+
+async def repo_leaderboard_fetch_all(max_docs: int = 2000) -> List[Dict[str, Any]]:
+    """Load leaderboard rows for in-memory sort (handles legacy rows missing new fields)."""
+    if DB_PROVIDER == "supabase" and supabase:
+        try:
+            res = supabase.table("leaderboard").select("*").limit(max_docs).execute()
+            return list(res.data or [])
+        except APIError as e:
+            logger.warning(f"Supabase leaderboard fetch failed: {e}")
+            return []
+    cursor = db.leaderboard.find().limit(max_docs)
+    return await cursor.to_list(max_docs)
+
 # ==================== Models ====================
 
 class PlayerCreate(BaseModel):
@@ -204,6 +225,7 @@ class Player(BaseModel):
     total_waves_survived: int = 0
     games_played: int = 0
     best_wave: int = 0
+    lifetime_enemies_killed: int = 0
     unlocked_towers: List[str] = ["machine_gun"]
     unlocked_skins: List[str] = ["default"]
     equipped_skins: Dict[str, str] = {}
@@ -222,6 +244,10 @@ class LeaderboardEntry(BaseModel):
     best_wave: int
     total_waves_survived: int
     games_played: int
+    lifetime_enemies_killed: int = 0
+    last_run_gems: int = 0
+    last_run_enemies_killed: int = 0
+    leaderboard_score: int = 0
     updated_at: datetime
 
     class Config:
@@ -233,6 +259,7 @@ class GameResult(BaseModel):
     enemies_killed: int
     towers_placed: int
     duration_seconds: int
+    run_bonus_gems: int = 0  # daily challenge gem bonus from client (capped server-side)
 
 class RewardClaim(BaseModel):
     player_id: str
@@ -254,22 +281,12 @@ class AnalyticsEvent(BaseModel):
 # ==================== Gem Reward Calculations ====================
 
 def calculate_gem_reward(wave_reached: int, enemies_killed: int) -> dict:
-    """Calculate gem rewards based on game performance"""
-    # Base: 1 gem per wave survived
-    wave_gems = wave_reached
-    
-    # Bonus: 1 gem per 10 enemies killed
-    kill_gems = enemies_killed // 10
-    
-    # Milestone bonuses: +3 gems at wave 10, 20, 30, etc.
-    milestone_gems = (wave_reached // 10) * 3
-    
-    total = wave_gems + kill_gems + milestone_gems
-    
+    """Match client run gem formula (scaled, ~65% lower than legacy rates)."""
+    raw = max(0, int(wave_reached * 0.75) + (enemies_killed // 20))
+    total = int(0.35 * raw)
     return {
-        "wave_gems": wave_gems,
-        "kill_gems": kill_gems,
-        "milestone_gems": milestone_gems,
+        "base_scaled": total,
+        "raw_performance": raw,
         "total_gems": total,
     }
 
@@ -291,6 +308,7 @@ async def create_player(player_data: PlayerCreate):
         "total_waves_survived": 0,
         "games_played": 0,
         "best_wave": 0,
+        "lifetime_enemies_killed": 0,
         "unlocked_towers": ["machine_gun"],
         "unlocked_skins": ["default"],
         "equipped_skins": {},
@@ -308,6 +326,10 @@ async def create_player(player_data: PlayerCreate):
         "best_wave": 0,
         "total_waves_survived": 0,
         "games_played": 0,
+        "lifetime_enemies_killed": 0,
+        "last_run_gems": 0,
+        "last_run_enemies_killed": 0,
+        "leaderboard_score": 0,
         "updated_at": datetime.utcnow()
     })
     
@@ -372,6 +394,10 @@ async def end_game(game_result: GameResult):
         
         # Calculate gem rewards (the new persistent currency)
         gem_reward = calculate_gem_reward(game_result.wave_reached, game_result.enemies_killed)
+        run_bonus = max(0, min(int(game_result.run_bonus_gems or 0), 2000))
+        last_run_gems = int(gem_reward["total_gems"]) + run_bonus
+        new_lifetime_kills = int(player.get("lifetime_enemies_killed", 0)) + int(game_result.enemies_killed)
+        lb_score = new_lifetime_kills + last_run_gems
         new_gems = player.get("gems", 0) + gem_reward["total_gems"]
         
         # Check for new tower unlocks based on level
@@ -396,6 +422,7 @@ async def end_game(game_result: GameResult):
             "total_waves_survived": player.get("total_waves_survived", 0) + game_result.wave_reached,
             "games_played": player.get("games_played", 0) + 1,
             "best_wave": best_wave,
+            "lifetime_enemies_killed": new_lifetime_kills,
             "unlocked_towers": current_towers,
             "updated_at": datetime.utcnow()
         }
@@ -411,6 +438,10 @@ async def end_game(game_result: GameResult):
                 "best_wave": best_wave,
                 "total_waves_survived": update_data["total_waves_survived"],
                 "games_played": update_data["games_played"],
+                "lifetime_enemies_killed": new_lifetime_kills,
+                "last_run_gems": last_run_gems,
+                "last_run_enemies_killed": int(game_result.enemies_killed),
+                "leaderboard_score": lb_score,
                 "updated_at": datetime.utcnow(),
             },
             upsert=True,
@@ -436,9 +467,11 @@ async def end_game(game_result: GameResult):
 
 @api_router.get("/leaderboard", response_model=List[dict])
 async def get_leaderboard(limit: int = 100, skip: int = 0):
-    """Get global leaderboard sorted by best wave"""
-    entries = await repo_find_many("leaderboard", "best_wave", True, skip, limit)
-    return [serialize_doc(e) for e in entries]
+    """Global leaderboard: lifetime enemies killed + gems earned last run (score), not waves."""
+    rows = await repo_leaderboard_fetch_all(2000)
+    rows.sort(key=_lb_tuple, reverse=True)
+    page = rows[skip : skip + limit]
+    return [serialize_doc(e) for e in page]
 
 @api_router.get("/leaderboard/daily", response_model=List[dict])
 async def get_daily_challenge_leaderboard(seed: str, limit: int = 100, skip: int = 0):
@@ -446,35 +479,26 @@ async def get_daily_challenge_leaderboard(seed: str, limit: int = 100, skip: int
     Deterministic daily challenge bucket.
     Uses seeded hash over player_id to group global players.
     """
-    entries = await repo_find_many("leaderboard", "best_wave", True, 0, 500, max_len=500)
+    rows = await repo_leaderboard_fetch_all(2000)
     bucketed = []
-    for entry in entries:
-      pid = str(entry.get("player_id", ""))
-      h = hashlib.sha256(f"{pid}:{seed}".encode("utf-8")).hexdigest()
-      if int(h[:8], 16) % 4 == 0:
-        bucketed.append(entry)
-    sliced = bucketed[skip: skip + limit]
+    for entry in rows:
+        pid = str(entry.get("player_id", ""))
+        h = hashlib.sha256(f"{pid}:{seed}".encode("utf-8")).hexdigest()
+        if int(h[:8], 16) % 4 == 0:
+            bucketed.append(entry)
+    bucketed.sort(key=_lb_tuple, reverse=True)
+    sliced = bucketed[skip : skip + limit]
     return [serialize_doc(e) for e in sliced]
 
 @api_router.get("/leaderboard/player/{player_id}", response_model=dict)
 async def get_player_rank(player_id: str):
-    """Get a player's rank and surrounding players"""
-    all_entries = await repo_find_many("leaderboard", "best_wave", True, 0, 500, max_len=500)
-    player_rows = [e for e in all_entries if str(e.get("player_id")) == str(player_id)]
-    if not player_rows:
+    """Rank by lifetime kills + last run gems (same ordering as global list)."""
+    rows = await repo_leaderboard_fetch_all(2000)
+    rows.sort(key=_lb_tuple, reverse=True)
+    idx = next((i for i, e in enumerate(rows) if str(e.get("player_id")) == str(player_id)), -1)
+    if idx < 0:
         raise HTTPException(status_code=404, detail="Player not found in leaderboard")
-
-    player_entry = max(
-        player_rows,
-        key=lambda e: (int(e.get("best_wave", 0)), int(e.get("total_waves_survived", 0)))
-    )
-    rank = await repo_count_gt("leaderboard", "best_wave", player_entry["best_wave"])
-    rank += 1
-    
-    return {
-        "rank": rank,
-        "entry": serialize_doc(player_entry)
-    }
+    return {"rank": idx + 1, "entry": serialize_doc(rows[idx])}
 
 # ==================== Reward Routes ====================
 

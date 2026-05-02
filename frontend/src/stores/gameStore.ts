@@ -14,10 +14,31 @@ import {
   GameSpeed,
   getWaveCompletionBonus,
   STARTING_COINS_BONUS_PER_LEVEL,
+  getRunCoinIncomeMultiplier,
+  targetWavePerformanceGems,
 } from '../constants/game';
+import { isServerBackedPlayerId } from '../hooks/useApi';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
-import { playWeaponSfx } from '../services/audioService';
+import {
+  getArenaMap,
+  sliceRouteFromPosition,
+  isCellOnArenaRoute,
+  CLASSIC_MAP_ID,
+  type ArenaMapTheme,
+} from '../constants/arenaMaps';
+import {
+  playWeaponFireSound,
+  playProjectileImpact,
+  playEnemyDeathBurst,
+  playBaseDamageSound,
+  playWaveStartFanfare,
+} from '../services/audioService';
 import { usePlayerStore } from './playerStore';
+
+function scaleRunCoinsFromKill(baseReward: number): number {
+  const lv = usePlayerStore.getState().coinIncomeUpgradeLevel ?? 0;
+  return Math.max(1, Math.floor(baseReward * getRunCoinIncomeMultiplier(lv)));
+}
 
 export interface Position {
   x: number;
@@ -138,6 +159,15 @@ export interface GameState {
   
   // Zoom
   zoomLevel: number;
+
+  /** Cumulative scaled wave-linear gem slice granted this run (see targetWavePerformanceGems). */
+  runGemsFromWavePart: number;
+
+  /** Selected arena (persisted in player store). */
+  currentMapId: string;
+  /** Pre-baked enemy corridor; empty = classic dynamic A* path. */
+  arenaRoute: { x: number; y: number }[];
+  mapTheme: ArenaMapTheme | null;
 }
 
 interface GameActions {
@@ -147,7 +177,8 @@ interface GameActions {
     unlockedSpeeds: GameSpeed[],
     towerUpgradeLevels: Record<TowerType, number>,
     equippedSkins: Record<string, string>, 
-    arenaExpansions: number
+    arenaExpansions: number,
+    mapId: string
   ) => void;
   pauseGame: () => void;
   resumeGame: () => void;
@@ -234,6 +265,8 @@ export interface SavedGameStateForExport {
   arenaExpansions: number;
   savedAt: number;
   adReviveUsed: boolean;
+  /** Arena id (see arenaMaps) — saved for resume. */
+  mapId?: string;
 }
 
 // Player data needed for resume
@@ -307,22 +340,81 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   lastWaveBonus: 0,
   showBonusPopup: false,
   zoomLevel: 1,
+  runGemsFromWavePart: 0,
+  currentMapId: CLASSIC_MAP_ID,
+  arenaRoute: [],
+  mapTheme: null,
 
   // Game flow
-  startGame: (unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions) => {
+  startGame: (unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions, mapId) => {
+    const def = getArenaMap(mapId);
+    const useArena = def && def.route.length >= 2;
     const baseConfig = GAME_CONFIG;
+    const coinBonus =
+      usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
+
+    if (useArena && def) {
+      const arenaRoute = def.route.map((p) => ({ x: p.x, y: p.y }));
+      set({
+        isPlaying: true,
+        isPaused: false,
+        isGameOver: false,
+        currentWave: 0,
+        waveInProgress: false,
+        coins: GAME_CONFIG.STARTING_COINS + coinBonus,
+        baseHealth: GAME_CONFIG.BASE_HEALTH,
+        score: 0,
+        enemiesKilled: 0,
+        towersPlaced: 0,
+        towers: [],
+        enemies: [],
+        projectiles: [],
+        laserBeams: [],
+        gridCols: def.gridCols,
+        gridRows: def.gridRows,
+        cellSize: def.cellSize,
+        spawnPoint: { ...def.spawnPoint },
+        basePosition: { ...def.basePosition },
+        unlockedTowers,
+        unlockedSpeeds,
+        towerUpgradeLevels,
+        equippedSkins,
+        arenaExpansions,
+        towerPurchaseCount: {
+          machine_gun: 0,
+          sniper: 0,
+          splash: 0,
+          freeze: 0,
+          missile: 0,
+          laser: 0,
+        },
+        doubleDamageUntil: 0,
+        hasRevive: false,
+        adReviveUsed: false,
+        gameStartTime: Date.now(),
+        gameSpeed: 1,
+        waveEndTime: 0,
+        autoWaveTimer: 0,
+        selectedTowerType: null,
+        selectedPlacedTower: null,
+        zoomLevel: 1,
+        runGemsFromWavePart: 0,
+        currentMapId: def.id,
+        arenaRoute,
+        mapTheme: def.theme,
+      });
+      return;
+    }
+
     const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
     const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
     const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
-    
+
     const spawnPoint = { x: 0, y: 0 };
     const basePosition = {
       x: gridCols - 1,
       y: gridRows - 1,
     };
-
-    const coinBonus =
-      usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
 
     set({
       isPlaying: true,
@@ -367,6 +459,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       selectedTowerType: null,
       selectedPlacedTower: null,
       zoomLevel: 1,
+      runGemsFromWavePart: 0,
+      currentMapId: CLASSIC_MAP_ID,
+      arenaRoute: [],
+      mapTheme: null,
     });
   },
 
@@ -375,8 +471,22 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   endGame: () => set({ isPlaying: false, isGameOver: true }),
   
   restartGame: () => {
-    const { unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions } = get();
-    get().startGame(unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions);
+    const {
+      unlockedTowers,
+      unlockedSpeeds,
+      towerUpgradeLevels,
+      equippedSkins,
+      arenaExpansions,
+      currentMapId,
+    } = get();
+    get().startGame(
+      unlockedTowers,
+      unlockedSpeeds,
+      towerUpgradeLevels,
+      equippedSkins,
+      arenaExpansions,
+      currentMapId
+    );
   },
 
   setGameSpeed: (speed) => {
@@ -388,6 +498,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   // Wave management
   startWave: () => {
+    void playWaveStartFanfare();
     set(state => ({
       currentWave: state.currentWave + 1,
       waveInProgress: true,
@@ -398,8 +509,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   endWave: () => {
     const state = get();
-    // Calculate wave completion bonus based on wave number
-    const bonus = getWaveCompletionBonus(state.currentWave);
+    const incomeLv = usePlayerStore.getState().coinIncomeUpgradeLevel ?? 0;
+    const rawBonus = getWaveCompletionBonus(state.currentWave);
+    const bonus = Math.max(
+      0,
+      Math.floor(rawBonus * getRunCoinIncomeMultiplier(incomeLv))
+    );
+
+    const w = state.currentWave;
+    const newWaveGemTotal = targetWavePerformanceGems(w);
+    const waveGemDelta = Math.max(0, newWaveGemTotal - state.runGemsFromWavePart);
+    if (waveGemDelta > 0) {
+      const pid = usePlayerStore.getState().playerId;
+      if (!isServerBackedPlayerId(pid)) {
+        usePlayerStore.getState().addGems(waveGemDelta);
+      }
+    }
+
     set({ 
       waveInProgress: false,
       waveEndTime: Date.now(),
@@ -408,6 +534,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       score: state.score + bonus,
       lastWaveBonus: bonus,
       showBonusPopup: true,
+      runGemsFromWavePart: newWaveGemTotal,
     });
     
     // Auto-dismiss the bonus popup after 2 seconds
@@ -458,31 +585,35 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const blockedCells = getBlockedCells(allTowers);
 
     // Recalculate paths for ALL existing enemies
-    const updatedEnemies = state.enemies.map(enemy => {
-      // Calculate new path from enemy's current position to base
+    const updatedEnemies = state.enemies.map((enemy) => {
       const currentGridX = Math.round(enemy.position.x);
       const currentGridY = Math.round(enemy.position.y);
-      
-      const newPath = findPath(
-        { x: currentGridX, y: currentGridY },
-        state.basePosition,
-        state.gridCols,
-        state.gridRows,
-        blockedCells
-      );
+      let newPath: { x: number; y: number }[] | null = null;
+
+      if (state.arenaRoute.length >= 2) {
+        newPath = sliceRouteFromPosition(
+          { x: enemy.position.x, y: enemy.position.y },
+          state.arenaRoute
+        );
+      } else {
+        newPath = findPath(
+          { x: currentGridX, y: currentGridY },
+          state.basePosition,
+          state.gridCols,
+          state.gridRows,
+          blockedCells
+        );
+      }
 
       if (newPath && newPath.length > 1) {
-        // Update enemy with new path, starting from index 0
         return {
           ...enemy,
           path: newPath,
           pathIndex: 0,
-          // Keep the exact position, the path will guide from current cell
           position: { x: enemy.position.x, y: enemy.position.y },
         };
       }
-      
-      // If no valid path found (shouldn't happen due to canPlaceTower check), keep current path
+
       return enemy;
     });
 
@@ -551,18 +682,24 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const enemyDef = ENEMIES[type];
     
-    const blockedCells = getBlockedCells(state.towers);
-    const path = findPath(
-      state.spawnPoint,
-      state.basePosition,
-      state.gridCols,
-      state.gridRows,
-      blockedCells
-    );
-    
-    if (!path || path.length < 2) {
-      console.error('No valid path for enemy!');
-      return;
+    let path: { x: number; y: number }[];
+    if (state.arenaRoute.length >= 2) {
+      path = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+    } else {
+      const blockedCells = getBlockedCells(state.towers);
+      const computed =
+        findPath(
+          state.spawnPoint,
+          state.basePosition,
+          state.gridCols,
+          state.gridRows,
+          blockedCells
+        ) ?? null;
+      if (!computed || computed.length < 2) {
+        console.error('No valid path for enemy!');
+        return;
+      }
+      path = computed;
     }
     
     const enemy: Enemy = {
@@ -773,7 +910,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           damage: laserDamage,
         });
 
-        void playWeaponSfx('laser', usePlayerStore.getState().soundEnabled);
+        void playWeaponFireSound('laser');
 
         return {
           ...tower,
@@ -800,7 +937,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
 
       newProjectiles.push(projectile);
-      void playWeaponSfx(tower.type, usePlayerStore.getState().soundEnabled);
+      void playWeaponFireSound(tower.type);
       return { ...tower, lastFireTime: now };
     });
 
@@ -832,7 +969,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
       if (dist < moveAmount + 0.2) {
         projectilesToRemove.add(proj.id);
-        
+        void playProjectileImpact(proj);
+
         if (proj.isSplash && proj.splashRadius) {
           const splashRadiusSq = proj.splashRadius * proj.splashRadius;
           updatedEnemies.forEach(e => {
@@ -908,7 +1046,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
         if (newHealth <= 0) {
           enemiesKilledThisTick++;
-          coinsEarned += enemy.coinReward;
+          coinsEarned += scaleRunCoinsFromKill(enemy.coinReward);
           if (enemy.splitOnDeath && enemy.splitInto && enemy.splitCount) {
             const splitDef = ENEMIES[enemy.splitInto];
             const blockedCells = getBlockedCells(state.towers);
@@ -917,8 +1055,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
               y: Math.max(0, Math.min(state.gridRows - 1, Math.round(enemy.position.y))),
             };
             const splitPath =
-              findPath(start, state.basePosition, state.gridCols, state.gridRows, blockedCells) ??
-              enemy.path;
+              state.arenaRoute.length >= 2
+                ? sliceRouteFromPosition(enemy.position, state.arenaRoute)
+                : findPath(start, state.basePosition, state.gridCols, state.gridRows, blockedCells) ??
+                  enemy.path;
 
             for (let i = 0; i < enemy.splitCount; i++) {
               splitSpawns.push({
@@ -951,6 +1091,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
     const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
+
+    if (baseDamage > 0) {
+      void playBaseDamageSound();
+    }
+    if (enemiesKilledThisTick > 0) {
+      void playEnemyDeathBurst(enemiesKilledThisTick);
+    }
 
     const sel = state.selectedPlacedTower;
     const nextSelected =
@@ -1032,6 +1179,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     );
     if (hasTower) return false;
 
+    if (state.arenaRoute.length >= 2) {
+      return !isCellOnArenaRoute(position, state.arenaRoute);
+    }
+
     const towerPositions = state.towers.map(t => t.position);
     if (wouldBlockPath(
       position,
@@ -1089,6 +1240,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   recalculatePath: () => {
     const state = get();
+    if (state.arenaRoute.length >= 2) {
+      return state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+    }
     const blockedCells = getBlockedCells(state.towers);
     return findPath(
       state.spawnPoint,
@@ -1099,7 +1253,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     );
   },
 
-  setZoomLevel: (level) => set({ zoomLevel: Math.max(0.5, Math.min(2, level)) }),
+  setZoomLevel: (level) =>
+    set({ zoomLevel: Math.max(0.8, Math.min(2.5, level)) }),
   
   getCurrentCoins: () => get().coins,
   
@@ -1129,41 +1284,91 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       arenaExpansions: state.arenaExpansions,
       savedAt: Date.now(),
       adReviveUsed: state.adReviveUsed,
+      mapId: state.currentMapId,
     };
   },
   
   // Resume from saved game
   resumeFromSavedGame: (savedGame, playerData) => {
     const baseConfig = GAME_CONFIG;
-    const cellSize = savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
-    
-    const spawnPoint = { x: 0, y: 0 };
-    const basePosition = {
-      x: savedGame.gridCols - 1,
-      y: savedGame.gridRows - 1,
-    };
-    
-    // Restore towers with full PlacedTower structure
-    const restoredTowers: PlacedTower[] = savedGame.towers.map(t => ({
+    const restoredTowers: PlacedTower[] = savedGame.towers.map((t) => ({
       ...t,
       lastFireTime: 0,
       currentTargetId: null,
       damageAccumulator: 0,
     }));
-    
+
+    const resumeMapId = savedGame.mapId ?? CLASSIC_MAP_ID;
+    const def = getArenaMap(resumeMapId);
+
+    if (def && def.route.length >= 2) {
+      const arenaRoute = def.route.map((p) => ({ x: p.x, y: p.y }));
+      set({
+        isPlaying: true,
+        isPaused: false,
+        isGameOver: false,
+        currentWave: savedGame.currentWave,
+        waveInProgress: false,
+        coins: savedGame.coins,
+        baseHealth: savedGame.baseHealth,
+        score: savedGame.score,
+        enemiesKilled: savedGame.enemiesKilled,
+        towersPlaced: savedGame.towersPlaced,
+        towers: restoredTowers,
+        enemies: [],
+        projectiles: [],
+        laserBeams: [],
+        gridCols: def.gridCols,
+        gridRows: def.gridRows,
+        cellSize: def.cellSize,
+        spawnPoint: { ...def.spawnPoint },
+        basePosition: { ...def.basePosition },
+        unlockedTowers: playerData.unlockedTowers,
+        unlockedSpeeds: playerData.unlockedSpeeds,
+        towerUpgradeLevels: playerData.towerUpgradeLevels,
+        equippedSkins: playerData.equippedSkins,
+        arenaExpansions: savedGame.arenaExpansions,
+        towerPurchaseCount: savedGame.towerPurchaseCount,
+        doubleDamageUntil: 0,
+        hasRevive: false,
+        adReviveUsed: savedGame.adReviveUsed,
+        gameStartTime: Date.now(),
+        gameSpeed: 1,
+        waveEndTime: 0,
+        autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+        selectedTowerType: null,
+        selectedPlacedTower: null,
+        zoomLevel: 1,
+        runGemsFromWavePart: targetWavePerformanceGems(savedGame.currentWave),
+        currentMapId: def.id,
+        arenaRoute,
+        mapTheme: def.theme,
+      });
+      return;
+    }
+
+    const cellSize =
+      savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+
+    const spawnPoint = { x: 0, y: 0 };
+    const basePosition = {
+      x: savedGame.gridCols - 1,
+      y: savedGame.gridRows - 1,
+    };
+
     set({
       isPlaying: true,
       isPaused: false,
       isGameOver: false,
       currentWave: savedGame.currentWave,
-      waveInProgress: false, // Start paused between waves
+      waveInProgress: false,
       coins: savedGame.coins,
       baseHealth: savedGame.baseHealth,
       score: savedGame.score,
       enemiesKilled: savedGame.enemiesKilled,
       towersPlaced: savedGame.towersPlaced,
       towers: restoredTowers,
-      enemies: [], // No enemies when resuming
+      enemies: [],
       projectiles: [],
       laserBeams: [],
       gridCols: savedGame.gridCols,
@@ -1187,6 +1392,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       selectedTowerType: null,
       selectedPlacedTower: null,
       zoomLevel: 1,
+      runGemsFromWavePart: targetWavePerformanceGems(savedGame.currentWave),
+      currentMapId: CLASSIC_MAP_ID,
+      arenaRoute: [],
+      mapTheme: null,
     });
   },
 }));

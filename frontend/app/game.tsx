@@ -1,4 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  Component,
+  ErrorInfo,
+  ReactNode,
+} from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   View,
@@ -12,16 +22,25 @@ import {
   BackHandler,
 } from 'react-native';
 import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useGameStore, PlacedTower, SavedGameStateForExport } from '../src/stores/gameStore';
+import {
+  useGameStore,
+  PlacedTower,
+  SavedGameStateForExport,
+  Enemy,
+} from '../src/stores/gameStore';
 import { usePlayerStore, SavedGameState } from '../src/stores/playerStore';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, 
   TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
-  GameSpeed, SPEED_UNLOCK_PRICES
+  GameSpeed, SPEED_UNLOCK_PRICES, getRunCoinIncomeMultiplier,
+  scaledTotalPerformanceGems,
+  endGamePerformanceRemainder,
+  COMBO_BONUS_GEMS,
 } from '../src/constants/game';
 import { gameApi, analyticsApi, rewardApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
@@ -32,8 +51,47 @@ import {
 } from '../src/services/adService';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx } from '../src/services/audioService';
+import { getArenaMap, CLASSIC_MAP_ID } from '../src/constants/arenaMaps';
+import {
+  SESSION_SLAUGHTER_WIN_KILLS,
+  SESSION_BOUNTY_TRIUMPHS_NEEDED,
+} from '../src/constants/sessionProgress';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+/** Pinch zoom limits (keep in sync with gameStore.setZoomLevel clamp) */
+const ZOOM_MIN = 0.8;
+const ZOOM_MAX = 2.5;
+
+const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
+class GestureAreaErrorBoundary extends Component<
+  { children: ReactNode; style?: object },
+  { err: Error | null }
+> {
+  state = { err: null as Error | null };
+
+  static getDerivedStateFromError(err: Error) {
+    return { err };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.warn('[GameBoard gestures]', err?.message, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.err) {
+      return (
+        <View style={[{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }, this.props.style]}>
+          <Text style={{ color: '#e74c3c', textAlign: 'center' }}>
+            Map gestures paused. Leave and re-enter the game to continue.
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 const getUtcDayKey = (ts: number) => {
   const d = new Date(ts);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
@@ -284,7 +342,276 @@ const TowerOptionsPanel = ({
   );
 };
 
-// Game board component with laser beam rendering
+// —— Map / entity views (memoized; selection & layout props drive updates) ——
+const GameMapCell = React.memo(
+  function GameMapCell({
+    col,
+    row,
+    scaledCellSize,
+    onPath,
+    isSpawn,
+    isBase,
+    canPlace,
+    hasTower,
+    onCellPress,
+    mapTheme,
+  }: {
+    col: number;
+    row: number;
+    scaledCellSize: number;
+    onPath: boolean;
+    isSpawn: boolean;
+    isBase: boolean;
+    canPlace: boolean;
+    hasTower: boolean;
+    onCellPress: (x: number, y: number) => void;
+    mapTheme?: { floor: string; path: string; pathAccent: string } | null;
+  }) {
+    const cellStyle = useMemo(
+      () => [
+        styles.cell,
+        {
+          width: scaledCellSize,
+          height: scaledCellSize,
+          left: col * scaledCellSize,
+          top: row * scaledCellSize,
+          backgroundColor: mapTheme?.floor ?? '#1a1a2e',
+          borderColor: mapTheme?.pathAccent ?? '#2a2a4e',
+        },
+        onPath && [
+          styles.pathCell,
+          mapTheme?.path ? { backgroundColor: mapTheme.path } : null,
+        ],
+        canPlace && onPath && styles.canPlaceOnPath,
+        canPlace && !onPath && styles.canPlaceCell,
+        isSpawn && styles.spawnCell,
+        isBase && styles.baseCell,
+      ],
+      [scaledCellSize, col, row, onPath, canPlace, isSpawn, isBase, mapTheme]
+    );
+
+    if (hasTower) {
+      return <View style={cellStyle} />;
+    }
+
+    return (
+      <TouchableOpacity
+        style={cellStyle}
+        onPress={() => onCellPress(col, row)}
+        activeOpacity={0.7}
+      />
+    );
+  }
+);
+
+const GameLaserBeam = React.memo(function GameLaserBeam({
+  startX,
+  startY,
+  length,
+  angleDeg,
+}: {
+  startX: number;
+  startY: number;
+  length: number;
+  angleDeg: number;
+}) {
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.laserBeam,
+        {
+          left: startX,
+          top: startY - 2,
+          width: length,
+          transform: [{ rotate: `${angleDeg}deg` }],
+          transformOrigin: 'left center',
+        },
+      ]}
+    />
+  );
+});
+
+const GameEnemySprite = React.memo(function GameEnemySprite({
+  enemy,
+  scaledCellSize,
+  finalScale,
+  nowTs,
+}: {
+  enemy: Enemy;
+  scaledCellSize: number;
+  finalScale: number;
+  nowTs: number;
+}) {
+  const enemyDef = ENEMIES[enemy.type];
+  const healthPercent = enemy.health / enemy.maxHealth;
+  const isSlowed = nowTs < enemy.slowedUntil;
+  const enemySize = enemyDef.size * finalScale;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.enemy,
+        {
+          left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
+          top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2,
+          width: enemySize,
+          height: enemySize,
+          backgroundColor: isSlowed ? '#00D4FF' : enemyDef.color,
+        },
+      ]}
+    >
+      <View style={styles.healthBarContainer}>
+        <View style={[styles.healthBar, { width: `${healthPercent * 100}%` }]} />
+      </View>
+    </View>
+  );
+});
+
+const GameProjectileSprite = React.memo(function GameProjectileSprite({
+  left,
+  top,
+  backgroundColor,
+}: {
+  left: number;
+  top: number;
+  backgroundColor: string;
+}) {
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.projectile,
+        {
+          left,
+          top,
+          backgroundColor,
+        },
+      ]}
+    />
+  );
+});
+
+const GameTowerSprite = React.memo(function GameTowerSprite({
+  tower,
+  scaledCellSize,
+  rangeRadius,
+  isSelected,
+  getTowerColor,
+  onCellPress,
+}: {
+  tower: PlacedTower;
+  scaledCellSize: number;
+  rangeRadius: number;
+  isSelected: boolean;
+  getTowerColor: (t: PlacedTower) => string;
+  onCellPress: (x: number, y: number) => void;
+}) {
+  const cx = tower.position.x * scaledCellSize;
+  const cy = tower.position.y * scaledCellSize;
+
+  return (
+    <React.Fragment>
+      {isSelected && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.rangeIndicator,
+            {
+              left: cx + scaledCellSize / 2 - rangeRadius,
+              top: cy + scaledCellSize / 2 - rangeRadius,
+              width: rangeRadius * 2,
+              height: rangeRadius * 2,
+              borderRadius: rangeRadius,
+            },
+          ]}
+        />
+      )}
+      <Pressable
+        hitSlop={12}
+        style={[
+          styles.towerHit,
+          {
+            left: cx,
+            top: cy,
+            width: scaledCellSize,
+            height: scaledCellSize,
+          },
+        ]}
+        onPress={() => onCellPress(tower.position.x, tower.position.y)}
+      >
+        <View
+          style={[
+            styles.tower,
+            {
+              width: scaledCellSize * 0.8,
+              height: scaledCellSize * 0.8,
+              backgroundColor: getTowerColor(tower),
+              borderWidth: isSelected ? 3 : tower.level > 0 ? 2 : 0,
+              borderColor: isSelected ? '#FFD700' :
+                tower.level >= 5 ? '#FF00FF' :
+                tower.level >= 3 ? '#00FF88' :
+                tower.level >= 1 ? '#C0C0C0' : 'transparent',
+            },
+          ]}
+        >
+          {getTowerIcon(tower.type, scaledCellSize * 0.4)}
+          {tower.level > 0 && (
+            <View style={styles.levelBadge}>
+              <Text style={styles.levelText}>{tower.level}</Text>
+            </View>
+          )}
+        </View>
+      </Pressable>
+    </React.Fragment>
+  );
+});
+
+const GameSpawnBaseMarkers = React.memo(function GameSpawnBaseMarkers({
+  spawnPoint,
+  basePosition,
+  scaledCellSize,
+}: {
+  spawnPoint: { x: number; y: number };
+  basePosition: { x: number; y: number };
+  scaledCellSize: number;
+}) {
+  return (
+    <>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.spawnPoint,
+          {
+            left: spawnPoint.x * scaledCellSize,
+            top: spawnPoint.y * scaledCellSize,
+            width: scaledCellSize,
+            height: scaledCellSize,
+          },
+        ]}
+      >
+        <MaterialCommunityIcons name="location-enter" size={scaledCellSize * 0.5} color="#E74C3C" />
+      </View>
+      <View
+        pointerEvents="none"
+        style={[
+          styles.base,
+          {
+            left: basePosition.x * scaledCellSize,
+            top: basePosition.y * scaledCellSize,
+            width: scaledCellSize,
+            height: scaledCellSize,
+          },
+        ]}
+      >
+        <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
+      </View>
+    </>
+  );
+});
+
+// Game board: pinch zoom runs on UI thread; store zoom commits once per pinch (no React churn while zooming)
 const GameBoard = React.memo(({ 
   onCellPress, 
   scale,
@@ -313,21 +640,80 @@ const GameBoard = React.memo(({
     basePosition,
     selectedPlacedTower,
     towerUpgradeLevels,
-  } = useGameStore();
+    arenaRoute,
+    mapTheme,
+  } = useGameStore(
+    useShallow((s) => ({
+      towers: s.towers,
+      enemies: s.enemies,
+      projectiles: s.projectiles,
+      laserBeams: s.laserBeams,
+      gridCols: s.gridCols,
+      gridRows: s.gridRows,
+      cellSize: s.cellSize,
+      getTowerColor: s.getTowerColor,
+      selectedTowerType: s.selectedTowerType,
+      canPlaceTower: s.canPlaceTower,
+      spawnPoint: s.spawnPoint,
+      basePosition: s.basePosition,
+      selectedPlacedTower: s.selectedPlacedTower,
+      towerUpgradeLevels: s.towerUpgradeLevels,
+      arenaRoute: s.arenaRoute,
+      mapTheme: s.mapTheme,
+    }))
+  );
 
-  const pinchBaseRef = useRef(1);
+  const pinchMultSV = useSharedValue(1);
+  const startZoomSV = useSharedValue(zoomLevel);
+  const committedZoomSV = useSharedValue(zoomLevel);
+  const [isPinching, setIsPinching] = useState(false);
+
+  useEffect(() => {
+    committedZoomSV.value = zoomLevel;
+  }, [zoomLevel, committedZoomSV]);
+
+  const commitZoom = useCallback((z: number) => {
+    useGameStore.getState().setZoomLevel(clampZoom(z));
+  }, []);
+
   const pinchGesture = useMemo(
     () =>
       Gesture.Pinch()
         .onBegin(() => {
-          pinchBaseRef.current = useGameStore.getState().zoomLevel;
+          'worklet';
+          startZoomSV.value = committedZoomSV.value;
+          pinchMultSV.value = 1;
+          runOnJS(setIsPinching)(true);
         })
         .onUpdate((e) => {
-          const next = Math.max(0.5, Math.min(2, pinchBaseRef.current * e.scale));
-          useGameStore.getState().setZoomLevel(next);
+          'worklet';
+          const raw = e.scale;
+          const factor =
+            typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
+          const abs = Math.max(0.8, Math.min(2.5, startZoomSV.value * factor));
+          pinchMultSV.value = abs / startZoomSV.value;
+        })
+        .onEnd((e) => {
+          'worklet';
+          const raw = e.scale;
+          const factor =
+            typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
+          const abs = Math.max(0.8, Math.min(2.5, startZoomSV.value * factor));
+          pinchMultSV.value = 1;
+          runOnJS(commitZoom)(abs);
+          runOnJS(setIsPinching)(false);
+        })
+        .onFinalize(() => {
+          'worklet';
+          pinchMultSV.value = 1;
+          runOnJS(setIsPinching)(false);
         }),
-    []
+    [commitZoom, committedZoomSV, pinchMultSV, startZoomSV]
   );
+
+  const pinchAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pinchMultSV.value }],
+  }));
 
   const finalScale = scale * zoomLevel;
   const scaledCellSize = cellSize * finalScale;
@@ -335,7 +721,7 @@ const GameBoard = React.memo(({
   const boardHeight = gridRows * scaledCellSize;
 
   const placePanGesture = useMemo(() => {
-    const canPlaceDrag = !!selectedTowerType && !selectedPlacedTower;
+    const canPlaceDrag = !!selectedTowerType && !selectedPlacedTower && !isPinching;
     return Gesture.Pan()
       .enabled(canPlaceDrag)
       .minDistance(6)
@@ -354,6 +740,7 @@ const GameBoard = React.memo(({
     scaledCellSize,
     gridCols,
     gridRows,
+    isPinching,
   ]);
 
   const boardGestures = useMemo(
@@ -366,9 +753,12 @@ const GameBoard = React.memo(({
     [towers]
   );
   const pathSet = useMemo(() => {
+    if (arenaRoute.length >= 2) {
+      return new Set(arenaRoute.map((p) => `${p.x},${p.y}`));
+    }
     const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
-    return new Set((currentPath || []).map(p => `${p.x},${p.y}`));
-  }, [spawnPoint, basePosition, gridCols, gridRows, blockedCells]);
+    return new Set((currentPath || []).map((p) => `${p.x},${p.y}`));
+  }, [arenaRoute, spawnPoint, basePosition, gridCols, gridRows, blockedCells]);
   const gridCells = useMemo(
     () => Array.from({ length: gridRows * gridCols }, (_, index) => ({
       row: Math.floor(index / gridCols),
@@ -407,243 +797,146 @@ const GameBoard = React.memo(({
       style={styles.boardScrollContainer}
       contentContainerStyle={styles.boardScrollContent}
       horizontal
+      removeClippedSubviews
       showsHorizontalScrollIndicator={false}
       showsVerticalScrollIndicator={false}
     >
       <ScrollView
+        removeClippedSubviews
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ alignItems: 'center', justifyContent: 'center' }}
       >
-        <GestureDetector gesture={boardGestures}>
-          <View style={[styles.gameBoard, { width: boardWidth, height: boardHeight }]}>
-          {gridCells.map(({ row, col }) => {
-            const isPath = pathSet.has(`${col},${row}`);
-            const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
-            const isBase = col === basePosition.x && row === basePosition.y;
-            const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
-            const hasTowerHere = blockedCells.has(`${col},${row}`);
-            const onPath = isPath && !isSpawn && !isBase;
-            const cellStyle = [
-              styles.cell,
-              {
-                width: scaledCellSize,
-                height: scaledCellSize,
-                left: col * scaledCellSize,
-                top: row * scaledCellSize,
-              },
-              onPath && styles.pathCell,
-              canPlace && onPath && styles.canPlaceOnPath,
-              canPlace && !onPath && styles.canPlaceCell,
-              isSpawn && styles.spawnCell,
-              isBase && styles.baseCell,
-            ];
+        <GestureAreaErrorBoundary>
+          <GestureDetector gesture={boardGestures}>
+            <Animated.View
+              style={[
+                styles.gameBoard,
+                {
+                  width: boardWidth,
+                  height: boardHeight,
+                  backgroundColor: mapTheme?.floor ?? '#0f0f23',
+                },
+                pinchAnimatedStyle,
+              ]}
+            >
+              {gridCells.map(({ row, col }) => {
+                const isPath = pathSet.has(`${col},${row}`);
+                const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
+                const isBase = col === basePosition.x && row === basePosition.y;
+                const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
+                const hasTowerHere = blockedCells.has(`${col},${row}`);
+                const onPathCorridor = isPath && !isSpawn && !isBase;
 
-            if (hasTowerHere) {
-              return <View key={`${col}-${row}`} style={cellStyle} />;
-            }
-
-            return (
-              <TouchableOpacity
-                key={`${col}-${row}`}
-                style={cellStyle}
-                onPress={() => onCellPress(col, row)}
-                activeOpacity={0.7}
-              />
-            );
-          })}
-
-          {visibleLaserBeams.map((beam, idx) => {
-            const tower = towerById.get(beam.towerId);
-            const enemy = enemyById.get(beam.targetId);
-            if (!tower || !enemy) return null;
-
-            const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
-            const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
-            const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
-            const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
-
-            const dx = endX - startX;
-            const dy = endY - startY;
-            const length = Math.sqrt(dx * dx + dy * dy);
-            const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-            return (
-              <View
-                key={`laser-${idx}`}
-                pointerEvents="none"
-                style={[
-                  styles.laserBeam,
-                  {
-                    left: startX,
-                    top: startY - 2,
-                    width: length,
-                    transform: [{ rotate: `${angle}deg` }],
-                    transformOrigin: 'left center',
-                  },
-                ]}
-              />
-            );
-          })}
-
-          {enemies.map((enemy) => {
-            const enemyDef = ENEMIES[enemy.type];
-            const healthPercent = enemy.health / enemy.maxHealth;
-            const isSlowed = nowTs < enemy.slowedUntil;
-            const enemySize = enemyDef.size * finalScale;
-
-            return (
-              <View
-                key={enemy.id}
-                pointerEvents="none"
-                style={[
-                  styles.enemy,
-                  {
-                    left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
-                    top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2,
-                    width: enemySize,
-                    height: enemySize,
-                    backgroundColor: isSlowed ? '#00D4FF' : enemyDef.color,
-                  },
-                ]}
-              >
-                <View style={styles.healthBarContainer}>
-                  <View style={[styles.healthBar, { width: `${healthPercent * 100}%` }]} />
-                </View>
-              </View>
-            );
-          })}
-
-          {visibleProjectiles.map((proj) => {
-            const target = enemyById.get(proj.targetId);
-            let px = proj.position.x;
-            let py = proj.position.y;
-            if (target) {
-              const dx = target.position.x - proj.position.x;
-              const dy = target.position.y - proj.position.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist > 0.001) {
-                const renderLead = proj.speed * 0.016 * (performanceMode ? 0.2 : 0.35);
-                const lead = Math.min(renderLead, dist * 0.6);
-                px += (dx / dist) * lead;
-                py += (dy / dist) * lead;
-              }
-            }
-            return (
-              <View
-                key={proj.id}
-                pointerEvents="none"
-                style={[
-                  styles.projectile,
-                  {
-                    left: px * scaledCellSize + scaledCellSize / 2 - 4,
-                    top: py * scaledCellSize + scaledCellSize / 2 - 4,
-                    backgroundColor: proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700',
-                  },
-                ]}
-              />
-            );
-          })}
-
-          {towers.map((tower) => {
-            const towerDef = TOWERS[tower.type];
-            const shopBonus = towerUpgradeLevels[tower.type] || 0;
-            let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-            if (shopBonus > 0) {
-              stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
-            }
-            const rangeRadius = stats.range * scaledCellSize;
-            const isSelected = selectedPlacedTower?.id === tower.id;
-            const cx = tower.position.x * scaledCellSize;
-            const cy = tower.position.y * scaledCellSize;
-
-            return (
-              <React.Fragment key={tower.id}>
-                {isSelected && (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.rangeIndicator,
-                      {
-                        left: cx + scaledCellSize / 2 - rangeRadius,
-                        top: cy + scaledCellSize / 2 - rangeRadius,
-                        width: rangeRadius * 2,
-                        height: rangeRadius * 2,
-                        borderRadius: rangeRadius,
-                      },
-                    ]}
+                return (
+                  <GameMapCell
+                    key={`${col}-${row}`}
+                    mapTheme={mapTheme ?? undefined}
+                    col={col}
+                    row={row}
+                    scaledCellSize={scaledCellSize}
+                    onPath={onPathCorridor}
+                    isSpawn={isSpawn}
+                    isBase={isBase}
+                    canPlace={canPlace}
+                    hasTower={hasTowerHere}
+                    onCellPress={onCellPress}
                   />
-                )}
-                <Pressable
-                  hitSlop={12}
-                  style={[
-                    styles.towerHit,
-                    {
-                      left: cx,
-                      top: cy,
-                      width: scaledCellSize,
-                      height: scaledCellSize,
-                    },
-                  ]}
-                  onPress={() => onCellPress(tower.position.x, tower.position.y)}
-                >
-                  <View
-                    style={[
-                      styles.tower,
-                      {
-                        width: scaledCellSize * 0.8,
-                        height: scaledCellSize * 0.8,
-                        backgroundColor: getTowerColor(tower),
-                        borderWidth: isSelected ? 3 : tower.level > 0 ? 2 : 0,
-                        borderColor: isSelected ? '#FFD700' :
-                          tower.level >= 5 ? '#FF00FF' :
-                          tower.level >= 3 ? '#00FF88' :
-                          tower.level >= 1 ? '#C0C0C0' : 'transparent',
-                      },
-                    ]}
-                  >
-                    {getTowerIcon(tower.type, scaledCellSize * 0.4)}
-                    {tower.level > 0 && (
-                      <View style={styles.levelBadge}>
-                        <Text style={styles.levelText}>{tower.level}</Text>
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
-              </React.Fragment>
-            );
-          })}
+                );
+              })}
 
-          <View
-            pointerEvents="none"
-            style={[
-              styles.spawnPoint,
-              {
-                left: spawnPoint.x * scaledCellSize,
-                top: spawnPoint.y * scaledCellSize,
-                width: scaledCellSize,
-                height: scaledCellSize,
-              },
-            ]}
-          >
-            <MaterialCommunityIcons name="location-enter" size={scaledCellSize * 0.5} color="#E74C3C" />
-          </View>
+              {visibleLaserBeams.map((beam, idx) => {
+                const tower = towerById.get(beam.towerId);
+                const enemy = enemyById.get(beam.targetId);
+                if (!tower || !enemy) return null;
 
-          <View
-            pointerEvents="none"
-            style={[
-              styles.base,
-              {
-                left: basePosition.x * scaledCellSize,
-                top: basePosition.y * scaledCellSize,
-                width: scaledCellSize,
-                height: scaledCellSize,
-              },
-            ]}
-          >
-            <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
-          </View>
-          </View>
-        </GestureDetector>
+                const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
+                const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
+                const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
+                const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
+
+                const dx = endX - startX;
+                const dy = endY - startY;
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
+
+                return (
+                  <GameLaserBeam
+                    key={`laser-${idx}`}
+                    startX={startX}
+                    startY={startY}
+                    length={length}
+                    angleDeg={angleDeg}
+                  />
+                );
+              })}
+
+              {enemies.map((enemy) => (
+                <GameEnemySprite
+                  key={enemy.id}
+                  enemy={enemy}
+                  scaledCellSize={scaledCellSize}
+                  finalScale={finalScale}
+                  nowTs={nowTs}
+                />
+              ))}
+
+              {visibleProjectiles.map((proj) => {
+                const target = enemyById.get(proj.targetId);
+                let px = proj.position.x;
+                let py = proj.position.y;
+                if (target) {
+                  const dx = target.position.x - proj.position.x;
+                  const dy = target.position.y - proj.position.y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  if (dist > 0.001) {
+                    const renderLead = proj.speed * 0.016 * (performanceMode ? 0.2 : 0.35);
+                    const lead = Math.min(renderLead, dist * 0.6);
+                    px += (dx / dist) * lead;
+                    py += (dy / dist) * lead;
+                  }
+                }
+                const bg = proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700';
+                return (
+                  <GameProjectileSprite
+                    key={proj.id}
+                    left={px * scaledCellSize + scaledCellSize / 2 - 4}
+                    top={py * scaledCellSize + scaledCellSize / 2 - 4}
+                    backgroundColor={bg}
+                  />
+                );
+              })}
+
+              {towers.map((tower) => {
+                const towerDef = TOWERS[tower.type];
+                const shopBonus = towerUpgradeLevels[tower.type] || 0;
+                let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+                if (shopBonus > 0) {
+                  stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
+                }
+                const rangeRadius = stats.range * scaledCellSize;
+                const isSelected = selectedPlacedTower?.id === tower.id;
+
+                return (
+                  <GameTowerSprite
+                    key={tower.id}
+                    tower={tower}
+                    scaledCellSize={scaledCellSize}
+                    rangeRadius={rangeRadius}
+                    isSelected={isSelected}
+                    getTowerColor={getTowerColor}
+                    onCellPress={onCellPress}
+                  />
+                );
+              })}
+
+              <GameSpawnBaseMarkers
+                spawnPoint={spawnPoint}
+                basePosition={basePosition}
+                scaledCellSize={scaledCellSize}
+              />
+            </Animated.View>
+          </GestureDetector>
+        </GestureAreaErrorBoundary>
       </ScrollView>
     </ScrollView>
   );
@@ -660,6 +953,11 @@ const GameOverFlowModal = ({
   enemiesKilled,
   towersPlaced,
   bestWaveRecord,
+  sessionCarnageTotal,
+  slaughterQualified,
+  slaughterThreshold,
+  triumphCount,
+  triumphsNeeded,
   rewardSummary,
   onSeeResults,
   onHome,
@@ -672,6 +970,11 @@ const GameOverFlowModal = ({
   enemiesKilled: number;
   towersPlaced: number;
   bestWaveRecord: number;
+  sessionCarnageTotal: number;
+  slaughterQualified: boolean;
+  slaughterThreshold: number;
+  triumphCount: number;
+  triumphsNeeded: number;
   rewardSummary: {
     challengeName: string;
     xpEarned: number;
@@ -689,8 +992,30 @@ const GameOverFlowModal = ({
         {step === 'over' ? (
           <View style={styles.gameOverModal}>
             <Text style={styles.gameOverTitle}>Game over</Text>
-            <Text style={styles.gameOverWave}>You reached wave {wave}</Text>
-            <Text style={styles.gameOverScore}>Score {score}</Text>
+            <View style={styles.gameOverKillsBlock}>
+              <Text style={styles.gameOverKillsNumber}>{enemiesKilled}</Text>
+              <Text style={styles.gameOverKillsCaption}>enemies destroyed this run</Text>
+            </View>
+            {slaughterQualified ? (
+              <View style={styles.slaughterEarnedBadge}>
+                <MaterialCommunityIcons name="skull" size={20} color="#1a0f0a" />
+                <Text style={styles.slaughterEarnedText}>
+                  Slaughter earned — {slaughterThreshold}+ kills
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.gameOverSlaughterHint}>
+                Reach {slaughterThreshold}+ kills in one run to earn a slaughter star toward your bounty.
+              </Text>
+            )}
+            <Text style={styles.gameOverSessionLine}>
+              Session carnage:{' '}
+              <Text style={styles.gameOverSessionEm}>{sessionCarnageTotal}</Text> total kills
+            </Text>
+            <Text style={styles.gameOverTriumphLine}>
+              Slaughter stars this session: {triumphCount}/{triumphsNeeded}
+            </Text>
+            <Text style={styles.gameOverWave}>Wave {wave} • Score {score}</Text>
             <TouchableOpacity style={styles.resultsPrimaryButton} onPress={onSeeResults}>
               <Text style={styles.resultsPrimaryText}>See results</Text>
               <Ionicons name="chevron-forward" size={22} color="#1a1a2e" />
@@ -701,10 +1026,29 @@ const GameOverFlowModal = ({
             <Text style={styles.resultsScreenTitle}>Run results</Text>
             <Text style={styles.resultsChallenge}>{rewardSummary.challengeName}</Text>
 
+            <View style={styles.resultsHeroCard}>
+              <Text style={styles.resultsHeroLabel}>This run</Text>
+              <Text style={styles.resultsHeroValue}>{enemiesKilled}</Text>
+              <Text style={styles.resultsHeroSub}>enemies destroyed</Text>
+              {slaughterQualified && (
+                <View style={styles.resultsHeroRibbon}>
+                  <Text style={styles.resultsHeroRibbonText}>
+                    Slaughter milestone ({slaughterThreshold}+ kills)
+                  </Text>
+                </View>
+              )}
+            </View>
+
             <View style={styles.resultsStatGrid}>
+              <View style={[styles.resultsStat, styles.resultsStatWide]}>
+                <Text style={styles.resultsStatLabel}>Session carnage (total kills)</Text>
+                <Text style={styles.resultsStatValue}>{sessionCarnageTotal}</Text>
+              </View>
               <View style={styles.resultsStat}>
-                <Text style={styles.resultsStatLabel}>Enemies defeated</Text>
-                <Text style={styles.resultsStatValue}>{enemiesKilled}</Text>
+                <Text style={styles.resultsStatLabel}>Slaughter stars</Text>
+                <Text style={styles.resultsStatValue}>
+                  {triumphCount}/{triumphsNeeded}
+                </Text>
               </View>
               <View style={styles.resultsStat}>
                 <Text style={styles.resultsStatLabel}>Wave reached</Text>
@@ -717,6 +1061,10 @@ const GameOverFlowModal = ({
               <View style={styles.resultsStat}>
                 <Text style={styles.resultsStatLabel}>Towers placed</Text>
                 <Text style={styles.resultsStatValue}>{towersPlaced}</Text>
+              </View>
+              <View style={styles.resultsStat}>
+                <Text style={styles.resultsStatLabel}>Score</Text>
+                <Text style={styles.resultsStatValue}>{score}</Text>
               </View>
             </View>
 
@@ -852,12 +1200,6 @@ export default function GameScreen() {
     }
   }, [playerStore.bestWave]);
 
-  useEffect(() => {
-    if (isPlaying && currentWave <= 1) {
-      runStartBestWaveRef.current = playerStore.bestWave;
-    }
-  }, [isPlaying, currentWave, playerStore.bestWave]);
-
   const {
     isPlaying,
     isPaused,
@@ -905,6 +1247,7 @@ export default function GameScreen() {
     getCurrentCoins,
     lastWaveBonus,
     showBonusPopup,
+    runGemsFromWavePart,
   } = useGameStore(
     useShallow((s) => ({
       isPlaying: s.isPlaying,
@@ -953,8 +1296,63 @@ export default function GameScreen() {
       getCurrentCoins: s.getCurrentCoins,
       lastWaveBonus: s.lastWaveBonus,
       showBonusPopup: s.showBonusPopup,
+      runGemsFromWavePart: s.runGemsFromWavePart,
     }))
   );
+
+  useEffect(() => {
+    if (isPlaying && currentWave <= 1) {
+      runStartBestWaveRef.current = playerStore.bestWave;
+    }
+  }, [isPlaying, currentWave, playerStore.bestWave]);
+
+  const currentMapId = useGameStore((s) => s.currentMapId);
+  const arenaLabel = useMemo(() => {
+    if (currentMapId === CLASSIC_MAP_ID) return 'Classic grid';
+    return getArenaMap(currentMapId)?.name ?? 'Arena';
+  }, [currentMapId]);
+
+  const sessionEnemiesKilledTotal = usePlayerStore((s) => s.sessionEnemiesKilledTotal);
+  const sessionSlaughterTriumphs = usePlayerStore((s) => s.sessionSlaughterTriumphs);
+
+  const sessionCarnageDisplay =
+    sessionEnemiesKilledTotal + (isGameOver ? 0 : enemiesKilled);
+
+  const sessionRunRecordedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!isGameOver) {
+      sessionRunRecordedRef.current = false;
+      return;
+    }
+    if (sessionRunRecordedRef.current) return;
+    if (!usePlayerStore.getState().playerId) return;
+    sessionRunRecordedRef.current = true;
+    usePlayerStore.getState().recordSessionRunStats(enemiesKilled);
+  }, [isGameOver, enemiesKilled]);
+
+  const slaughterHapticSentRef = useRef(false);
+  useEffect(() => {
+    if (!isPlaying || isGameOver) return;
+    if (enemiesKilled >= SESSION_SLAUGHTER_WIN_KILLS && !slaughterHapticSentRef.current) {
+      slaughterHapticSentRef.current = true;
+      if (playerStore.hapticEnabled) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    }
+  }, [enemiesKilled, isPlaying, isGameOver, playerStore.hapticEnabled]);
+
+  useEffect(() => {
+    if (enemiesKilled < SESSION_SLAUGHTER_WIN_KILLS) slaughterHapticSentRef.current = false;
+  }, [enemiesKilled]);
+
+  const playerGems = usePlayerStore((s) => s.gems);
+  const gemsHudDisplay = useMemo(() => {
+    if (isGameOver) return playerGems;
+    if (isServerBackedPlayerId(playerStore.playerId)) {
+      return playerGems + runGemsFromWavePart;
+    }
+    return playerGems;
+  }, [isGameOver, playerGems, runGemsFromWavePart, playerStore.playerId]);
 
   useEffect(() => {
     if (isGameOver) setGameOverStep('over');
@@ -986,7 +1384,8 @@ export default function GameScreen() {
         playerStore.unlockedSpeeds,
         playerStore.towerUpgradeLevels,
         playerStore.equippedSkins, 
-        playerStore.arenaExpansions
+        playerStore.arenaExpansions,
+        playerStore.currentMapId
       );
     }
     
@@ -1025,7 +1424,8 @@ export default function GameScreen() {
       playerStore.unlockedSpeeds,
       playerStore.towerUpgradeLevels,
       playerStore.equippedSkins, 
-      playerStore.arenaExpansions
+      playerStore.arenaExpansions,
+      playerStore.currentMapId
     );
     setShowResumePrompt(false);
   }, [playerStore, startGame]);
@@ -1143,7 +1543,7 @@ export default function GameScreen() {
   // Auto-save between waves (in-game coins NOT synced to gems - separate systems)
   const handleSaveCoins = async (_currentCoins: number) => {
     // In-game coins don't transfer to persistent gems.
-    // Gems are only awarded at game end based on performance.
+    // Persistent gems accrue each wave (wave-linear slice) and at run end (remainder + challenge/combo).
     // This function is kept for save-game compatibility.
   };
 
@@ -1257,54 +1657,63 @@ export default function GameScreen() {
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
     const baseXpReward = Math.max(1, currentWave * 2);
-    const performanceGems = Math.max(0, Math.floor(currentWave * 0.75) + Math.floor(enemiesKilled / 20));
+    const waveGemProgress = useGameStore.getState().runGemsFromWavePart;
+    const remainderPerf = endGamePerformanceRemainder(currentWave, enemiesKilled, waveGemProgress);
+    const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
     const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
-    const challengeGemReward = Math.floor(performanceGems * Math.max(0, dailyChallenge.gemMultiplier - 1));
+    const challengeGemReward = Math.floor(P_scaled * Math.max(0, dailyChallenge.gemMultiplier - 1));
     const totalXpReward = baseXpReward + challengeXpReward;
-    const totalGemReward = performanceGems + challengeGemReward;
-
-    const comboResult = playerStore.recordDailyChallengeRun();
-    const totalGemRewardWithCombo = totalGemReward + comboResult.bonusGems;
-    if (comboResult.bonusGems > 0) {
-      playSfx('combo', playerStore.soundEnabled);
-    }
+    const totalGemReward = remainderPerf + challengeGemReward;
 
     if (!isServerBackedPlayerId(playerStore.playerId)) {
       playerStore.addXp(totalXpReward);
-      if (totalGemRewardWithCombo > 0) playerStore.addGems(totalGemRewardWithCombo);
-      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
-      if (currentWave >= 10) playerStore.recordSessionWin();
+      const comboResult = playerStore.recordDailyChallengeRun();
+      if (comboResult.bonusGems > 0) {
+        playSfx('combo');
+      }
+      if (totalGemReward > 0) {
+        playerStore.addGems(totalGemReward);
+      }
+      const runGemsTotal = totalGemReward + comboResult.bonusGems;
+      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
-    } else {
-      try {
-        const response = await gameApi.endGame({
-          player_id: playerStore.playerId,
-          wave_reached: currentWave,
-          enemies_killed: enemiesKilled,
-          towers_placed: towersPlaced,
-          duration_seconds: duration,
-        });
-
-        if (response.data) {
-          playerStore.addXp(response.data.xp_earned + challengeXpReward);
-          if (response.data.new_gem_balance !== undefined) {
-            playerStore.setGems(response.data.new_gem_balance);
-          }
-          if (totalGemRewardWithCombo > 0) {
-            playerStore.addGems(totalGemRewardWithCombo);
-          }
-        }
-
-        playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
-        if (currentWave >= 10) playerStore.recordSessionWin();
-        playerStore.incrementGamesPlayedSinceAd();
-        playerStore.clearCurrentGameProgress();
-      } catch (error) {
-        console.error('Error saving game:', error);
-      }
+      return;
     }
 
+    try {
+      const response = await gameApi.endGame({
+        player_id: playerStore.playerId,
+        wave_reached: currentWave,
+        enemies_killed: enemiesKilled,
+        towers_placed: towersPlaced,
+        duration_seconds: duration,
+        run_bonus_gems: challengeGemReward,
+      });
+
+      let comboResult = { bonusGems: 0 };
+      if (response.data) {
+        playerStore.addXp(response.data.xp_earned + challengeXpReward);
+        if (response.data.new_gem_balance !== undefined) {
+          playerStore.setGems(response.data.new_gem_balance);
+        }
+        comboResult = playerStore.recordDailyChallengeRun();
+        if (comboResult.bonusGems > 0) {
+          playSfx('combo');
+        }
+        if (challengeGemReward > 0) {
+          playerStore.addGems(challengeGemReward);
+        }
+      }
+
+      const runGemsTotal =
+        (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
+      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+      playerStore.incrementGamesPlayedSinceAd();
+      playerStore.clearCurrentGameProgress();
+    } catch (error) {
+      console.error('Error saving game:', error);
+    }
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
@@ -1316,10 +1725,10 @@ export default function GameScreen() {
   useEffect(() => {
     const completed = dailyMissions.filter((m) => m.completed).length;
     if (completed > lastMissionCompletedCountRef.current) {
-      playSfx('mission', playerStore.soundEnabled);
+      playSfx('mission');
     }
     lastMissionCompletedCountRef.current = completed;
-  }, [dailyMissions, playerStore.soundEnabled]);
+  }, [dailyMissions]);
 
   useEffect(() => {
     if (!playerStore.autoStartWaves) return;
@@ -1426,23 +1835,29 @@ export default function GameScreen() {
 
   const rewardSummary = useMemo(() => {
     const baseXpReward = Math.max(1, currentWave * 2);
-    const performanceGems = Math.max(0, Math.floor(currentWave * 0.75) + Math.floor(enemiesKilled / 20));
+    const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
     const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
-    const challengeGemReward = Math.floor(performanceGems * Math.max(0, dailyChallenge.gemMultiplier - 1));
+    const challengeGemReward = Math.floor(P_scaled * Math.max(0, dailyChallenge.gemMultiplier - 1));
     const nowKey = getUtcDayKey(Date.now());
     const lastComboKey = playerStore.lastDailyChallengeRunAt
       ? getUtcDayKey(playerStore.lastDailyChallengeRunAt)
       : null;
     const nextCombo = lastComboKey === nowKey ? playerStore.dailyChallengeRunCombo + 1 : 1;
-    const comboBonus = nextCombo % 3 === 0 ? 20 : 0;
+    const comboBonus = nextCombo % 3 === 0 ? COMBO_BONUS_GEMS : 0;
     return {
       challengeName: dailyChallenge.name,
       xpEarned: baseXpReward + challengeXpReward,
-      gemsEarned: performanceGems + challengeGemReward + comboBonus,
+      gemsEarned: P_scaled + challengeGemReward + comboBonus,
       comboBonus,
       comboCount: nextCombo,
     };
   }, [currentWave, enemiesKilled, dailyChallenge, playerStore.lastDailyChallengeRunAt, playerStore.dailyChallengeRunCombo]);
+
+  const coinIncomeUpgradeLevel = usePlayerStore((s) => s.coinIncomeUpgradeLevel);
+  const battleCoinIncomeMult = useMemo(
+    () => getRunCoinIncomeMultiplier(coinIncomeUpgradeLevel),
+    [coinIncomeUpgradeLevel]
+  );
 
   const missionNudge = useMemo(() => {
     const unfinished = dailyMissions
@@ -1475,6 +1890,12 @@ export default function GameScreen() {
             <FontAwesome5 name="coins" size={14} color="#FFD700" />
             <Text style={styles.statValue}>{coins}</Text>
           </View>
+          {!isGameOver && (
+            <View style={styles.stat}>
+              <MaterialCommunityIcons name="diamond-stone" size={15} color="#5dade2" />
+              <Text style={[styles.statValue, styles.gemStatValue]}>{gemsHudDisplay}</Text>
+            </View>
+          )}
           <View style={styles.stat}>
             <MaterialCommunityIcons name="waves" size={16} color="#4A90D9" />
             <Text style={styles.statValue}>{currentWave}</Text>
@@ -1488,6 +1909,34 @@ export default function GameScreen() {
           <Ionicons name={isPaused ? 'play' : 'pause'} size={24} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      <View style={styles.coinMultHint}>
+        <FontAwesome5 name="coins" size={11} color="#b8a045" />
+        <Text style={styles.coinMultHintText}>
+          Income ×{battleCoinIncomeMult.toFixed(2)}
+        </Text>
+      </View>
+
+      {!isGameOver && isPlaying && (
+        <View style={styles.carnageBar}>
+          <View style={styles.carnageBarLeft}>
+            <MaterialCommunityIcons name="skull-outline" size={16} color="#FF6B4A" />
+            <Text style={styles.carnageBarStrong}>{enemiesKilled}</Text>
+            <Text style={styles.carnageBarLabel}>this run</Text>
+          </View>
+          <View style={styles.carnageBarMid}>
+            <Text style={styles.carnageBarMuted}>Session</Text>
+            <Text style={styles.carnageBarSession}>{sessionCarnageDisplay}</Text>
+          </View>
+          <View style={styles.carnageBarRight}>
+            <MaterialCommunityIcons name="star-four-points" size={14} color="#f1c40f" />
+            <Text style={styles.carnageBarStars}>
+              {sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED}
+            </Text>
+            <Text style={styles.carnageBarStarsHint}>slaughters</Text>
+          </View>
+        </View>
+      )}
 
       {/* Speed Controls */}
       <SpeedControls
@@ -1505,6 +1954,7 @@ export default function GameScreen() {
             <Text style={styles.waveInfoText}>
               {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
             </Text>
+            <Text style={styles.mapInfoText}>Arena: {arenaLabel}</Text>
             <Text style={styles.challengeInfoText}>
               Daily Challenge: {dailyChallenge.name}
             </Text>
@@ -1591,6 +2041,11 @@ export default function GameScreen() {
         enemiesKilled={enemiesKilled}
         towersPlaced={towersPlaced}
         bestWaveRecord={Math.max(playerStore.bestWave, currentWave)}
+        sessionCarnageTotal={sessionEnemiesKilledTotal}
+        slaughterQualified={enemiesKilled >= SESSION_SLAUGHTER_WIN_KILLS}
+        slaughterThreshold={SESSION_SLAUGHTER_WIN_KILLS}
+        triumphCount={sessionSlaughterTriumphs}
+        triumphsNeeded={SESSION_BOUNTY_TRIUMPHS_NEEDED}
         rewardSummary={rewardSummary}
         onSeeResults={() => setGameOverStep('results')}
         onHome={handleExit}
@@ -1619,7 +2074,9 @@ export default function GameScreen() {
       {isPaused && !isGameOver && !showExitWarning && !showResumePrompt && (
         <View style={styles.pauseOverlay}>
           <Text style={styles.pauseText}>PAUSED</Text>
-          <Text style={styles.pauseSubtext}>Wave {currentWave} • {coins} coins</Text>
+          <Text style={styles.pauseSubtext}>
+            Wave {currentWave} • {enemiesKilled} kills • {coins} coins
+          </Text>
           
           <TouchableOpacity style={styles.pauseResumeButton} onPress={resumeGame}>
             <Ionicons name="play" size={20} color="#fff" />
@@ -1670,6 +2127,77 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  gemStatValue: {
+    color: '#a8e6ff',
+  },
+  coinMultHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 4,
+    backgroundColor: '#121a2a',
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
+  },
+  coinMultHintText: {
+    color: '#c9b85c',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  carnageBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#0d1118',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e2a3c',
+  },
+  carnageBarLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  carnageBarStrong: {
+    color: '#FF6B4A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  carnageBarLabel: {
+    color: '#6b7c99',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  carnageBarMid: {
+    alignItems: 'center',
+  },
+  carnageBarMuted: {
+    color: '#5a6a85',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  carnageBarSession: {
+    color: '#5dade2',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  carnageBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  carnageBarStars: {
+    color: '#f1c40f',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  carnageBarStarsHint: {
+    color: '#6b7c99',
+    fontSize: 10,
+    fontWeight: '600',
   },
   speedControls: {
     flexDirection: 'row',
@@ -1724,6 +2252,12 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  mapInfoText: {
+    color: '#b8c9de',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '600',
   },
   challengeInfoText: {
     color: '#8fb4e5',
@@ -2139,6 +2673,106 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontSize: 20,
     marginBottom: 24,
+  },
+  gameOverKillsBlock: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  gameOverKillsNumber: {
+    color: '#FF6B4A',
+    fontSize: 56,
+    fontWeight: '800',
+    lineHeight: 60,
+    textShadowColor: 'rgba(255, 80, 50, 0.45)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 16,
+  },
+  gameOverKillsCaption: {
+    color: '#b8c5dd',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  gameOverSlaughterHint: {
+    color: '#8fa4c4',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 10,
+    paddingHorizontal: 6,
+  },
+  slaughterEarnedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f1c40f',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  slaughterEarnedText: {
+    color: '#1a0f0a',
+    fontSize: 13,
+    fontWeight: '800',
+    flex: 1,
+  },
+  gameOverSessionLine: {
+    color: '#c5d2e8',
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  gameOverSessionEm: {
+    color: '#5dade2',
+    fontWeight: '800',
+  },
+  gameOverTriumphLine: {
+    color: '#9bb0cc',
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  resultsHeroCard: {
+    width: '100%',
+    backgroundColor: '#1a2540',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#2d4a78',
+    alignItems: 'center',
+  },
+  resultsHeroLabel: {
+    color: '#8fa4c4',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  resultsHeroValue: {
+    color: '#FF6B4A',
+    fontSize: 44,
+    fontWeight: '800',
+  },
+  resultsHeroSub: {
+    color: '#b8c5dd',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  resultsHeroRibbon: {
+    marginTop: 10,
+    backgroundColor: 'rgba(241, 196, 15, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(241, 196, 15, 0.5)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  resultsHeroRibbonText: {
+    color: '#f1c40f',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resultsStatWide: {
+    width: '100%',
   },
   resultsPrimaryButton: {
     flexDirection: 'row',

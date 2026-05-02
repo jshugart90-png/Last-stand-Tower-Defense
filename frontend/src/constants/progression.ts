@@ -27,7 +27,9 @@ export interface WeeklyMission {
   completed: boolean;
 }
 
+/** @deprecated Calendar resets use local midnight / Monday; kept for reference only. */
 export const DAILY_RESET_HOURS = 24;
+/** @deprecated Weekly resets align to local Monday 00:00. */
 export const WEEKLY_RESET_DAYS = 7;
 
 export const createDefaultDailyMissions = (): DailyMission[] => [

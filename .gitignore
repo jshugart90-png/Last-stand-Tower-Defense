@@ -79,7 +79,10 @@ frontend/.metro-cache/
 .emergent/
 
 # Mobile development
-android-sdk/ -e 
+android-sdk/
+# Expo prebuild output (EAS Build runs prebuild in the cloud)
+frontend/android/
+frontend/ios/
 # Environment files
 *.env
 *.env.*

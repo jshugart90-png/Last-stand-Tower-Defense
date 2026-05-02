@@ -25,6 +25,10 @@ import {
   STARTING_COINS_BONUS_PER_LEVEL,
   getStartingCoinsUpgradePrice,
   GAME_CONFIG,
+  COIN_INCOME_UPGRADE_MAX,
+  COIN_INCOME_PER_LEVEL,
+  getCoinIncomeUpgradePrice,
+  getRunCoinIncomeMultiplier,
 } from '../src/constants/game';
 import { 
   isRewardedAdReady, showRewardedAd, loadRewardedAd, 
@@ -195,6 +199,31 @@ export default function ShopScreen() {
   };
 
   // Handle speed unlock purchase
+  const handlePurchaseCoinIncome = () => {
+    const level = playerStore.coinIncomeUpgradeLevel;
+    if (level >= COIN_INCOME_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Battle coin income is maxed out.');
+      return;
+    }
+    const price = getCoinIncomeUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`, [
+        { text: 'OK' },
+        { text: 'Gems', onPress: () => setSelectedTab('gems') },
+      ]);
+      return;
+    }
+    const ok = playerStore.purchaseCoinIncomeUpgrade();
+    if (ok) {
+      const lv = usePlayerStore.getState().coinIncomeUpgradeLevel;
+      const mult = getRunCoinIncomeMultiplier(lv);
+      Alert.alert(
+        'Upgraded!',
+        `Battle coin income is now ×${mult.toFixed(2)} on kills and wave bonuses (includes global +25% rebalance).`
+      );
+    }
+  };
+
   const handlePurchaseStartingCoins = () => {
     const level = playerStore.startingCoinUpgradeLevel;
     if (level >= STARTING_COINS_UPGRADE_MAX) {
@@ -695,12 +724,51 @@ export default function ShopScreen() {
         {/* Towers Tab */}
         {selectedTab === 'towers' && (
           <View>
+            <View style={[styles.startingCoinsCard, styles.coinIncomeCard]}>
+              <View style={styles.coinIncomeHeader}>
+                <MaterialCommunityIcons name="cash-multiple" size={22} color="#2ECC71" />
+                <Text style={[styles.startingCoinsTitle, { marginBottom: 0 }]}>Battle coin income</Text>
+              </View>
+              <Text style={styles.startingCoinsDesc}>
+                Boosts coins from kills and wave bonuses in battle. Includes the global +25% economy
+                rebalance, plus up to{' '}
+                {Math.round(COIN_INCOME_PER_LEVEL * COIN_INCOME_UPGRADE_MAX * 100)}% more when maxed (
+                +{COIN_INCOME_PER_LEVEL * 100}% each purchase).
+              </Text>
+              <View style={styles.coinIncomeMultRow}>
+                <Text style={styles.coinIncomeMultLabel}>Current income ×</Text>
+                <Text style={styles.coinIncomeMultValue}>
+                  {getRunCoinIncomeMultiplier(playerStore.coinIncomeUpgradeLevel).toFixed(2)}
+                </Text>
+                <Text style={styles.coinIncomeMultMeta}>
+                  (Lv {playerStore.coinIncomeUpgradeLevel}/{COIN_INCOME_UPGRADE_MAX})
+                </Text>
+              </View>
+              <View style={styles.startingCoinsRow}>
+                {playerStore.coinIncomeUpgradeLevel >= COIN_INCOME_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.startingCoinsBuy}
+                    onPress={handlePurchaseCoinIncome}
+                  >
+                    <FontAwesome5 name="gem" size={12} color="#2ECC71" />
+                    <Text style={styles.buttonText}>
+                      {getCoinIncomeUpgradePrice(playerStore.coinIncomeUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <View style={styles.startingCoinsCard}>
               <Text style={styles.startingCoinsTitle}>Starting coins (each run)</Text>
               <Text style={styles.startingCoinsDesc}>
                 Base {GAME_CONFIG.STARTING_COINS} +{' '}
                 {playerStore.startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL} from upgrades.
-                Higher tower upgrades in this shop also raise that tower&apos;s in-match purchase price.
+                Permanent tower upgrades here also add a small % to that tower&apos;s in-match price.
               </Text>
               <View style={styles.startingCoinsRow}>
                 <Text style={styles.startingCoinsMeta}>
@@ -1097,6 +1165,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
+  },
+  coinIncomeCard: {
+    borderColor: '#2a6b4a',
+    backgroundColor: '#121d24',
+  },
+  coinIncomeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  coinIncomeMultRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  coinIncomeMultLabel: {
+    color: '#9bb0cc',
+    fontSize: 13,
+  },
+  coinIncomeMultValue: {
+    color: '#2ECC71',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  coinIncomeMultMeta: {
+    color: '#888',
+    fontSize: 12,
   },
   // Tower cards
   towerCard: {

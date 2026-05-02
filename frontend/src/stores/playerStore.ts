@@ -11,6 +11,9 @@ import {
   TOWERS,
   STARTING_COINS_UPGRADE_MAX,
   getStartingCoinsUpgradePrice,
+  getCoinIncomeUpgradePrice,
+  COIN_INCOME_UPGRADE_MAX,
+  COMBO_BONUS_GEMS,
 } from '../constants/game';
 import {
   Achievement,
@@ -18,10 +21,17 @@ import {
   createDefaultDailyMissions,
   createDefaultWeeklyMissions,
   DailyMission,
-  DAILY_RESET_HOURS,
   WeeklyMission,
-  WEEKLY_RESET_DAYS,
 } from '../constants/progression';
+import {
+  getLocalDayKey,
+  getLocalWeekAnchorDayKey,
+} from '../utils/missionReset';
+import { DEFAULT_ARENA_ID } from '../constants/arenaMaps';
+import {
+  SESSION_SLAUGHTER_WIN_KILLS,
+  SESSION_BOUNTY_TRIUMPHS_NEEDED,
+} from '../constants/sessionProgress';
 
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
@@ -77,6 +87,9 @@ export interface SavedGameState {
   
   // Ad revive tracking
   adReviveUsed: boolean;
+
+  /** Arena id for next run (see `src/constants/arenaMaps.ts`). */
+  mapId?: string;
 }
 
 interface PlayerState {
@@ -98,6 +111,11 @@ interface PlayerState {
   bestWave: number;
   lifetimeEnemiesKilled: number;
   lifetimeTowersPlaced: number;
+  /** Gems earned in the last completed run (for leaderboard display). */
+  lastRunGemsEarned: number;
+  lastRunEnemiesKilled: number;
+  /** Bumps when a run finishes with leaderboard stats so screens can refresh. */
+  lastLeaderboardUpdateAt: number;
   
   // Tower unlocks (purchased in shop with gems)
   unlockedTowers: TowerType[];
@@ -107,6 +125,9 @@ interface PlayerState {
 
   /** Permanent: bonus starting in-game coins each run (shop upgrade) */
   startingCoinUpgradeLevel: number;
+
+  /** Permanent: +4%/level in-run coin from kills & wave bonus (gems shop) */
+  coinIncomeUpgradeLevel: number;
   
   // Speed unlocks (purchased in shop with gems)
   unlockedSpeeds: GameSpeed[];
@@ -121,7 +142,11 @@ interface PlayerState {
   
   // Settings
   soundEnabled: boolean;
+  /** 0–1; combined with soundEnabled in audio service */
+  sfxVolume: number;
   musicEnabled: boolean;
+  /** 0–1; for background music when implemented */
+  musicVolume: number;
   hapticEnabled: boolean;
   performanceMode: boolean;
   vfxQuality: 0 | 1 | 2; // 0 low, 1 medium, 2 high
@@ -135,19 +160,28 @@ interface PlayerState {
 
   // Progression systems
   dailyMissions: DailyMission[];
+  /** Last calendar day (local `YYYY-MM-DD`) daily missions were refreshed for. */
+  lastDailyMissionDayKey: string;
   lastDailyResetAt: number;
   weeklyMissions: WeeklyMission[];
+  /** Monday anchor week id (local) when weekly missions last reset. */
+  lastWeeklyMissionWeekKey: string;
   lastWeeklyResetAt: number;
   achievements: Achievement[];
   loginStreak: number;
   lastDailyBonusClaimAt: number | null;
-  sessionWins: number;
-  sessionQuestClaimed: boolean;
+  /** Cumulative enemies defeated this app session (all runs). */
+  sessionEnemiesKilledTotal: number;
+  /** Runs this session where enemies killed in that run ≥ SESSION_SLAUGHTER_WIN_KILLS. */
+  sessionSlaughterTriumphs: number;
   dailyChallengeRunCombo: number;
   lastDailyChallengeRunAt: number | null;
   
   // SAVED GAME STATE - for resume functionality
   savedGame: SavedGameState | null;
+
+  /** Next-run arena selection (persisted). */
+  currentMapId: string;
 }
 
 interface PlayerActions {
@@ -163,13 +197,19 @@ interface PlayerActions {
   addGems: (amount: number) => void;
   
   // Stats
-  recordGame: (wavesReached: number, enemiesKilled?: number, towersPlaced?: number) => void;
+  recordGame: (
+    wavesReached: number,
+    enemiesKilled?: number,
+    towersPlaced?: number,
+    gemsEarnedThisRun?: number
+  ) => void;
   setBestWave: (wave: number) => void;
   refreshDailyMissions: () => void;
   refreshWeeklyMissions: () => void;
   canClaimDailyBonus: () => boolean;
   claimDailyBonus: () => { reward: number; streak: number; milestoneBonus: number };
-  recordSessionWin: () => void;
+  /** Call after each completed run with that run's kill count. */
+  recordSessionRunStats: (enemiesKilledThisRun: number) => void;
   canClaimSessionQuest: () => boolean;
   claimSessionQuest: () => number;
   recordDailyChallengeRun: () => { combo: number; bonusGems: number };
@@ -185,6 +225,7 @@ interface PlayerActions {
   getTowerUpgradePrice: (tower: TowerType) => number;
 
   purchaseStartingCoinsUpgrade: () => boolean;
+  purchaseCoinIncomeUpgrade: () => boolean;
 
   // Speed unlocks (gems)
   purchaseSpeed: (speed: GameSpeed) => boolean;
@@ -200,6 +241,8 @@ interface PlayerActions {
   
   // Arena expansion (real money)
   addArenaExpansion: () => void;
+
+  setCurrentMapId: (mapId: string) => void;
   
   // Settings
   toggleSound: () => void;
@@ -208,6 +251,8 @@ interface PlayerActions {
   togglePerformanceMode: () => void;
   setVfxQuality: (quality: 0 | 1 | 2) => void;
   toggleAutoStartWaves: () => void;
+  setSfxVolume: (v: number) => void;
+  setMusicVolume: (v: number) => void;
   
   // Ad tracking
   incrementGamesPlayedSinceAd: () => void;
@@ -244,6 +289,9 @@ const initialState: PlayerState = {
   bestWave: 0,
   lifetimeEnemiesKilled: 0,
   lifetimeTowersPlaced: 0,
+  lastRunGemsEarned: 0,
+  lastRunEnemiesKilled: 0,
+  lastLeaderboardUpdateAt: 0,
   unlockedTowers: ['machine_gun'],
   towerUpgradeLevels: {
     machine_gun: 0,
@@ -254,13 +302,16 @@ const initialState: PlayerState = {
     laser: 0,
   },
   startingCoinUpgradeLevel: 0,
+  coinIncomeUpgradeLevel: 0,
   unlockedSpeeds: [1],  // 1x is free
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
   arenaExpansions: 0,
   soundEnabled: true,
+  sfxVolume: 0.9,
   musicEnabled: true,
+  musicVolume: 0.65,
   hapticEnabled: true,
   performanceMode: false,
   vfxQuality: 2,
@@ -268,17 +319,20 @@ const initialState: PlayerState = {
   gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
   dailyMissions: createDefaultDailyMissions(),
+  lastDailyMissionDayKey: getLocalDayKey(Date.now()),
   lastDailyResetAt: Date.now(),
   weeklyMissions: createDefaultWeeklyMissions(),
+  lastWeeklyMissionWeekKey: getLocalWeekAnchorDayKey(Date.now()),
   lastWeeklyResetAt: Date.now(),
   achievements: createDefaultAchievements(),
   loginStreak: 0,
   lastDailyBonusClaimAt: null,
-  sessionWins: 0,
-  sessionQuestClaimed: false,
+  sessionEnemiesKilledTotal: 0,
+  sessionSlaughterTriumphs: 0,
   dailyChallengeRunCombo: 0,
   lastDailyChallengeRunAt: null,
   savedGame: null,
+  currentMapId: DEFAULT_ARENA_ID,
 };
 
 const playerPersistKeys = [
@@ -294,16 +348,22 @@ const playerPersistKeys = [
   'bestWave',
   'lifetimeEnemiesKilled',
   'lifetimeTowersPlaced',
+  'lastRunGemsEarned',
+  'lastRunEnemiesKilled',
+  'lastLeaderboardUpdateAt',
   'unlockedTowers',
   'towerUpgradeLevels',
   'startingCoinUpgradeLevel',
+  'coinIncomeUpgradeLevel',
   'unlockedSpeeds',
   'unlockedSkins',
   'equippedSkins',
   'premium',
   'arenaExpansions',
   'soundEnabled',
+  'sfxVolume',
   'musicEnabled',
+  'musicVolume',
   'hapticEnabled',
   'performanceMode',
   'vfxQuality',
@@ -311,35 +371,58 @@ const playerPersistKeys = [
   'gamesPlayedSinceAd',
   'tutorialCompleted',
   'dailyMissions',
+  'lastDailyMissionDayKey',
   'lastDailyResetAt',
   'weeklyMissions',
+  'lastWeeklyMissionWeekKey',
   'lastWeeklyResetAt',
   'achievements',
   'loginStreak',
   'lastDailyBonusClaimAt',
-  'sessionWins',
-  'sessionQuestClaimed',
+  'sessionEnemiesKilledTotal',
+  'sessionSlaughterTriumphs',
   'dailyChallengeRunCombo',
   'lastDailyChallengeRunAt',
   'savedGame',
+  'currentMapId',
 ] as const;
 
 const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
-  const elapsed = Date.now() - state.lastDailyResetAt;
-  const resetMs = DAILY_RESET_HOURS * 60 * 60 * 1000;
-  if (elapsed < resetMs) return {};
+  const today = getLocalDayKey(Date.now());
+  const last =
+    state.lastDailyMissionDayKey ??
+    (typeof state.lastDailyResetAt === 'number'
+      ? getLocalDayKey(state.lastDailyResetAt)
+      : today);
+  if (last === today) {
+    if (!state.lastDailyMissionDayKey) {
+      return { lastDailyMissionDayKey: today };
+    }
+    return {};
+  }
   return {
     dailyMissions: createDefaultDailyMissions(),
+    lastDailyMissionDayKey: today,
     lastDailyResetAt: Date.now(),
   };
 };
 
 const maybeResetWeeklyMissions = (state: PlayerState): Partial<PlayerState> => {
-  const elapsed = Date.now() - state.lastWeeklyResetAt;
-  const resetMs = WEEKLY_RESET_DAYS * 24 * 60 * 60 * 1000;
-  if (elapsed < resetMs) return {};
+  const anchor = getLocalWeekAnchorDayKey(Date.now());
+  const last =
+    state.lastWeeklyMissionWeekKey ??
+    (typeof state.lastWeeklyResetAt === 'number'
+      ? getLocalWeekAnchorDayKey(state.lastWeeklyResetAt)
+      : anchor);
+  if (last === anchor) {
+    if (!state.lastWeeklyMissionWeekKey) {
+      return { lastWeeklyMissionWeekKey: anchor };
+    }
+    return {};
+  }
   return {
     weeklyMissions: createDefaultWeeklyMissions(),
+    lastWeeklyMissionWeekKey: anchor,
     lastWeeklyResetAt: Date.now(),
   };
 };
@@ -414,7 +497,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     // Identity
     setPlayer: (playerId, nickname) => set({ playerId, nickname, hasEnteredNameOnce: true }),
     setDeviceId: (deviceId) => set({ deviceId }),
-    setNickname: (nickname) => set({ nickname }),
+    setNickname: (nickname) =>
+      set((state) => {
+        const n = nickname.trim();
+        return {
+          nickname: n,
+          hasEnteredNameOnce:
+            state.hasEnteredNameOnce || (n.length > 0 && n !== 'Player'),
+        };
+      }),
 
     // Progression
     addXp: (amount) => {
@@ -429,7 +520,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
     // Stats
-    recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0) => {
+    recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0, gemsEarnedThisRun) => {
       set((state) => {
         const dailyResetPatch = maybeResetDailyMissions(state);
         const weeklyResetPatch = maybeResetWeeklyMissions(state);
@@ -524,6 +615,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           gemsFromAchievements += unlock.gemsEarned;
         }
 
+        const lbPatch =
+          gemsEarnedThisRun !== undefined
+            ? {
+                lastRunGemsEarned: gemsEarnedThisRun,
+                lastRunEnemiesKilled: enemiesKilled,
+                lastLeaderboardUpdateAt: Date.now(),
+              }
+            : {};
+
         return {
           ...dailyResetPatch,
           ...weeklyResetPatch,
@@ -536,6 +636,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           weeklyMissions,
           gems: state.gems + gemsFromMissions + gemsFromAchievements,
           achievements,
+          ...lbPatch,
         };
       });
     },
@@ -581,12 +682,20 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
       return { reward, streak: nextStreak, milestoneBonus };
     },
-    recordSessionWin: () => {
-      set((state) => ({ sessionWins: state.sessionWins + 1 }));
+    recordSessionRunStats: (enemiesKilledThisRun) => {
+      const k = Math.max(0, Math.floor(enemiesKilledThisRun));
+      set((state) => {
+        const triumphDelta =
+          k >= SESSION_SLAUGHTER_WIN_KILLS ? 1 : 0;
+        return {
+          sessionEnemiesKilledTotal: state.sessionEnemiesKilledTotal + k,
+          sessionSlaughterTriumphs: state.sessionSlaughterTriumphs + triumphDelta,
+        };
+      });
     },
     canClaimSessionQuest: () => {
       const state = get();
-      return state.sessionWins >= 2 && !state.sessionQuestClaimed;
+      return state.sessionSlaughterTriumphs >= SESSION_BOUNTY_TRIUMPHS_NEEDED;
     },
     claimSessionQuest: () => {
       const state = get();
@@ -594,7 +703,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       const reward = 50;
       set({
         gems: state.gems + reward,
-        sessionQuestClaimed: true,
+        sessionSlaughterTriumphs: Math.max(
+          0,
+          state.sessionSlaughterTriumphs - SESSION_BOUNTY_TRIUMPHS_NEEDED
+        ),
       });
       return reward;
     },
@@ -607,7 +719,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         : null;
 
       const combo = lastDay === today ? state.dailyChallengeRunCombo + 1 : 1;
-      const bonusGems = combo > 0 && combo % 3 === 0 ? 20 : 0;
+      const bonusGems = combo > 0 && combo % 3 === 0 ? COMBO_BONUS_GEMS : 0;
 
       set({
         dailyChallengeRunCombo: combo,
@@ -670,6 +782,18 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
       return true;
     },
+
+    purchaseCoinIncomeUpgrade: () => {
+      const state = get();
+      if (state.coinIncomeUpgradeLevel >= COIN_INCOME_UPGRADE_MAX) return false;
+      const price = getCoinIncomeUpgradePrice(state.coinIncomeUpgradeLevel);
+      if (state.gems < price) return false;
+      set({
+        gems: state.gems - price,
+        coinIncomeUpgradeLevel: state.coinIncomeUpgradeLevel + 1,
+      });
+      return true;
+    },
     
     // Speed unlocks (gems)
     purchaseSpeed: (speed) => {
@@ -726,6 +850,8 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       }));
     },
 
+    setCurrentMapId: (mapId) => set({ currentMapId: mapId }),
+
     // Settings
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
     toggleMusic: () => set(state => ({ musicEnabled: !state.musicEnabled })),
@@ -733,6 +859,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     togglePerformanceMode: () => set(state => ({ performanceMode: !state.performanceMode })),
     setVfxQuality: (quality) => set({ vfxQuality: quality }),
     toggleAutoStartWaves: () => set(state => ({ autoStartWaves: !state.autoStartWaves })),
+    setSfxVolume: (v) =>
+      set({ sfxVolume: Math.max(0, Math.min(1, v)) }),
+    setMusicVolume: (v) =>
+      set({ musicVolume: Math.max(0, Math.min(1, v)) }),
 
     // Ad tracking
     incrementGamesPlayedSinceAd: () => {
@@ -778,6 +908,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
         unlockedSpeeds: (data.unlockedSpeeds as GameSpeed[]) || state.unlockedSpeeds,
+        lifetimeEnemiesKilled:
+          typeof data.lifetimeEnemiesKilled === 'number'
+            ? data.lifetimeEnemiesKilled
+            : state.lifetimeEnemiesKilled,
       }));
     },
 
@@ -796,13 +930,55 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       ) as unknown as PlayerState,
     merge: (persisted, current) => {
       const p = persisted as Partial<PlayerState> | undefined;
-      return {
+      const savedName = p?.nickname?.trim();
+      const hasCustomSavedName = !!savedName && savedName !== 'Player';
+      /** Name modal only on first launch; any persisted custom name skips onboarding */
+      const nameOnboardingDone =
+        p?.hasEnteredNameOnce === true ||
+        !!p?.playerId ||
+        hasCustomSavedName;
+
+      const merged: PlayerState = {
         ...current,
         ...p,
         achievements: mergeAchievementLists(p?.achievements),
-        hasEnteredNameOnce: p?.hasEnteredNameOnce ?? !!p?.playerId,
+        hasEnteredNameOnce: nameOnboardingDone,
         startingCoinUpgradeLevel: p?.startingCoinUpgradeLevel ?? 0,
-      };
+        sfxVolume:
+          typeof p?.sfxVolume === 'number' ? Math.max(0, Math.min(1, p.sfxVolume)) : 0.9,
+        musicVolume:
+          typeof p?.musicVolume === 'number' ? Math.max(0, Math.min(1, p.musicVolume)) : 0.65,
+        coinIncomeUpgradeLevel:
+          typeof p?.coinIncomeUpgradeLevel === 'number'
+            ? Math.min(COIN_INCOME_UPGRADE_MAX, Math.max(0, p.coinIncomeUpgradeLevel))
+            : 0,
+        currentMapId: p?.currentMapId ?? DEFAULT_ARENA_ID,
+        sessionEnemiesKilledTotal:
+          typeof p?.sessionEnemiesKilledTotal === 'number'
+            ? Math.max(0, p.sessionEnemiesKilledTotal)
+            : 0,
+        sessionSlaughterTriumphs:
+          typeof p?.sessionSlaughterTriumphs === 'number'
+            ? Math.max(0, p.sessionSlaughterTriumphs)
+            : 0,
+        lastRunGemsEarned: typeof p?.lastRunGemsEarned === 'number' ? p.lastRunGemsEarned : 0,
+        lastRunEnemiesKilled:
+          typeof p?.lastRunEnemiesKilled === 'number' ? p.lastRunEnemiesKilled : 0,
+        lastLeaderboardUpdateAt:
+          typeof p?.lastLeaderboardUpdateAt === 'number' ? p.lastLeaderboardUpdateAt : 0,
+      } as PlayerState;
+
+      if (!p?.lastDailyMissionDayKey) {
+        delete (merged as { lastDailyMissionDayKey?: string }).lastDailyMissionDayKey;
+      }
+      if (!p?.lastWeeklyMissionWeekKey) {
+        delete (merged as { lastWeeklyMissionWeekKey?: string }).lastWeeklyMissionWeekKey;
+      }
+
+      const dailyPatch = maybeResetDailyMissions(merged);
+      const afterDaily: PlayerState = { ...merged, ...dailyPatch };
+      const weeklyPatch = maybeResetWeeklyMissions(afterDaily);
+      return { ...afterDaily, ...weeklyPatch };
     },
   }
   )

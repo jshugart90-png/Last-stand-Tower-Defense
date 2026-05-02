@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,103 +11,228 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { usePlayerStore } from '../src/stores/playerStore';
+import { useFocusEffect } from '@react-navigation/native';
+import { isAxiosError } from 'axios';
+import { usePlayerStore, type PlayerState } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, leaderboardApi } from '../src/hooks/useApi';
 
-interface LeaderboardEntry {
+export interface LeaderboardEntry {
   _id: string;
   player_id: string;
   nickname: string;
   best_wave: number;
   total_waves_survived: number;
   games_played: number;
+  lifetime_enemies_killed: number;
+  last_run_gems: number;
+  last_run_enemies_killed?: number;
+  leaderboard_score?: number;
+}
+
+function sortKey(e: Pick<LeaderboardEntry, 'lifetime_enemies_killed' | 'last_run_gems'>): [number, number, number] {
+  const lk = e.lifetime_enemies_killed ?? 0;
+  const g = e.last_run_gems ?? 0;
+  const score = lk + g;
+  return [score, lk, g];
+}
+
+function compareEntries(a: LeaderboardEntry, b: LeaderboardEntry): number {
+  const ka = sortKey(a);
+  const kb = sortKey(b);
+  for (let i = 0; i < 3; i++) {
+    if (ka[i] !== kb[i]) return kb[i] - ka[i];
+  }
+  return 0;
+}
+
+function entryFromPlayerStore(p: PlayerState): LeaderboardEntry {
+  const pid = p.playerId || 'local';
+  return {
+    _id: `local_${pid}`,
+    player_id: pid,
+    nickname: p.nickname || 'Player',
+    best_wave: p.bestWave,
+    total_waves_survived: p.totalWavesSurvived,
+    games_played: p.gamesPlayed,
+    lifetime_enemies_killed: p.lifetimeEnemiesKilled,
+    last_run_gems: p.lastRunGemsEarned,
+    last_run_enemies_killed: p.lastRunEnemiesKilled,
+    leaderboard_score: p.lifetimeEnemiesKilled + p.lastRunGemsEarned,
+  };
+}
+
+function normalizeRemoteRow(raw: Record<string, unknown>): LeaderboardEntry {
+  const lk =
+    typeof raw.lifetime_enemies_killed === 'number'
+      ? raw.lifetime_enemies_killed
+      : Number(raw.lifetime_enemies_killed) || 0;
+  const lr =
+    typeof raw.last_run_gems === 'number' ? raw.last_run_gems : Number(raw.last_run_gems) || 0;
+  return {
+    _id: String(raw._id ?? raw.id ?? ''),
+    player_id: String(raw.player_id ?? ''),
+    nickname: String(raw.nickname ?? 'Player'),
+    best_wave: Number(raw.best_wave) || 0,
+    total_waves_survived: Number(raw.total_waves_survived) || 0,
+    games_played: Number(raw.games_played) || 0,
+    lifetime_enemies_killed: lk,
+    last_run_gems: lr,
+    last_run_enemies_killed:
+      typeof raw.last_run_enemies_killed === 'number'
+        ? raw.last_run_enemies_killed
+        : Number(raw.last_run_enemies_killed) || 0,
+    leaderboard_score: typeof raw.leaderboard_score === 'number' ? raw.leaderboard_score : lk + lr,
+  };
 }
 
 export default function LeaderboardScreen() {
   const router = useRouter();
-  const playerStore = usePlayerStore();
+  const lastLbUpdate = usePlayerStore((s) => s.lastLeaderboardUpdateAt);
+  const playerId = usePlayerStore((s) => s.playerId);
+  const nickname = usePlayerStore((s) => s.nickname);
+  const lifetimeEnemiesKilled = usePlayerStore((s) => s.lifetimeEnemiesKilled);
+  const lastRunGemsEarned = usePlayerStore((s) => s.lastRunGemsEarned);
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [dailyEntries, setDailyEntries] = useState<LeaderboardEntry[]>([]);
-  const [playerRank, setPlayerRank] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'global' | 'daily'>('global');
+  const prevLbRef = useRef(0);
+  const lbMountRef = useRef(false);
 
   const getDailySeed = () => {
     const d = new Date();
     return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
   };
 
-  const hash = (v: string) => {
-    let h = 0;
-    for (let i = 0; i < v.length; i++) h = (h * 31 + v.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  };
-
-  const dailyBucketEntries = useMemo(() => {
-    const seed = getDailySeed();
-    return entries
-      .filter((e) => hash(`${e.player_id}:${seed}`) % 4 === 0)
-      .sort((a, b) => b.best_wave - a.best_wave || b.total_waves_survived - a.total_waves_survived);
-  }, [entries]);
-
-  const activeDailyEntries = dailyEntries.length > 0 ? dailyEntries : dailyBucketEntries;
-  const activeEntries = mode === 'daily' ? activeDailyEntries : entries;
-  const activePlayerRank = useMemo(() => {
-    if (mode === 'global') return playerRank;
-    if (!playerStore.playerId) return null;
-    const idx = activeDailyEntries.findIndex((e) => e.player_id === playerStore.playerId);
-    return idx >= 0 ? idx + 1 : null;
-  }, [mode, playerRank, playerStore.playerId, activeDailyEntries]);
-
-  const loadLeaderboard = useCallback(async () => {
+  const loadLeaderboard = useCallback(async (opts?: { fullScreenLoading?: boolean }) => {
     if (!isBackendConfigured()) {
       setEntries([]);
-      setPlayerRank(null);
+      setDailyEntries([]);
+      setError(null);
       setLoading(false);
       setRefreshing(false);
       return;
     }
+
+    if (opts?.fullScreenLoading) {
+      setLoading(true);
+    }
+
+    setError(null);
     try {
-      const [leaderboardRes, rankRes] = await Promise.all([
+      const [leaderboardRes, dailyRes] = await Promise.all([
         leaderboardApi.getGlobal(100),
-        playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)
-          ? leaderboardApi.getPlayerRank(playerStore.playerId)
-          : null,
+        leaderboardApi.getDailyChallenge(getDailySeed(), 100, 0).catch(() => ({ data: [] })),
       ]);
 
-      setEntries(leaderboardRes.data);
-      if (rankRes?.data) {
-        setPlayerRank(rankRes.data.rank);
-      }
+      const rawList = Array.isArray(leaderboardRes.data) ? leaderboardRes.data : [];
+      setEntries(rawList.map((row: Record<string, unknown>) => normalizeRemoteRow(row)));
 
-      try {
-        const dailyRes = await leaderboardApi.getDailyChallenge(getDailySeed(), 100, 0);
-        setDailyEntries(dailyRes.data || []);
-      } catch {
-        // Backend may not support daily bucket yet; fallback to client-seeded bucket.
-        setDailyEntries([]);
-      }
-    } catch (error) {
-      console.error('Error loading leaderboard:', error);
+      const dailyRaw = Array.isArray(dailyRes.data) ? dailyRes.data : [];
+      setDailyEntries(dailyRaw.map((row: Record<string, unknown>) => normalizeRemoteRow(row)));
+    } catch (err: unknown) {
+      const msg = isAxiosError(err)
+        ? (typeof err.response?.data === 'object' &&
+          err.response?.data !== null &&
+          'detail' in err.response.data
+            ? String((err.response.data as { detail: unknown }).detail)
+            : err.message)
+        : err instanceof Error
+          ? err.message
+          : 'Could not load leaderboard';
+      setError(msg);
+      setEntries([]);
+      setDailyEntries([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [playerStore.playerId]);
+  }, []);
 
   useEffect(() => {
-    loadLeaderboard();
+    void loadLeaderboard();
   }, [loadLeaderboard]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isBackendConfigured()) return;
+      void loadLeaderboard();
+    }, [loadLeaderboard])
+  );
+
+  useEffect(() => {
+    if (!isBackendConfigured()) return;
+    if (!lbMountRef.current) {
+      lbMountRef.current = true;
+      prevLbRef.current = lastLbUpdate;
+      return;
+    }
+    if (lastLbUpdate > 0 && lastLbUpdate !== prevLbRef.current) {
+      prevLbRef.current = lastLbUpdate;
+      void loadLeaderboard();
+    }
+  }, [lastLbUpdate, loadLeaderboard]);
+
+  const globalDisplayEntries = useMemo(() => {
+    void lastLbUpdate;
+    void nickname;
+    let list = [...entries];
+    if (playerId && isServerBackedPlayerId(playerId)) {
+      list = list.filter((e) => e.player_id !== playerId);
+      list.push(entryFromPlayerStore(usePlayerStore.getState()));
+    }
+    list.sort(compareEntries);
+    return list;
+  }, [entries, playerId, nickname, lastLbUpdate]);
+
+  const dailySorted = useMemo(() => {
+    return [...dailyEntries].sort(compareEntries);
+  }, [dailyEntries]);
+
+  const activeEntries = mode === 'daily' ? dailySorted : globalDisplayEntries;
+
+  const globalPlayerRank = useMemo(() => {
+    if (!playerId || !isServerBackedPlayerId(playerId)) return null;
+    const ix = globalDisplayEntries.findIndex((e) => e.player_id === playerId);
+    return ix >= 0 ? ix + 1 : null;
+  }, [globalDisplayEntries, playerId]);
+
+  const dailyPlayerRank = useMemo(() => {
+    if (!playerId) return null;
+    const ix = dailySorted.findIndex((e) => e.player_id === playerId);
+    return ix >= 0 ? ix + 1 : null;
+  }, [dailySorted, playerId]);
+
+  const activePlayerRank = mode === 'global' ? globalPlayerRank : dailyPlayerRank;
+
+  const localOnlyRows = useMemo(() => {
+    void nickname;
+    void lifetimeEnemiesKilled;
+    void lastRunGemsEarned;
+    void lastLbUpdate;
+    if (isBackendConfigured()) return [];
+    return [entryFromPlayerStore(usePlayerStore.getState())].sort(compareEntries);
+  }, [nickname, lifetimeEnemiesKilled, lastRunGemsEarned, lastLbUpdate]);
+
+  const listData = isBackendConfigured() ? activeEntries : localOnlyRows;
+
+  const bannerRank =
+    !isBackendConfigured() && listData.length > 0 ? 1 : activePlayerRank;
+
+  const showEmpty = !loading && listData.length === 0 && !error;
+  const scoreBanner = lifetimeEnemiesKilled + lastRunGemsEarned;
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadLeaderboard();
+    void loadLeaderboard();
   };
 
   const renderItem = ({ item, index }: { item: LeaderboardEntry; index: number }) => {
-    const isCurrentPlayer = item.player_id === playerStore.playerId;
+    const isCurrentPlayer = item.player_id === playerId;
     const rank = index + 1;
+    const score = sortKey(item)[0];
 
     return (
       <View style={[styles.entryContainer, isCurrentPlayer && styles.currentPlayerEntry]}>
@@ -122,20 +247,21 @@ export default function LeaderboardScreen() {
             <Text style={styles.rankText}>{rank}</Text>
           )}
         </View>
-        
+
         <View style={styles.playerInfo}>
           <Text style={[styles.nickname, isCurrentPlayer && styles.currentPlayerText]}>
             {item.nickname}
             {isCurrentPlayer && ' (You)'}
           </Text>
           <Text style={styles.stats}>
-            Games: {item.games_played} | Total Waves: {item.total_waves_survived}
+            Kills (total): {item.lifetime_enemies_killed} | Run gems: {item.last_run_gems} | Best wave:{' '}
+            {item.best_wave}
           </Text>
         </View>
-        
+
         <View style={styles.scoreContainer}>
-          <MaterialCommunityIcons name="waves" size={20} color="#4A90D9" />
-          <Text style={styles.scoreText}>{item.best_wave}</Text>
+          <MaterialCommunityIcons name="skull" size={18} color="#a78bfa" />
+          <Text style={styles.scoreText}>{score}</Text>
         </View>
       </View>
     );
@@ -143,7 +269,6 @@ export default function LeaderboardScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
@@ -152,11 +277,21 @@ export default function LeaderboardScreen() {
         <View style={styles.backButton} />
       </View>
 
-      {/* Player rank banner */}
-      {activePlayerRank && (
+      {bannerRank != null && (
         <View style={styles.rankBanner}>
-          <Text style={styles.rankBannerText}>Your Rank: #{activePlayerRank}</Text>
-          <Text style={styles.rankBannerSubtext}>Best Wave: {playerStore.bestWave}</Text>
+          <Text style={styles.rankBannerText}>Your rank: #{bannerRank}</Text>
+          <Text style={styles.rankBannerSubtext}>
+            Score {scoreBanner} (total kills + last run gems){' '}
+            {!isBackendConfigured() ? '· Offline' : ''}
+          </Text>
+        </View>
+      )}
+
+      {!isBackendConfigured() && (
+        <View style={styles.offlineHint}>
+          <Text style={styles.offlineHintText}>
+            No server URL configured — showing this device only. Connect a backend to see global rankings.
+          </Text>
         </View>
       )}
 
@@ -171,39 +306,47 @@ export default function LeaderboardScreen() {
           style={[styles.modeTab, mode === 'daily' && styles.modeTabActive]}
           onPress={() => setMode('daily')}
         >
-          <Text style={[styles.modeTabText, mode === 'daily' && styles.modeTabTextActive]}>Daily Seed</Text>
+          <Text style={[styles.modeTabText, mode === 'daily' && styles.modeTabTextActive]}>Daily seed</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Leaderboard list */}
+      {error && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => void loadLeaderboard({ fullScreenLoading: true })}
+          >
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4A90D9" />
+          <Text style={styles.loadingSub}>Loading rankings…</Text>
         </View>
       ) : (
         <FlatList
-          data={activeEntries}
-          keyExtractor={(item) => item._id}
+          data={listData}
+          keyExtractor={(item) => item._id || item.player_id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#4A90D9"
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A90D9" />
           }
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="trophy-outline" size={64} color="#333" />
-              <Text style={styles.emptyText}>No entries yet</Text>
-              <Text style={styles.emptySubtext}>Be the first to set a record!</Text>
-            </View>
+            showEmpty ? (
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons name="trophy-outline" size={64} color="#333" />
+                <Text style={styles.emptyText}>No entries yet</Text>
+                <Text style={styles.emptySubtext}>Finish a run to appear on the board.</Text>
+              </View>
+            ) : null
           }
         />
       )}
-
-      {/* Banner Ad */}
     </SafeAreaView>
   );
 }
@@ -249,8 +392,21 @@ const styles = StyleSheet.create({
   },
   rankBannerSubtext: {
     color: '#4A90D9',
-    fontSize: 16,
+    fontSize: 14,
     marginTop: 4,
+    textAlign: 'center',
+  },
+  offlineHint: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#2a2038',
+  },
+  offlineHintText: {
+    color: '#b8a4d9',
+    fontSize: 12,
+    textAlign: 'center',
   },
   modeTabs: {
     flexDirection: 'row',
@@ -284,6 +440,37 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingSub: {
+    color: '#96a6c4',
+    marginTop: 12,
+    fontSize: 14,
+  },
+  errorBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#3d2020',
+    borderWidth: 1,
+    borderColor: '#884444',
+  },
+  errorText: {
+    color: '#ffb4b4',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  retryBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#4A90D9',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  retryBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
   },
   listContent: {
     padding: 16,
@@ -323,7 +510,7 @@ const styles = StyleSheet.create({
   },
   stats: {
     color: '#666',
-    fontSize: 12,
+    fontSize: 11,
     marginTop: 4,
   },
   scoreContainer: {
@@ -332,8 +519,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   scoreText: {
-    color: '#4A90D9',
-    fontSize: 20,
+    color: '#a78bfa',
+    fontSize: 18,
     fontWeight: 'bold',
   },
   emptyContainer: {

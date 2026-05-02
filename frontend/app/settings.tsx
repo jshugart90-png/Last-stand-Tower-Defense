@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,52 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Modal,
+  TextInput,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS } from '../src/constants/game';
+import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
+  const [changeNameOpen, setChangeNameOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+
+  const openChangeName = () => {
+    setNameDraft(playerStore.nickname || '');
+    setChangeNameOpen(true);
+  };
+
+  const saveDisplayName = async () => {
+    const name = nameDraft.trim();
+    if (!name) {
+      Alert.alert('Name required', 'Please enter a display name.');
+      return;
+    }
+    if (name.length > 15) {
+      Alert.alert('Too long', 'Use at most 15 characters.');
+      return;
+    }
+    if (isBackendConfigured() && playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
+      try {
+        await playerApi.update(playerStore.playerId, { nickname: name });
+      } catch {
+        Alert.alert(
+          'Server sync',
+          'Could not update the name on the server. It was saved on this device only.',
+          [{ text: 'OK' }]
+        );
+      }
+    }
+    playerStore.setNickname(name);
+    setChangeNameOpen(false);
+  };
 
   const handleRestorePurchases = () => {
     Alert.alert(
@@ -72,6 +108,39 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <Modal visible={changeNameOpen} transparent animationType="fade">
+        <View style={styles.nameModalOverlay}>
+          <View style={styles.nameModalCard}>
+            <Text style={styles.nameModalTitle}>Change display name</Text>
+            <TextInput
+              style={styles.nameModalInput}
+              value={nameDraft}
+              onChangeText={setNameDraft}
+              placeholder="Your name"
+              placeholderTextColor="#666"
+              maxLength={15}
+              autoFocus
+              autoCapitalize="words"
+            />
+            <View style={styles.nameModalButtons}>
+              <TouchableOpacity
+                style={[styles.nameModalBtn, styles.nameModalBtnGhost]}
+                onPress={() => setChangeNameOpen(false)}
+              >
+                <Text style={styles.nameModalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.nameModalBtn, styles.nameModalBtnPrimary]}
+                onPress={() => void saveDisplayName()}
+                disabled={!nameDraft.trim()}
+              >
+                <Text style={styles.nameModalBtnPrimaryText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -98,6 +167,27 @@ export default function SettingsScreen() {
               thumbColor={playerStore.soundEnabled ? '#fff' : '#666'}
             />
           </View>
+          <Text style={styles.settingHint}>
+            When enabled, SFX follow your volume slider and still respect the iPhone silent switch (no audio in silent mode).
+          </Text>
+
+          <View style={styles.volumeBlock}>
+            <View style={styles.volumeHeader}>
+              <Text style={styles.volumeLabel}>SFX volume</Text>
+              <Text style={styles.volumePct}>{Math.round(playerStore.sfxVolume * 100)}%</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={0}
+              maximumValue={1}
+              value={playerStore.sfxVolume}
+              onValueChange={playerStore.setSfxVolume}
+              minimumTrackTintColor="#4A90D9"
+              maximumTrackTintColor="#2a2a4e"
+              thumbTintColor={playerStore.soundEnabled ? '#fff' : '#555'}
+              disabled={!playerStore.soundEnabled}
+            />
+          </View>
 
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
@@ -109,6 +199,24 @@ export default function SettingsScreen() {
               onValueChange={playerStore.toggleMusic}
               trackColor={{ false: '#333', true: '#9B59B6' }}
               thumbColor={playerStore.musicEnabled ? '#fff' : '#666'}
+            />
+          </View>
+
+          <View style={styles.volumeBlock}>
+            <View style={styles.volumeHeader}>
+              <Text style={styles.volumeLabel}>Music volume</Text>
+              <Text style={styles.volumePct}>{Math.round(playerStore.musicVolume * 100)}%</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={0}
+              maximumValue={1}
+              value={playerStore.musicVolume}
+              onValueChange={playerStore.setMusicVolume}
+              minimumTrackTintColor="#9B59B6"
+              maximumTrackTintColor="#2a2a4e"
+              thumbTintColor={playerStore.musicEnabled ? '#fff' : '#555'}
+              disabled={!playerStore.musicEnabled}
             />
           </View>
         </View>
@@ -189,10 +297,20 @@ export default function SettingsScreen() {
             <Text style={styles.infoValue}>{playerStore.playerId?.slice(0, 8)}...</Text>
           </View>
 
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Nickname</Text>
-            <Text style={styles.infoValue}>{playerStore.nickname}</Text>
-          </View>
+          <TouchableOpacity
+            style={styles.nameChangeRow}
+            onPress={openChangeName}
+            activeOpacity={0.7}
+          >
+            <View>
+              <Text style={styles.infoLabel}>Display name</Text>
+              <Text style={styles.infoValue}>{playerStore.nickname}</Text>
+            </View>
+            <View style={styles.nameChangeChevron}>
+              <Text style={styles.nameChangeHint}>Change</Text>
+              <Ionicons name="chevron-forward" size={18} color="#666" />
+            </View>
+          </TouchableOpacity>
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Level</Text>
@@ -353,9 +471,33 @@ const styles = StyleSheet.create({
   settingHint: {
     color: '#8da3c0',
     fontSize: 12,
-    marginTop: -6,
-    marginBottom: 8,
-    marginLeft: 36,
+    marginTop: -4,
+    marginBottom: 12,
+    marginLeft: 4,
+    lineHeight: 17,
+  },
+  volumeBlock: {
+    marginBottom: 16,
+  },
+  volumeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  volumeLabel: {
+    color: '#c5d2e8',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  volumePct: {
+    color: '#8da3c0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  slider: {
+    width: '100%',
+    height: 36,
   },
   vfxSegment: {
     flexDirection: 'row',
@@ -377,6 +519,76 @@ const styles = StyleSheet.create({
   },
   vfxButtonTextActive: {
     color: '#fff',
+  },
+  nameModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  nameModalCard: {
+    backgroundColor: '#16213e',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 380,
+  },
+  nameModalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  nameModalInput: {
+    backgroundColor: '#0f0f23',
+    borderRadius: 12,
+    padding: 14,
+    color: '#fff',
+    fontSize: 17,
+    marginBottom: 20,
+  },
+  nameModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  nameModalBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+  },
+  nameModalBtnGhost: {
+    backgroundColor: 'transparent',
+  },
+  nameModalBtnGhostText: {
+    color: '#97a7c2',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  nameModalBtnPrimary: {
+    backgroundColor: '#4A90D9',
+  },
+  nameModalBtnPrimaryText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  nameChangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
+  nameChangeChevron: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  nameChangeHint: {
+    color: '#4A90D9',
+    fontSize: 14,
+    fontWeight: '600',
   },
   infoRow: {
     flexDirection: 'row',

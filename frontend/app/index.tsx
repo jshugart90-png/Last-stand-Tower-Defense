@@ -8,6 +8,8 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  ScrollView,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -18,6 +20,12 @@ import { usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
 import { playSfx } from '../src/services/audioService';
+import { ARENA_MAP_LIST } from '../src/constants/arenaMaps';
+import { MissionResetHints } from '../src/components/MissionResetHints';
+import {
+  SESSION_SLAUGHTER_WIN_KILLS,
+  SESSION_BOUNTY_TRIUMPHS_NEEDED,
+} from '../src/constants/sessionProgress';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -172,6 +180,15 @@ const NicknameModal = ({ visible, onSubmit }: { visible: boolean; onSubmit: (nam
   );
 };
 
+/** Sync in-memory flag when storage already has a non-default name */
+function finalizePersistedNameProfile(): void {
+  const s = usePlayerStore.getState();
+  const n = s.nickname?.trim();
+  if (n && n !== 'Player' && !s.hasEnteredNameOnce) {
+    usePlayerStore.setState({ hasEnteredNameOnce: true });
+  }
+}
+
 const nicknameStyles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -223,6 +240,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const refreshDailyMissions = usePlayerStore((s) => s.refreshDailyMissions);
+  const refreshWeeklyMissions = usePlayerStore((s) => s.refreshWeeklyMissions);
   const canClaimDailyBonus = usePlayerStore((s) => s.canClaimDailyBonus);
   const claimDailyBonus = usePlayerStore((s) => s.claimDailyBonus);
   const canClaimSessionQuest = usePlayerStore((s) => s.canClaimSessionQuest);
@@ -294,6 +312,10 @@ export default function HomeScreen() {
               totalWavesSurvived: response.data.total_waves_survived,
               gamesPlayed: response.data.games_played,
               bestWave: response.data.best_wave,
+              lifetimeEnemiesKilled:
+                typeof response.data.lifetime_enemies_killed === 'number'
+                  ? response.data.lifetime_enemies_killed
+                  : undefined,
               unlockedTowers: response.data.unlocked_towers,
               unlockedSkins: response.data.unlocked_skins,
               equippedSkins: response.data.equipped_skins,
@@ -324,6 +346,10 @@ export default function HomeScreen() {
             totalWavesSurvived: response.data.total_waves_survived,
             gamesPlayed: response.data.games_played,
             bestWave: response.data.best_wave,
+            lifetimeEnemiesKilled:
+              typeof response.data.lifetime_enemies_killed === 'number'
+                ? response.data.lifetime_enemies_killed
+                : undefined,
             unlockedTowers: response.data.unlocked_towers,
             unlockedSkins: response.data.unlocked_skins,
             equippedSkins: response.data.equipped_skins,
@@ -347,14 +373,29 @@ export default function HomeScreen() {
   // Initialize player on mount
   useEffect(() => {
     refreshDailyMissions();
+    refreshWeeklyMissions();
     void (async () => {
       await initializePlayer();
+      finalizePersistedNameProfile();
       const st = usePlayerStore.getState();
-      if (!st.hasEnteredNameOnce) {
+      const needsNameModal =
+        !st.hasEnteredNameOnce &&
+        (!st.nickname?.trim() || st.nickname === 'Player');
+      if (needsNameModal) {
         setShowNicknameModal(true);
       }
     })();
-  }, [initializePlayer, refreshDailyMissions]);
+  }, [initializePlayer, refreshDailyMissions, refreshWeeklyMissions]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        refreshDailyMissions();
+        refreshWeeklyMissions();
+      }
+    });
+    return () => sub.remove();
+  }, [refreshDailyMissions, refreshWeeklyMissions]);
 
   const registerLocalPlayer = async (nickname: string) => {
     let id = `local_${Date.now()}`;
@@ -464,7 +505,7 @@ export default function HomeScreen() {
   const handleClaimDailyBonus = useCallback(() => {
     const result = claimDailyBonus();
     if (result.reward > 0) {
-      playSfx('chest', playerStore.soundEnabled);
+      playSfx('chest');
       const milestoneText =
         result.milestoneBonus > 0 ? `\nMilestone chest: +${result.milestoneBonus} gems!` : '';
       Alert.alert(
@@ -474,17 +515,20 @@ export default function HomeScreen() {
     } else {
       Alert.alert('Already Claimed', 'Come back tomorrow for your next daily bonus.');
     }
-  }, [claimDailyBonus, playerStore.soundEnabled]);
+  }, [claimDailyBonus]);
 
   const handleClaimSessionQuest = useCallback(() => {
     const reward = claimSessionQuest();
     if (reward > 0) {
-      playSfx('chest', playerStore.soundEnabled);
+      playSfx('chest');
       Alert.alert('Session Quest Complete', `Bonus chest opened: +${reward} gems!`);
     } else {
-      Alert.alert('Session Quest', 'Win 2 runs (reach wave 10+) this session to claim.');
+      Alert.alert(
+        'Session Quest',
+        `Earn ${SESSION_BOUNTY_TRIUMPHS_NEEDED} slaughter stars by getting ${SESSION_SLAUGHTER_WIN_KILLS}+ kills in a single run (each counts once). Open the chest when ready.`
+      );
     }
-  }, [claimSessionQuest, playerStore.soundEnabled]);
+  }, [claimSessionQuest]);
 
   // Show splash screen while loading OR during minimum splash time
   if (loading || showSplash) {
@@ -529,6 +573,42 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
 
+        <Text style={styles.arenaSectionLabel}>Battlefield</Text>
+        <Text style={styles.arenaSectionHint}>Each route is fixed — build beside the path</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.arenaScroll}
+        >
+          {ARENA_MAP_LIST.map((m) => {
+            const selected = playerStore.currentMapId === m.id;
+            return (
+              <TouchableOpacity
+                key={m.id}
+                style={[styles.arenaCard, selected && styles.arenaCardSelected]}
+                onPress={() => {
+                  if (playerStore.hapticEnabled) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  playerStore.setCurrentMapId(m.id);
+                }}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.arenaSwatch, { backgroundColor: m.theme.path }]} />
+                <Text style={styles.arenaName} numberOfLines={2}>
+                  {m.name}
+                </Text>
+                <Text style={styles.arenaDesc} numberOfLines={3}>
+                  {m.description}
+                </Text>
+                <Text style={styles.arenaMeta}>
+                  {m.gridCols}×{m.gridRows} • {m.route.length} steps
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         <View style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
@@ -548,7 +628,11 @@ export default function HomeScreen() {
         <View style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
-            <Text style={styles.dailyBonusSub}>Wins this session: {playerStore.sessionWins}/2</Text>
+            <Text style={styles.dailyBonusSub}>
+              Kills this session: {playerStore.sessionEnemiesKilledTotal} • Slaughter stars{' '}
+              {playerStore.sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED} (
+              {SESSION_SLAUGHTER_WIN_KILLS}+ kills / run)
+            </Text>
           </View>
           <TouchableOpacity
             style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
@@ -569,6 +653,7 @@ export default function HomeScreen() {
 
         <View style={styles.progressionCard}>
           <Text style={styles.progressionTitle}>Daily Missions</Text>
+          <MissionResetHints />
           {playerStore.dailyMissions.map((mission) => (
             <View key={mission.id} style={styles.missionRow}>
               <Text style={styles.missionLabel}>{mission.label}</Text>
@@ -741,7 +826,68 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 12,
+  },
+  arenaSectionLabel: {
+    alignSelf: 'flex-start',
+    color: '#e8eef8',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+    width: '100%',
+  },
+  arenaSectionHint: {
+    alignSelf: 'flex-start',
+    color: '#7a8aa6',
+    fontSize: 12,
+    marginBottom: 10,
+    width: '100%',
+  },
+  arenaScroll: {
+    paddingVertical: 4,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  arenaCard: {
+    width: 148,
+    backgroundColor: '#121826',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#2a3548',
+  },
+  arenaCardSelected: {
+    borderColor: '#4A90D9',
+    backgroundColor: '#16213e',
+    shadowColor: '#4A90D9',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+  },
+  arenaSwatch: {
+    height: 4,
+    borderRadius: 2,
+    marginBottom: 8,
+    opacity: 0.95,
+  },
+  arenaName: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+    minHeight: 34,
+  },
+  arenaDesc: {
+    color: '#8fa4c4',
+    fontSize: 11,
+    lineHeight: 15,
+    marginBottom: 8,
+    minHeight: 48,
+  },
+  arenaMeta: {
+    color: '#5d6d85',
+    fontSize: 10,
+    fontWeight: '600',
   },
   title: {
     color: '#fff',

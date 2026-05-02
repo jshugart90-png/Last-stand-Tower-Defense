@@ -11,6 +11,7 @@ create table if not exists public.players (
   total_waves_survived int not null default 0,
   games_played int not null default 0,
   best_wave int not null default 0,
+  lifetime_enemies_killed int not null default 0,
   unlocked_towers jsonb not null default '["machine_gun"]'::jsonb,
   unlocked_skins jsonb not null default '["default"]'::jsonb,
   equipped_skins jsonb not null default '{}'::jsonb,
@@ -27,11 +28,23 @@ create table if not exists public.leaderboard (
   best_wave int not null default 0,
   total_waves_survived int not null default 0,
   games_played int not null default 0,
+  lifetime_enemies_killed int not null default 0,
+  last_run_gems int not null default 0,
+  last_run_enemies_killed int not null default 0,
+  leaderboard_score bigint not null default 0,
   updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_leaderboard_best_wave on public.leaderboard (best_wave desc);
 create index if not exists idx_leaderboard_player_id on public.leaderboard (player_id);
+create index if not exists idx_leaderboard_score on public.leaderboard (leaderboard_score desc);
+
+-- If tables already exist from an older bootstrap, add columns (safe to re-run):
+alter table public.players add column if not exists lifetime_enemies_killed int not null default 0;
+alter table public.leaderboard add column if not exists lifetime_enemies_killed int not null default 0;
+alter table public.leaderboard add column if not exists last_run_gems int not null default 0;
+alter table public.leaderboard add column if not exists last_run_enemies_killed int not null default 0;
+alter table public.leaderboard add column if not exists leaderboard_score bigint not null default 0;
 
 create table if not exists public.analytics (
   id uuid primary key default gen_random_uuid(),

@@ -31,11 +31,11 @@ export default function RunResultsScreen() {
   const challenge = String(Array.isArray(params.challenge) ? params.challenge[0] : params.challenge || 'Daily Challenge');
   React.useEffect(() => {
     if (bestDelta > 0) {
-      playSfx('record', playerStore.soundEnabled);
+      playSfx('record');
     } else if (comboBonus > 0) {
-      playSfx('combo', playerStore.soundEnabled);
+      playSfx('combo');
     }
-  }, [bestDelta, comboBonus, playerStore.soundEnabled]);
+  }, [bestDelta, comboBonus]);
   const nextUnlock = React.useMemo(() => {
     const locked = (Object.keys(TOWER_UNLOCK_PRICES) as TowerType[])
       .filter((t) => !playerStore.unlockedTowers.includes(t))
