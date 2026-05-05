@@ -8,7 +8,6 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
-  ScrollView,
   AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,16 +15,17 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { usePlayerStore } from '../src/stores/playerStore';
+import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
 import { playSfx } from '../src/services/audioService';
-import { ARENA_MAP_LIST } from '../src/constants/arenaMaps';
-import { MissionResetHints } from '../src/components/MissionResetHints';
+import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
+import { TacticalTheme } from '../src/theme/colors';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -249,8 +249,10 @@ export default function HomeScreen() {
   const [showSplash, setShowSplash] = useState(true);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
   const completedDailyMissions = playerStore.dailyMissions.filter((m) => m.completed).length;
-  const unlockedAchievements = playerStore.achievements.filter((a) => a.unlocked).length;
+  const xpProgress = getXpProgress(playerStore.xp);
+  const xpPercent = Math.min(100, Math.max(0, (xpProgress.xpIntoLevel / xpProgress.xpNeeded) * 100));
 
   // Show splash screen for minimum 2.5 seconds
   useEffect(() => {
@@ -470,7 +472,7 @@ export default function HomeScreen() {
     if (!playerStore.tutorialCompleted) {
       setShowTutorial(true);
     } else {
-      router.push('/game');
+      router.push('/map-selection');
     }
   }, [router, playerStore.hapticEnabled, playerStore.tutorialCompleted]);
 
@@ -478,7 +480,7 @@ export default function HomeScreen() {
     if (playerStore.hapticEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    router.push('/leaderboard');
+    router.push({ pathname: '/leaderboard' });
   }, [router, playerStore.hapticEnabled]);
 
   const handleShopPress = useCallback(() => {
@@ -555,7 +557,10 @@ export default function HomeScreen() {
       {/* Header with player stats */}
       <View style={styles.header}>
         <View style={styles.playerInfo}>
-          <Text style={styles.playerName}>{playerStore.nickname}</Text>
+          <View style={styles.playerNameRow}>
+            <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={22} />
+            <Text style={styles.playerName}>{playerStore.nickname}</Text>
+          </View>
           <Text style={styles.playerLevel}>Level {playerStore.level}</Text>
         </View>
         <View style={styles.currencyContainer}>
@@ -572,42 +577,6 @@ export default function HomeScreen() {
           <Text style={styles.title}>LAST STAND</Text>
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
-
-        <Text style={styles.arenaSectionLabel}>Battlefield</Text>
-        <Text style={styles.arenaSectionHint}>Each route is fixed — build beside the path</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.arenaScroll}
-        >
-          {ARENA_MAP_LIST.map((m) => {
-            const selected = playerStore.currentMapId === m.id;
-            return (
-              <TouchableOpacity
-                key={m.id}
-                style={[styles.arenaCard, selected && styles.arenaCardSelected]}
-                onPress={() => {
-                  if (playerStore.hapticEnabled) {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                  playerStore.setCurrentMapId(m.id);
-                }}
-                activeOpacity={0.85}
-              >
-                <View style={[styles.arenaSwatch, { backgroundColor: m.theme.path }]} />
-                <Text style={styles.arenaName} numberOfLines={2}>
-                  {m.name}
-                </Text>
-                <Text style={styles.arenaDesc} numberOfLines={3}>
-                  {m.description}
-                </Text>
-                <Text style={styles.arenaMeta}>
-                  {m.gridCols}×{m.gridRows} • {m.route.length} steps
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
 
         <View style={styles.dailyBonusCard}>
           <View>
@@ -643,29 +612,19 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Best wave */}
-        {playerStore.bestWave > 0 && (
-          <View style={styles.bestWaveContainer}>
-            <MaterialCommunityIcons name="trophy" size={24} color="#FFD700" />
-            <Text style={styles.bestWaveText}>Best: Wave {playerStore.bestWave}</Text>
+        <TouchableOpacity
+          style={styles.dailyMissionsPrimaryButton}
+          onPress={() => setShowDailyMissionsModal(true)}
+          activeOpacity={0.85}
+        >
+          <View>
+            <Text style={styles.dailyMissionsPrimaryTitle}>Daily Missions</Text>
+            <Text style={styles.dailyMissionsPrimarySub}>
+              {completedDailyMissions}/{playerStore.dailyMissions.length} completed
+            </Text>
           </View>
-        )}
-
-        <View style={styles.progressionCard}>
-          <Text style={styles.progressionTitle}>Daily Missions</Text>
-          <MissionResetHints />
-          {playerStore.dailyMissions.map((mission) => (
-            <View key={mission.id} style={styles.missionRow}>
-              <Text style={styles.missionLabel}>{mission.label}</Text>
-              <Text style={styles.missionValue}>
-                {mission.completed ? 'Done' : `${mission.progress}/${mission.target}`} (+{mission.rewardGems})
-              </Text>
-            </View>
-          ))}
-          <Text style={styles.progressionFooter}>
-            {completedDailyMissions}/{playerStore.dailyMissions.length} done • Achievements {unlockedAchievements}/{playerStore.achievements.length}
-          </Text>
-        </View>
+          <Ionicons name="chevron-forward" size={20} color={TacticalTheme.white} />
+        </TouchableOpacity>
 
         {/* Play button */}
         <TouchableOpacity
@@ -677,38 +636,23 @@ export default function HomeScreen() {
           <Text style={styles.playButtonText}>PLAY</Text>
         </TouchableOpacity>
 
-        {/* Menu buttons */}
-        <View style={styles.menuButtons}>
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={handleLeaderboardPress}
-          >
-            <Ionicons name="trophy-outline" size={28} color="#FFD700" />
-            <Text style={styles.menuButtonText}>Leaderboard</Text>
+        {/* Quick actions */}
+        <View style={styles.quickActionsRow}>
+          <TouchableOpacity style={styles.quickActionBtn} onPress={handleLeaderboardPress} activeOpacity={0.85}>
+            <Ionicons name="trophy-outline" size={20} color="#ff6b5d" />
+            <Text style={styles.quickActionText}>Leaderboard</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={handleShopPress}
-          >
-            <Ionicons name="cart-outline" size={28} color="#9B59B6" />
-            <Text style={styles.menuButtonText}>Shop</Text>
+          <TouchableOpacity style={styles.quickActionBtn} onPress={handleShopPress} activeOpacity={0.85}>
+            <Ionicons name="cart-outline" size={20} color="#ff6b5d" />
+            <Text style={styles.quickActionText}>Shop</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={handleSettingsPress}
-          >
-            <Ionicons name="settings-outline" size={28} color="#4A90D9" />
-            <Text style={styles.menuButtonText}>Settings</Text>
+          <TouchableOpacity style={styles.quickActionBtn} onPress={handleSettingsPress} activeOpacity={0.85}>
+            <Ionicons name="settings-outline" size={20} color="#ff6b5d" />
+            <Text style={styles.quickActionText}>Settings</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuButton}
-            onPress={handleProgressPress}
-          >
-            <Ionicons name="stats-chart-outline" size={28} color="#2ECC71" />
-            <Text style={styles.menuButtonText}>Progress</Text>
+          <TouchableOpacity style={styles.quickActionBtn} onPress={handleProgressPress} activeOpacity={0.85}>
+            <Ionicons name="stats-chart-outline" size={20} color="#ff6b5d" />
+            <Text style={styles.quickActionText}>Progress</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -719,12 +663,12 @@ export default function HomeScreen() {
           <View
             style={[
               styles.xpFill,
-              { width: `${(playerStore.xp % 100)}%` }
+              { width: `${xpPercent}%` }
             ]}
           />
         </View>
         <Text style={styles.xpText}>
-          XP: {playerStore.xp % 100}/100 to Level {playerStore.level + 1}
+          XP: {xpProgress.xpIntoLevel}/{xpProgress.xpNeeded} to Level {xpProgress.level + 1}
         </Text>
       </View>
 
@@ -732,6 +676,13 @@ export default function HomeScreen() {
       <NicknameModal
         visible={showNicknameModal}
         onSubmit={handleNicknameSubmit}
+      />
+
+      <DailyMissionsModal
+        visible={showDailyMissionsModal}
+        missions={playerStore.dailyMissions}
+        onClose={() => setShowDailyMissionsModal(false)}
+        onClaim={() => playSfx('chest')}
       />
 
       {/* Tutorial overlay */}
@@ -745,23 +696,23 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   splashContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   splashTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 48,
     fontWeight: 'bold',
     letterSpacing: 4,
     marginTop: 16,
   },
   splashSubtitle: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 32,
     fontWeight: 'bold',
     letterSpacing: 8,
@@ -771,7 +722,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   splashLoadingText: {
-    color: '#666',
+    color: TacticalTheme.textMuted,
     marginTop: 12,
     fontSize: 14,
   },
@@ -781,7 +732,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#fff',
+    color: TacticalTheme.text,
     marginTop: 16,
     fontSize: 16,
   },
@@ -795,26 +746,31 @@ const styles = StyleSheet.create({
   playerInfo: {
     flex: 1,
   },
+  playerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   playerName: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },
   playerLevel: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 14,
   },
   currencyContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     gap: 8,
   },
   currencyText: {
-    color: '#FFD700',
+    color: TacticalTheme.text,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -830,7 +786,7 @@ const styles = StyleSheet.create({
   },
   arenaSectionLabel: {
     alignSelf: 'flex-start',
-    color: '#e8eef8',
+    color: TacticalTheme.text,
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 4,
@@ -838,7 +794,7 @@ const styles = StyleSheet.create({
   },
   arenaSectionHint: {
     alignSelf: 'flex-start',
-    color: '#7a8aa6',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginBottom: 10,
     width: '100%',
@@ -858,7 +814,7 @@ const styles = StyleSheet.create({
   },
   arenaCardSelected: {
     borderColor: '#4A90D9',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     shadowColor: '#4A90D9',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.35,
@@ -902,23 +858,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     letterSpacing: 8,
   },
-  bestWaveContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 32,
-  },
-  bestWaveText: {
-    color: '#FFD700',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
   dailyBonusCard: {
     width: '100%',
     backgroundColor: '#16213e',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
+    borderColor: TacticalTheme.border,
     padding: 12,
     marginBottom: 16,
     flexDirection: 'row',
@@ -926,125 +871,124 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dailyBonusTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: 'bold',
   },
   dailyBonusSub: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
   dailyBonusButton: {
-    backgroundColor: '#2ECC71',
+    backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
   },
   dailyBonusButtonDisabled: {
-    backgroundColor: '#2a2a4e',
+    backgroundColor: TacticalTheme.panelAlt,
   },
   dailyBonusButtonText: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 12,
     fontWeight: 'bold',
   },
-  progressionCard: {
+  dailyMissionsPrimaryButton: {
     width: '100%',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.accent,
     borderRadius: 12,
-    padding: 12,
-    marginBottom: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
-  },
-  progressionTitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  missionRow: {
+    borderColor: TacticalTheme.borderStrong,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    justifyContent: 'space-between',
   },
-  missionLabel: {
-    color: '#d7d7d7',
-    fontSize: 12,
-    flex: 1,
-    marginRight: 8,
+  dailyMissionsPrimaryTitle: {
+    color: TacticalTheme.white,
+    fontSize: 16,
+    fontWeight: '800',
   },
-  missionValue: {
-    color: '#4A90D9',
+  dailyMissionsPrimarySub: {
+    color: TacticalTheme.text,
     fontSize: 12,
+    marginTop: 2,
     fontWeight: '600',
-  },
-  progressionFooter: {
-    color: '#888',
-    fontSize: 11,
-    marginTop: 4,
   },
   playButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 20,
     paddingHorizontal: 64,
     borderRadius: 16,
     gap: 12,
     marginBottom: 48,
-    shadowColor: '#4A90D9',
+    shadowColor: TacticalTheme.black,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
     elevation: 8,
   },
   playButtonText: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 28,
     fontWeight: 'bold',
     letterSpacing: 2,
   },
-  menuButtons: {
+  quickActionsRow: {
+    width: '100%',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  menuButton: {
     alignItems: 'center',
-    backgroundColor: '#16213e',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    minWidth: 100,
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 4,
   },
-  menuButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    marginTop: 8,
+  quickActionBtn: {
+    flex: 1,
+    minHeight: 64,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    backgroundColor: TacticalTheme.panel,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+  },
+  quickActionText: {
+    color: TacticalTheme.text,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   xpContainer: {
     paddingHorizontal: 20,
+    paddingTop: 10,
     paddingBottom: 20,
+    borderTopWidth: 1,
+    borderTopColor: TacticalTheme.border,
+    backgroundColor: TacticalTheme.bgElevated,
   },
   xpBar: {
     height: 8,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 8,
   },
   xpFill: {
     height: '100%',
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     borderRadius: 4,
   },
   xpText: {
-    color: '#666',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     textAlign: 'center',
+    fontWeight: '600',
   },
 });

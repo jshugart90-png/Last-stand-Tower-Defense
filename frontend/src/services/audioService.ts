@@ -15,6 +15,8 @@ const BYTES_PER_SAMPLE = 2;
 const cache = new Map<string, Audio.Sound>();
 const pools = new Map<string, { sounds: Audio.Sound[]; i: number }>();
 let audioReady = false;
+let audioInitPromise: Promise<void> | null = null;
+let audioLastError: string | null = null;
 
 export type SfxName = 'mission' | 'combo' | 'chest' | 'record';
 
@@ -371,21 +373,21 @@ async function ensurePoolFromFloat(
 }
 
 async function playSoundKey(key: string, baseVolume: number): Promise<void> {
+  await ensureAudioReady();
   if (!shouldPlaySfx()) return;
   const gain = getSfxGain();
   const sound = cache.get(key);
   if (!sound) return;
   try {
     await sound.setVolumeAsync(baseVolume * gain);
-    await sound.stopAsync();
-    await sound.setPositionAsync(0);
-    await sound.playAsync();
+    await sound.replayAsync();
   } catch {
     /* best effort */
   }
 }
 
 async function playPooled(poolKey: string, baseVolume: number): Promise<void> {
+  await ensureAudioReady();
   if (!shouldPlaySfx()) return;
   const gain = getSfxGain();
   const p = pools.get(poolKey);
@@ -394,9 +396,7 @@ async function playPooled(poolKey: string, baseVolume: number): Promise<void> {
   p.i++;
   try {
     await snd.setVolumeAsync(baseVolume * gain);
-    await snd.stopAsync();
-    await snd.setPositionAsync(0);
-    await snd.playAsync();
+    await snd.replayAsync();
   } catch {
     /* best effort */
   }
@@ -476,8 +476,12 @@ export async function playWaveStartFanfare(): Promise<void> {
 
 export const initializeAudio = async (): Promise<void> => {
   if (audioReady) return;
+  if (audioInitPromise) return audioInitPromise;
+  audioInitPromise = (async () => {
   try {
+    await Audio.setIsEnabledAsync(true);
     await Audio.setAudioModeAsync({
+      // Respect silent switch while still allowing ducked mixing on active playback.
       playsInSilentModeIOS: false,
       allowsRecordingIOS: false,
       staysActiveInBackground: false,
@@ -511,10 +515,46 @@ export const initializeAudio = async (): Promise<void> => {
     }
 
     audioReady = true;
+    audioLastError = null;
   } catch {
     audioReady = false;
+    audioLastError = 'Audio initialization failed';
+  } finally {
+    audioInitPromise = null;
+  }
+  })();
+  return audioInitPromise;
+};
+
+export const ensureAudioReady = async (): Promise<boolean> => {
+  if (!audioReady) {
+    await initializeAudio();
+  }
+  return audioReady;
+};
+
+export const refreshAudioModeOnForeground = async (): Promise<void> => {
+  try {
+    await Audio.setAudioModeAsync({
+      playsInSilentModeIOS: false,
+      allowsRecordingIOS: false,
+      staysActiveInBackground: false,
+      interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+      interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+  } catch {
+    // ignore; next playback attempt will retry full init if needed
   }
 };
+
+export const getAudioDebugState = () => ({
+  ready: audioReady,
+  cacheCount: cache.size,
+  poolCount: pools.size,
+  lastError: audioLastError,
+});
 
 /** UI / reward stingers — reads soundEnabled + sfxVolume from player store */
 export const playSfx = async (name: SfxName): Promise<void> => {

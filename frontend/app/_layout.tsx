@@ -6,10 +6,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
-import { InteractionManager } from 'react-native';
+import { AppState, InteractionManager } from 'react-native';
 import { isBackendConfigured } from '../src/hooks/useApi';
-import { initializeAudio } from '../src/services/audioService';
+import { initializeAudio, refreshAudioModeOnForeground } from '../src/services/audioService';
 import { RootErrorBoundary } from './RootErrorBoundary';
+import { TacticalTheme } from '../src/theme/colors';
 
 enableScreens(true);
 
@@ -37,7 +38,15 @@ export default function RootLayout() {
         }
       })();
     });
-    return () => task.cancel();
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        void refreshAudioModeOnForeground();
+      }
+    });
+    return () => {
+      task.cancel();
+      appStateSub.remove();
+    };
   }, []);
 
   return (
@@ -49,11 +58,12 @@ export default function RootLayout() {
             <Stack
               screenOptions={{
                 headerShown: false,
-                contentStyle: { backgroundColor: '#1a1a2e' },
+                contentStyle: { backgroundColor: TacticalTheme.bg },
                 animation: 'slide_from_right',
               }}
             >
               <Stack.Screen name="index" />
+              <Stack.Screen name="map-selection" />
               <Stack.Screen name="game" options={{ gestureEnabled: false }} />
               <Stack.Screen name="leaderboard" />
               <Stack.Screen name="shop" />

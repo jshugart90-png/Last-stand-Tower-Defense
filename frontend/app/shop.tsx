@@ -38,6 +38,9 @@ import {
   IAP_PRODUCTS, IAP_PRICES, GEM_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
+import { TacticalTheme } from '../src/theme/colors';
+import { PLAYER_LOGOS } from '../src/constants/logos';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 interface Skin {
   id: string;
   name: string;
@@ -46,7 +49,7 @@ interface Skin {
 }
 
 // Tower icon helper
-const getTowerIcon = (type: TowerType, size = 20, color = '#fff') => {
+const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) => {
   switch (type) {
     case 'machine_gun':
       return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
@@ -71,7 +74,7 @@ export default function ShopScreen() {
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins'>('towers');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
   const [adLoading, setAdLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const highlightedTower = useMemo(() => {
@@ -662,6 +665,54 @@ export default function ShopScreen() {
     );
   };
 
+  const renderLogoCard = () => {
+    return (
+      <View>
+        <Text style={styles.sectionTitle}>Player Logos</Text>
+        <Text style={styles.sectionSubtitle}>
+          Collect tactical identity emblems and show them in battle and rankings.
+        </Text>
+        <View style={styles.logoGrid}>
+          {PLAYER_LOGOS.map((logo) => {
+            const owned = playerStore.isLogoUnlocked(logo.id);
+            const equipped = playerStore.selectedLogoId === logo.id;
+            return (
+              <View key={logo.id} style={[styles.logoCard, equipped && styles.logoCardEquipped]}>
+                <PlayerLogoBadge logoId={logo.id} size={44} />
+                <Text style={styles.logoName}>{logo.name}</Text>
+                <Text style={styles.logoMeta}>{logo.subtitle}</Text>
+                {owned ? (
+                  <TouchableOpacity
+                    style={[styles.logoActionBtn, equipped && styles.logoActionBtnEquipped]}
+                    onPress={() => playerStore.equipLogo(logo.id)}
+                    disabled={equipped}
+                  >
+                    <Text style={styles.logoActionText}>{equipped ? 'Equipped' : 'Equip'}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.logoActionBtn}
+                    onPress={() => {
+                      const ok = playerStore.purchaseLogo(logo.id, logo.price);
+                      if (!ok) {
+                        Alert.alert('Not enough gems', `Need ${logo.price} gems to unlock ${logo.name}.`);
+                        return;
+                      }
+                      playerStore.equipLogo(logo.id);
+                    }}
+                  >
+                    <FontAwesome5 name="gem" size={11} color={TacticalTheme.white} />
+                    <Text style={styles.logoActionText}>{logo.price}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -716,6 +767,14 @@ export default function ShopScreen() {
         >
           <Text style={[styles.tabText, selectedTab === 'skins' && styles.tabTextActive]}>
             Skins
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, selectedTab === 'logos' && styles.tabActive]}
+          onPress={() => setSelectedTab('logos')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'logos' && styles.tabTextActive]}>
+            Logos
           </Text>
         </TouchableOpacity>
       </View>
@@ -1027,6 +1086,8 @@ export default function ShopScreen() {
           </View>
         )}
 
+        {selectedTab === 'logos' && renderLogoCard()}
+
         {/* Watch Ad for Coins */}
         <View style={styles.adSection}>
           <TouchableOpacity 
@@ -1052,7 +1113,7 @@ export default function ShopScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   header: {
     flexDirection: 'row',
@@ -1060,15 +1121,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
   },
@@ -1076,19 +1137,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#2a2a4e',
+    backgroundColor: TacticalTheme.panelAlt,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
   },
   coinsText: {
-    color: '#FFD700',
+    color: TacticalTheme.accent,
     fontSize: 16,
     fontWeight: 'bold',
   },
   tabs: {
     flexDirection: 'row',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     paddingHorizontal: 8,
     paddingBottom: 8,
   },
@@ -1099,15 +1160,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   tabActive: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   tabText: {
-    color: '#888',
+    color: TacticalTheme.textMuted,
     fontSize: 14,
     fontWeight: 'bold',
   },
   tabTextActive: {
-    color: '#fff',
+    color: TacticalTheme.text,
   },
   content: {
     flex: 1,
@@ -1117,32 +1178,32 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   sectionTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 4,
   },
   sectionSubtitle: {
-    color: '#888',
+    color: TacticalTheme.textMuted,
     fontSize: 14,
     marginBottom: 16,
   },
   startingCoinsCard: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 12,
     padding: 14,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#2a4a7a',
+    borderColor: TacticalTheme.border,
   },
   startingCoinsTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 17,
     fontWeight: 'bold',
     marginBottom: 6,
   },
   startingCoinsDesc: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 12,
@@ -1153,7 +1214,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   startingCoinsMeta: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1161,14 +1222,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#2ECC71',
+    backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
   },
   coinIncomeCard: {
-    borderColor: '#2a6b4a',
-    backgroundColor: '#121d24',
+    borderColor: TacticalTheme.border,
+    backgroundColor: TacticalTheme.panelAlt,
   },
   coinIncomeHeader: {
     flexDirection: 'row',
@@ -1184,31 +1245,31 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   coinIncomeMultLabel: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
   },
   coinIncomeMultValue: {
-    color: '#2ECC71',
+    color: TacticalTheme.accent,
     fontSize: 22,
     fontWeight: 'bold',
   },
   coinIncomeMultMeta: {
-    color: '#888',
+    color: TacticalTheme.textSubtle,
     fontSize: 12,
   },
   // Tower cards
   towerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     padding: 12,
     borderRadius: 12,
     marginBottom: 10,
   },
   towerCardHighlighted: {
     borderWidth: 2,
-    borderColor: '#2ECC71',
-    shadowColor: '#2ECC71',
+    borderColor: TacticalTheme.accent,
+    shadowColor: TacticalTheme.black,
     shadowOpacity: 0.35,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
@@ -1226,16 +1287,16 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   towerName: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
   towerDesc: {
-    color: '#888',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
   },
   upgradeLevel: {
-    color: '#00FF88',
+    color: TacticalTheme.accent,
     fontSize: 12,
     fontWeight: 'bold',
     marginTop: 2,
@@ -1246,7 +1307,7 @@ const styles = StyleSheet.create({
   unlockButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#9B59B6',
+    backgroundColor: TacticalTheme.accentSoft,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 8,
@@ -1255,7 +1316,7 @@ const styles = StyleSheet.create({
   upgradeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 8,
@@ -1265,7 +1326,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonText: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -1273,7 +1334,7 @@ const styles = StyleSheet.create({
   speedCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     padding: 12,
     borderRadius: 12,
     marginBottom: 10,
@@ -1282,15 +1343,15 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#2a2a4e',
+    backgroundColor: TacticalTheme.panelAlt,
     justifyContent: 'center',
     alignItems: 'center',
   },
   speedIconUnlocked: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   speedText: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -1299,12 +1360,12 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   speedTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
   speedDesc: {
-    color: '#888',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
   },
   freeTag: {
@@ -1475,6 +1536,57 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: '#2a2a4e',
+  },
+  logoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  logoCard: {
+    width: '31%',
+    backgroundColor: TacticalTheme.panel,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    gap: 6,
+  },
+  logoCardEquipped: {
+    borderColor: TacticalTheme.accent,
+    backgroundColor: TacticalTheme.panelAlt,
+  },
+  logoName: {
+    color: TacticalTheme.text,
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  logoMeta: {
+    color: TacticalTheme.textSubtle,
+    fontSize: 10,
+    textAlign: 'center',
+    minHeight: 24,
+  },
+  logoActionBtn: {
+    marginTop: 4,
+    backgroundColor: TacticalTheme.accent,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  logoActionBtnEquipped: {
+    backgroundColor: TacticalTheme.panelAlt,
+    borderWidth: 1,
+    borderColor: TacticalTheme.borderStrong,
+  },
+  logoActionText: {
+    color: TacticalTheme.white,
+    fontSize: 11,
+    fontWeight: '800',
   },
   watchAdButton: {
     flexDirection: 'row',

@@ -279,6 +279,11 @@ export interface ResumePlayerData {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+const MAX_WEAPON_SFX_PER_TICK = 10;
+
+const scratchEnemiesInRange: Enemy[] = [];
+const scratchLaserDamage: { id: string; damage: number }[] = [];
+
 const getBlockedCells = (towers: PlacedTower[]): Set<string> => {
   const blocked = new Set<string>();
   for (const tower of towers) {
@@ -740,7 +745,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         get().startWave();
         return;
       }
-      set({ autoWaveTimer: newTimer });
+      if (Math.abs(newTimer - state.autoWaveTimer) >= 100) {
+        set({ autoWaveTimer: newTimer });
+      }
     }
 
     // ====== MOVE ENEMIES ======
@@ -811,6 +818,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     // ====== TOWER FIRING ======
     const newProjectiles: Projectile[] = [];
     const newLaserBeams: LaserBeam[] = [];
+    let sfxPlayed = 0;
 
     const shopUpgradeLevels = state.towerUpgradeLevels;
 
@@ -839,16 +847,16 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const rangeSq = stats.range * stats.range;
       const tx = tower.position.x;
       const ty = tower.position.y;
-      const enemiesInRange: Enemy[] = [];
+      scratchEnemiesInRange.length = 0;
       for (const enemy of enemiesForTowers) {
         const dx = enemy.position.x - tx;
         const dy = enemy.position.y - ty;
         if (dx * dx + dy * dy <= rangeSq) {
-          enemiesInRange.push(enemy);
+          scratchEnemiesInRange.push(enemy);
         }
       }
 
-      if (enemiesInRange.length === 0) {
+      if (scratchEnemiesInRange.length === 0) {
         if (tower.type === 'laser') {
           return { ...tower, currentTargetId: null, damageAccumulator: 0 };
         }
@@ -858,22 +866,22 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       let target: Enemy;
       switch (tower.targetingMode) {
         case 'first':
-          target = enemiesInRange.reduce((a, b) =>
+          target = scratchEnemiesInRange.reduce((a, b) =>
             a.pathIndex / a.path.length > b.pathIndex / b.path.length ? a : b
           );
           break;
         case 'last':
-          target = enemiesInRange.reduce((a, b) => (a.spawnTime > b.spawnTime ? a : b));
+          target = scratchEnemiesInRange.reduce((a, b) => (a.spawnTime > b.spawnTime ? a : b));
           break;
         case 'strongest':
-          target = enemiesInRange.reduce((a, b) => (a.health > b.health ? a : b));
+          target = scratchEnemiesInRange.reduce((a, b) => (a.health > b.health ? a : b));
           break;
         case 'closest': {
-          let best = enemiesInRange[0];
+          let best = scratchEnemiesInRange[0];
           let bestSq =
             (best.position.x - tx) ** 2 + (best.position.y - ty) ** 2;
-          for (let i = 1; i < enemiesInRange.length; i++) {
-            const e = enemiesInRange[i];
+          for (let i = 1; i < scratchEnemiesInRange.length; i++) {
+            const e = scratchEnemiesInRange[i];
             const dsq = (e.position.x - tx) ** 2 + (e.position.y - ty) ** 2;
             if (dsq < bestSq) {
               best = e;
@@ -884,7 +892,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           break;
         }
         default:
-          target = enemiesInRange[0];
+          target = scratchEnemiesInRange[0];
       }
       
       // Handle laser tower specially
@@ -910,7 +918,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           damage: laserDamage,
         });
 
-        void playWeaponFireSound('laser');
+        if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
+          sfxPlayed += 1;
+          void playWeaponFireSound('laser');
+        }
 
         return {
           ...tower,
@@ -937,19 +948,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
 
       newProjectiles.push(projectile);
-      void playWeaponFireSound(tower.type);
+      if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
+        sfxPlayed += 1;
+        void playWeaponFireSound(tower.type);
+      }
       return { ...tower, lastFireTime: now };
     });
 
     // ====== PROCESS LASER BEAMS (instant damage) ======
-    const laserDamage: { id: string; damage: number }[] = [];
+    scratchLaserDamage.length = 0;
     for (const beam of newLaserBeams) {
-      laserDamage.push({ id: beam.targetId, damage: beam.damage });
+      scratchLaserDamage.push({ id: beam.targetId, damage: beam.damage });
     }
 
     // ====== MOVE PROJECTILES ======
     const projectilesToRemove = new Set<string>();
-    const enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] = [...laserDamage];
+    const enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] =
+      scratchLaserDamage.slice();
     const enemyById = new Map<string, Enemy>();
     for (const enemy of updatedEnemies) {
       enemyById.set(enemy.id, enemy);
@@ -1151,12 +1166,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     if (!state.hasRevive) return false;
     set({
       hasRevive: false,
-      baseHealth: Math.floor(GAME_CONFIG.BASE_HEALTH / 2),
+      baseHealth: Math.max(1, Math.floor(GAME_CONFIG.BASE_HEALTH * 0.4)),
       isGameOver: false,
       isPlaying: true,
       adReviveUsed: true,
-      waveInProgress: false,
-      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      // Keep the run in-flight: resume the same wave immediately after revive.
+      waveInProgress: true,
+      autoWaveTimer: 0,
     });
     return true;
   },

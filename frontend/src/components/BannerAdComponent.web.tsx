@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { TacticalTheme } from '../theme/colors';
 
 interface BannerAdComponentProps {
   isPremium?: boolean;
@@ -19,14 +20,14 @@ const BannerAdComponent: React.FC<BannerAdComponentProps> = ({ isPremium = false
 const styles = StyleSheet.create({
   placeholder: {
     height: 50,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     justifyContent: 'center',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#2a2a4e',
+    borderTopColor: TacticalTheme.border,
   },
   placeholderText: {
-    color: '#444',
+    color: TacticalTheme.textSubtle,
     fontSize: 12,
   },
 });

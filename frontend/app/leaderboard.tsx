@@ -10,11 +10,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { isAxiosError } from 'axios';
 import { usePlayerStore, type PlayerState } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, leaderboardApi } from '../src/hooks/useApi';
+import { TacticalTheme } from '../src/theme/colors';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
 export interface LeaderboardEntry {
   _id: string;
@@ -27,6 +28,7 @@ export interface LeaderboardEntry {
   last_run_gems: number;
   last_run_enemies_killed?: number;
   leaderboard_score?: number;
+  logo_id?: string;
 }
 
 function sortKey(e: Pick<LeaderboardEntry, 'lifetime_enemies_killed' | 'last_run_gems'>): [number, number, number] {
@@ -58,6 +60,7 @@ function entryFromPlayerStore(p: PlayerState): LeaderboardEntry {
     last_run_gems: p.lastRunGemsEarned,
     last_run_enemies_killed: p.lastRunEnemiesKilled,
     leaderboard_score: p.lifetimeEnemiesKilled + p.lastRunGemsEarned,
+    logo_id: p.selectedLogoId,
   };
 }
 
@@ -82,11 +85,20 @@ function normalizeRemoteRow(raw: Record<string, unknown>): LeaderboardEntry {
         ? raw.last_run_enemies_killed
         : Number(raw.last_run_enemies_killed) || 0,
     leaderboard_score: typeof raw.leaderboard_score === 'number' ? raw.leaderboard_score : lk + lr,
+    logo_id: typeof raw.logo_id === 'string' ? raw.logo_id : undefined,
   };
 }
 
 export default function LeaderboardScreen() {
   const router = useRouter();
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/');
+  }, [router]);
+
   const lastLbUpdate = usePlayerStore((s) => s.lastLeaderboardUpdateAt);
   const playerId = usePlayerStore((s) => s.playerId);
   const nickname = usePlayerStore((s) => s.nickname);
@@ -241,7 +253,7 @@ export default function LeaderboardScreen() {
             <MaterialCommunityIcons
               name="trophy"
               size={24}
-              color={rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : '#CD7F32'}
+              color={TacticalTheme.accent}
             />
           ) : (
             <Text style={styles.rankText}>{rank}</Text>
@@ -249,10 +261,13 @@ export default function LeaderboardScreen() {
         </View>
 
         <View style={styles.playerInfo}>
-          <Text style={[styles.nickname, isCurrentPlayer && styles.currentPlayerText]}>
-            {item.nickname}
-            {isCurrentPlayer && ' (You)'}
-          </Text>
+          <View style={styles.nicknameRow}>
+            <PlayerLogoBadge logoId={item.logo_id} size={18} />
+            <Text style={[styles.nickname, isCurrentPlayer && styles.currentPlayerText]}>
+              {item.nickname}
+              {isCurrentPlayer && ' (You)'}
+            </Text>
+          </View>
           <Text style={styles.stats}>
             Kills (total): {item.lifetime_enemies_killed} | Run gems: {item.last_run_gems} | Best wave:{' '}
             {item.best_wave}
@@ -260,7 +275,7 @@ export default function LeaderboardScreen() {
         </View>
 
         <View style={styles.scoreContainer}>
-          <MaterialCommunityIcons name="skull" size={18} color="#a78bfa" />
+          <MaterialCommunityIcons name="skull" size={18} color={TacticalTheme.accent} />
           <Text style={styles.scoreText}>{score}</Text>
         </View>
       </View>
@@ -270,8 +285,8 @@ export default function LeaderboardScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color={TacticalTheme.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Leaderboard</Text>
         <View style={styles.backButton} />
@@ -324,7 +339,7 @@ export default function LeaderboardScreen() {
 
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4A90D9" />
+          <ActivityIndicator size="large" color={TacticalTheme.accent} />
           <Text style={styles.loadingSub}>Loading rankings…</Text>
         </View>
       ) : (
@@ -334,7 +349,7 @@ export default function LeaderboardScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4A90D9" />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={TacticalTheme.accent} />
           }
           ListEmptyComponent={
             showEmpty ? (
@@ -354,7 +369,7 @@ export default function LeaderboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   header: {
     flexDirection: 'row',
@@ -363,7 +378,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   backButton: {
     width: 40,
@@ -372,12 +387,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
   },
   rankBanner: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     paddingVertical: 16,
     paddingHorizontal: 20,
     marginHorizontal: 16,
@@ -386,12 +401,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   rankBannerText: {
-    color: '#FFD700',
+    color: TacticalTheme.accent,
     fontSize: 24,
     fontWeight: 'bold',
   },
   rankBannerSubtext: {
-    color: '#4A90D9',
+    color: TacticalTheme.textMuted,
     fontSize: 14,
     marginTop: 4,
     textAlign: 'center',
@@ -401,10 +416,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 10,
     borderRadius: 8,
-    backgroundColor: '#2a2038',
+    backgroundColor: TacticalTheme.panelAlt,
   },
   offlineHintText: {
-    color: '#b8a4d9',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     textAlign: 'center',
   },
@@ -420,21 +435,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
+    borderColor: TacticalTheme.border,
   },
   modeTabActive: {
-    backgroundColor: '#4A90D9',
-    borderColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
+    borderColor: TacticalTheme.accent,
   },
   modeTabText: {
-    color: '#96a6c4',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
     fontWeight: '700',
   },
   modeTabTextActive: {
-    color: '#fff',
+    color: TacticalTheme.text,
   },
   loadingContainer: {
     flex: 1,
@@ -442,7 +457,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingSub: {
-    color: '#96a6c4',
+    color: TacticalTheme.textMuted,
     marginTop: 12,
     fontSize: 14,
   },
@@ -451,24 +466,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 12,
     borderRadius: 8,
-    backgroundColor: '#3d2020',
+    backgroundColor: TacticalTheme.panelAlt,
     borderWidth: 1,
-    borderColor: '#884444',
+    borderColor: TacticalTheme.borderStrong,
   },
   errorText: {
-    color: '#ffb4b4',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
     marginBottom: 8,
   },
   retryBtn: {
     alignSelf: 'flex-start',
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
   },
   retryBtnText: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontWeight: '700',
     fontSize: 13,
   },
@@ -478,21 +493,21 @@ const styles = StyleSheet.create({
   entryContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 12,
     padding: 16,
     marginBottom: 8,
   },
   currentPlayerEntry: {
     borderWidth: 2,
-    borderColor: '#4A90D9',
+    borderColor: TacticalTheme.accent,
   },
   rankContainer: {
     width: 40,
     alignItems: 'center',
   },
   rankText: {
-    color: '#666',
+    color: TacticalTheme.textSubtle,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -500,16 +515,21 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
   },
+  nicknameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   nickname: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 16,
     fontWeight: 'bold',
   },
   currentPlayerText: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
   },
   stats: {
-    color: '#666',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     marginTop: 4,
   },
@@ -519,7 +539,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   scoreText: {
-    color: '#a78bfa',
+    color: TacticalTheme.accent,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -530,12 +550,12 @@ const styles = StyleSheet.create({
     paddingTop: 60,
   },
   emptyText: {
-    color: '#666',
+    color: TacticalTheme.textMuted,
     fontSize: 18,
     marginTop: 16,
   },
   emptySubtext: {
-    color: '#444',
+    color: TacticalTheme.textSubtle,
     fontSize: 14,
     marginTop: 8,
   },

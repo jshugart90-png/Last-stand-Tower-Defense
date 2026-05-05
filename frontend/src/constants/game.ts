@@ -214,8 +214,8 @@ export const GAME_CONFIG = {
   STARTING_COINS: 100,
   WAVE_DELAY: 3000,
   ENEMY_SPAWN_DELAY: 800,
-  XP_PER_WAVE: 10,
-  XP_PER_KILL: 1,
+  XP_PER_WAVE: 2,
+  XP_PER_KILL: 0.06,
   BOSS_WAVE_INTERVAL: 10,
   /** Softer curve so 2nd/3rd tower stays affordable early */
   TOWER_COST_INCREASE: 1.14,

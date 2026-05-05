@@ -4,13 +4,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
-import { MissionResetHints } from '../src/components/MissionResetHints';
+import { TacticalTheme } from '../src/theme/colors';
+import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
 export default function ProgressionScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const refreshDailyMissions = usePlayerStore((s) => s.refreshDailyMissions);
   const refreshWeeklyMissions = usePlayerStore((s) => s.refreshWeeklyMissions);
+  const [showDailyMissions, setShowDailyMissions] = React.useState(false);
 
   useEffect(() => {
     refreshDailyMissions();
@@ -33,11 +36,12 @@ export default function ProgressionScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={TacticalTheme.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Progress</Text>
         <View style={styles.gemsBadge}>
-          <FontAwesome5 name="gem" size={14} color="#4A90D9" />
+          <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={22} />
+          <FontAwesome5 name="gem" size={14} color={TacticalTheme.accent} />
           <Text style={styles.gemsText}>{playerStore.gems}</Text>
         </View>
       </View>
@@ -65,16 +69,19 @@ export default function ProgressionScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Daily Missions</Text>
-        <MissionResetHints />
-        {playerStore.dailyMissions.map((mission) => (
-          <View key={`daily-${mission.id}`} style={styles.missionCard}>
-            <Text style={styles.missionLabel}>{mission.label}</Text>
-            <Text style={styles.missionMeta}>
-              {mission.completed ? 'Completed' : `${mission.progress}/${mission.target}`} • +{mission.rewardGems} gems
+        <TouchableOpacity
+          style={styles.dailyMissionsPrimaryButton}
+          onPress={() => setShowDailyMissions(true)}
+          activeOpacity={0.85}
+        >
+          <View>
+            <Text style={styles.dailyMissionsPrimaryTitle}>Daily Missions</Text>
+            <Text style={styles.dailyMissionsPrimarySub}>
+              {playerStore.dailyMissions.filter((m) => m.completed).length}/{playerStore.dailyMissions.length} completed
             </Text>
           </View>
-        ))}
+          <Ionicons name="chevron-forward" size={20} color={TacticalTheme.white} />
+        </TouchableOpacity>
 
         <Text style={styles.sectionTitle}>Weekly Missions</Text>
         {playerStore.weeklyMissions.map((mission) => (
@@ -100,6 +107,12 @@ export default function ProgressionScreen() {
           </View>
         ))}
       </ScrollView>
+
+      <DailyMissionsModal
+        visible={showDailyMissions}
+        missions={playerStore.dailyMissions}
+        onClose={() => setShowDailyMissions(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -107,7 +120,7 @@ export default function ProgressionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   header: {
     flexDirection: 'row',
@@ -115,15 +128,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
   },
@@ -133,7 +146,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   gemsText: {
-    color: '#FFD700',
+    color: TacticalTheme.text,
     fontWeight: 'bold',
   },
   content: {
@@ -147,52 +160,76 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
+    borderColor: TacticalTheme.border,
   },
   summaryLabel: {
-    color: '#8aa0bf',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginBottom: 4,
   },
   summaryValue: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
   },
   sectionTitle: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 18,
     fontWeight: 'bold',
     marginTop: 12,
     marginBottom: 8,
   },
+  dailyMissionsPrimaryButton: {
+    backgroundColor: TacticalTheme.accent,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.borderStrong,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginTop: 10,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dailyMissionsPrimaryTitle: {
+    color: TacticalTheme.white,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  dailyMissionsPrimarySub: {
+    color: TacticalTheme.text,
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
   missionCard: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
+    borderColor: TacticalTheme.border,
     padding: 12,
     marginBottom: 8,
   },
   missionLabel: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 2,
   },
   missionMeta: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 12,
   },
   achievementCard: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#2a2a4e',
+    borderColor: TacticalTheme.border,
     padding: 12,
     marginBottom: 8,
     flexDirection: 'row',
@@ -200,27 +237,27 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   achievementLabel: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: '600',
   },
   achievementDesc: {
-    color: '#b4bfd1',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
   achievementReward: {
-    color: '#FFD700',
+    color: TacticalTheme.accent,
     fontSize: 12,
     marginTop: 2,
   },
   achievementStatus: {
-    color: '#888',
+    color: TacticalTheme.textSubtle,
     fontSize: 12,
     fontWeight: '700',
     alignSelf: 'center',
   },
   achievementUnlocked: {
-    color: '#2ECC71',
+    color: TacticalTheme.accent,
   },
 });

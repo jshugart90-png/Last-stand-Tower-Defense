@@ -6,6 +6,7 @@ import {
   formatMissionResetCountdown,
   formatNextDailyResetClock,
 } from '../utils/missionReset';
+import { TacticalTheme } from '../theme/colors';
 
 const TICK_MS = 30_000;
 
@@ -45,20 +46,20 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   line: {
-    color: '#8fa4c4',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     lineHeight: 16,
   },
   label: {
-    color: '#b8c9de',
+    color: TacticalTheme.text,
     fontWeight: '700',
   },
   em: {
-    color: '#5dade2',
+    color: TacticalTheme.accent,
     fontWeight: '800',
   },
   meta: {
-    color: '#5d6d85',
+    color: TacticalTheme.textSubtle,
     fontWeight: '500',
   },
 });

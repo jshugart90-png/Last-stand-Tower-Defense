@@ -41,11 +41,11 @@ import {
   scaledTotalPerformanceGems,
   endGamePerformanceRemainder,
   COMBO_BONUS_GEMS,
+  type EnemyType,
 } from '../src/constants/game';
 import { gameApi, analyticsApi, rewardApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
 import { 
-  isRewardedAdReady, showRewardedAd, loadRewardedAd, 
   isNativeAdsAvailable, isAdsInitialized,
   showInterstitialAd, isInterstitialAdReady
 } from '../src/services/adService';
@@ -56,6 +56,9 @@ import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
+import { getMapById, promoteEnemyType } from '../src/constants/maps';
+import { TacticalTheme } from '../src/theme/colors';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -83,10 +86,45 @@ class GestureAreaErrorBoundary extends Component<
     if (this.state.err) {
       return (
         <View style={[{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }, this.props.style]}>
-          <Text style={{ color: '#e74c3c', textAlign: 'center' }}>
+          <Text style={{ color: TacticalTheme.accent, textAlign: 'center' }}>
             Map gestures paused. Leave and re-enter the game to continue.
           </Text>
         </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+class GameRuntimeErrorBoundary extends Component<
+  { children: ReactNode; onRecover?: () => void },
+  { err: Error | null }
+> {
+  state = { err: null as Error | null };
+
+  static getDerivedStateFromError(err: Error) {
+    return { err };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error('[Game runtime error]', err?.message, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.err) {
+      return (
+        <SafeAreaView style={[styles.container, styles.runtimeErrorWrap]}>
+          <Text style={styles.runtimeErrorTitle}>Game recovered from a runtime error</Text>
+          <Text style={styles.runtimeErrorBody}>
+            The run was stopped to prevent a crash. You can safely restart.
+          </Text>
+          <TouchableOpacity
+            style={styles.runtimeErrorButton}
+            onPress={this.props.onRecover}
+          >
+            <Text style={styles.runtimeErrorButtonText}>Return Home</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
       );
     }
     return this.props.children;
@@ -96,6 +134,10 @@ const getUtcDayKey = (ts: number) => {
   const d = new Date(ts);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 };
+
+const LOOP_STEP_MS = 1000 / 30;
+const MAX_FRAME_DELTA_MS = 250;
+const MAX_SUBSTEPS_PER_FRAME = 6;
 
 // Helper function for tower icons
 const getTowerIcon = (type: TowerType, size = 20) => {
@@ -959,6 +1001,10 @@ const GameOverFlowModal = ({
   triumphCount,
   triumphsNeeded,
   rewardSummary,
+  canRevive,
+  reviveUsed,
+  onRevive,
+  isReviving,
   onSeeResults,
   onHome,
   onPlayAgain,
@@ -980,6 +1026,10 @@ const GameOverFlowModal = ({
     xpEarned: number;
     gemsEarned: number;
   };
+  canRevive: boolean;
+  reviveUsed: boolean;
+  onRevive: () => void;
+  isReviving: boolean;
   onSeeResults: () => void;
   onHome: () => void;
   onPlayAgain: () => void;
@@ -1016,9 +1066,31 @@ const GameOverFlowModal = ({
               Slaughter stars this session: {triumphCount}/{triumphsNeeded}
             </Text>
             <Text style={styles.gameOverWave}>Wave {wave} • Score {score}</Text>
+            {canRevive && (
+              <View style={styles.revivePromptWrap}>
+                <Text style={styles.revivePromptTitle}>Base destroyed - emergency revive available</Text>
+                <Text style={styles.revivePromptBody}>
+                  Watch one rewarded ad to restore partial base health and continue this wave.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.watchAdButton, isReviving && styles.watchAdButtonDisabled]}
+                  onPress={onRevive}
+                  disabled={isReviving}
+                >
+                  <Ionicons name="play-circle" size={20} color={TacticalTheme.white} />
+                  <Text style={styles.watchAdText}>
+                    {isReviving ? 'Reviving...' : 'Watch Ad to Revive'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={styles.revivePromptLimit}>One revive per run</Text>
+              </View>
+            )}
+            {!canRevive && reviveUsed && (
+              <Text style={styles.reviveUsedText}>Revive already used this run</Text>
+            )}
             <TouchableOpacity style={styles.resultsPrimaryButton} onPress={onSeeResults}>
               <Text style={styles.resultsPrimaryText}>See results</Text>
-              <Ionicons name="chevron-forward" size={22} color="#1a1a2e" />
+              <Ionicons name="chevron-forward" size={22} color={TacticalTheme.white} />
             </TouchableOpacity>
           </View>
         ) : (
@@ -1183,15 +1255,23 @@ export default function GameScreen() {
   const runStartBestWaveRef = useRef<number>(0);
   const lastMissionCompletedCountRef = useRef<number>(0);
   const initializedRef = useRef(false);
-  const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
+  const rafRef = useRef<number | null>(null);
   const lastUpdateRef = useRef<number>(Date.now());
-  const spawnTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const frameAccumRef = useRef(0);
+  const gameEndHandledRef = useRef(false);
   const spawningCompleteRef = useRef<boolean>(false);
+  const waveScheduleRef = useRef<{ atMs: number; type: any }[]>([]);
+  const waveSpawnCursorRef = useRef(0);
+  const waveElapsedMsRef = useRef(0);
+  const waveKeyRef = useRef<string>('');
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [eliteWaveNotice, setEliteWaveNotice] = useState<string | null>(null);
   const [gameOverStep, setGameOverStep] = useState<'over' | 'results'>('over');
+  const [isReviving, setIsReviving] = useState(false);
   
   const playerStore = usePlayerStore();
+  const registerRunStarted = usePlayerStore((s) => s.registerRunStarted);
+  const selectedMap = useMemo(() => getMapById(playerStore.currentMapId), [playerStore.currentMapId]);
   const dailyMissions = usePlayerStore((s) => s.dailyMissions);
   const vfxQuality = usePlayerStore((s) => s.vfxQuality);
   useEffect(() => {
@@ -1244,6 +1324,7 @@ export default function GameScreen() {
     setGameSpeed,
     consumeRevive,
     grantRevive,
+    canUseAdRevive,
     getCurrentCoins,
     lastWaveBonus,
     showBonusPopup,
@@ -1293,6 +1374,7 @@ export default function GameScreen() {
       setGameSpeed: s.setGameSpeed,
       consumeRevive: s.useRevive,
       grantRevive: s.grantRevive,
+      canUseAdRevive: s.canUseAdRevive,
       getCurrentCoins: s.getCurrentCoins,
       lastWaveBonus: s.lastWaveBonus,
       showBonusPopup: s.showBonusPopup,
@@ -1358,6 +1440,8 @@ export default function GameScreen() {
     if (isGameOver) setGameOverStep('over');
   }, [isGameOver]);
 
+  const reviveAvailable = isGameOver && canUseAdRevive();
+
   const [showResumePrompt, setShowResumePrompt] = useState(false);
 
   const boardWidth = gridCols * cellSize;
@@ -1378,6 +1462,12 @@ export default function GameScreen() {
       // Show resume prompt
       setShowResumePrompt(true);
     } else {
+      const applyAdminWaveOverride = () => {
+        if (!playerStore.adminModeEnabled) return;
+        const startWave = Math.max(1, Math.min(200, Math.floor(playerStore.adminStartWave || 1)));
+        if (startWave <= 1) return;
+        useGameStore.setState({ currentWave: startWave - 1 });
+      };
       // Start new game
       startGame(
         playerStore.unlockedTowers,
@@ -1387,6 +1477,8 @@ export default function GameScreen() {
         playerStore.arenaExpansions,
         playerStore.currentMapId
       );
+      registerRunStarted();
+      applyAdminWaveOverride();
     }
     
     if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
@@ -1397,10 +1489,17 @@ export default function GameScreen() {
     }
     
     return () => {
-      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
-      spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      waveScheduleRef.current = [];
+      waveSpawnCursorRef.current = 0;
+      waveElapsedMsRef.current = 0;
+      spawningCompleteRef.current = false;
+      frameAccumRef.current = 0;
     };
-  }, [playerStore, startGame]);
+  }, [playerStore, startGame, registerRunStarted]);
 
   // Handle resume saved game
   const handleResumeGame = useCallback(() => {
@@ -1418,6 +1517,12 @@ export default function GameScreen() {
 
   // Handle start new game (discard saved)
   const handleStartNewGame = useCallback(() => {
+    const applyAdminWaveOverride = () => {
+      if (!playerStore.adminModeEnabled) return;
+      const startWave = Math.max(1, Math.min(200, Math.floor(playerStore.adminStartWave || 1)));
+      if (startWave <= 1) return;
+      useGameStore.setState({ currentWave: startWave - 1 });
+    };
     playerStore.clearSavedGame();
     startGame(
       playerStore.unlockedTowers,
@@ -1427,8 +1532,10 @@ export default function GameScreen() {
       playerStore.arenaExpansions,
       playerStore.currentMapId
     );
+    registerRunStarted();
+    applyAdminWaveOverride();
     setShowResumePrompt(false);
-  }, [playerStore, startGame]);
+  }, [playerStore, startGame, registerRunStarted]);
 
   // Handle back button (Android)
   useEffect(() => {
@@ -1443,86 +1550,117 @@ export default function GameScreen() {
     return () => backHandler.remove();
   }, [isPlaying, isGameOver]);
 
-  // Game loop
   useEffect(() => {
     if (!isPlaying || isPaused) {
-      if (gameLoopRef.current) {
-        clearInterval(gameLoopRef.current);
-        gameLoopRef.current = null;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
       }
+      frameAccumRef.current = 0;
+      lastUpdateRef.current = Date.now();
       return;
     }
 
+    let cancelled = false;
     lastUpdateRef.current = Date.now();
-    
-    gameLoopRef.current = setInterval(() => {
-      const now = Date.now();
-      const deltaTime = Math.min(now - lastUpdateRef.current, 100);
-      lastUpdateRef.current = now;
+    frameAccumRef.current = 0;
 
-      useGameStore.getState().gameTick(deltaTime);
-      
-      const state = useGameStore.getState();
-      if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
-        endWave();
-        spawningCompleteRef.current = false;
-        handleSaveCoins(state.coins);
-        
-        // Show interstitial ad every 10 waves (skip for premium users)
-        const completedWave = useGameStore.getState().currentWave;
-        if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
-          const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
-          if (nativeAdsReady && isInterstitialAdReady()) {
-            showInterstitialAd().catch(console.error);
+    const runTick = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      const rawDelta = now - lastUpdateRef.current;
+      lastUpdateRef.current = now;
+      frameAccumRef.current += Math.min(rawDelta, MAX_FRAME_DELTA_MS);
+
+      let substeps = 0;
+      while (frameAccumRef.current >= LOOP_STEP_MS && substeps < MAX_SUBSTEPS_PER_FRAME) {
+        frameAccumRef.current -= LOOP_STEP_MS;
+        substeps += 1;
+        const state = useGameStore.getState();
+        if (!state.isPlaying || state.isPaused) break;
+        state.gameTick(LOOP_STEP_MS);
+
+        if (state.waveInProgress) {
+          waveElapsedMsRef.current += LOOP_STEP_MS * state.gameSpeed;
+          while (
+            waveSpawnCursorRef.current < waveScheduleRef.current.length &&
+            waveScheduleRef.current[waveSpawnCursorRef.current].atMs <= waveElapsedMsRef.current
+          ) {
+            const next = waveScheduleRef.current[waveSpawnCursorRef.current];
+            const waveConfig = getWaveConfig(state.currentWave);
+            const mapHealthMult = selectedMap?.enemyHealthMultiplier ?? 1;
+            const mapSpeedMult = selectedMap?.enemySpeedMultiplier ?? 1;
+            state.spawnEnemy(
+              next.type as EnemyType,
+              waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult,
+              waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult
+            );
+            waveSpawnCursorRef.current += 1;
+          }
+          if (waveSpawnCursorRef.current >= waveScheduleRef.current.length) {
+            spawningCompleteRef.current = true;
+          }
+        }
+
+        if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
+          endWave();
+          spawningCompleteRef.current = false;
+          handleSaveCoins(state.coins);
+          const completedWave = useGameStore.getState().currentWave;
+          if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
+            const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+            if (nativeAdsReady && isInterstitialAdReady()) {
+              void showInterstitialAd().catch(console.error);
+            }
           }
         }
       }
-    }, 33);
 
-    return () => {
-      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+      rafRef.current = requestAnimationFrame(runTick);
     };
-  }, [isPlaying, isPaused, endWave, playerStore.premium]);
 
-  // Wave spawning
+    rafRef.current = requestAnimationFrame(runTick);
+    return () => {
+      cancelled = true;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isPlaying, isPaused, endWave, playerStore.premium, dailyChallenge, selectedMap]);
+
   useEffect(() => {
-    if (!waveInProgress || !isPlaying) return;
+    if (!waveInProgress || !isPlaying) {
+      waveScheduleRef.current = [];
+      waveSpawnCursorRef.current = 0;
+      waveElapsedMsRef.current = 0;
+      spawningCompleteRef.current = false;
+      waveKeyRef.current = '';
+      return;
+    }
 
-    spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
-    spawnTimeoutsRef.current = [];
-    spawningCompleteRef.current = false;
+    const waveId = `${currentWave}:${dailyChallenge.enemyHealthMultiplier}:${dailyChallenge.enemySpeedMultiplier}`;
+    if (waveKeyRef.current === waveId && waveScheduleRef.current.length > 0) return;
 
     const waveConfig = getWaveConfig(currentWave);
-    const challengeHealthMultiplier = dailyChallenge.enemyHealthMultiplier;
-    const challengeSpeedMultiplier = dailyChallenge.enemySpeedMultiplier;
+    const schedule: { atMs: number; type: EnemyType }[] = [];
+    const mapSpawnMult = selectedMap?.spawnDelayMultiplier ?? 1;
+    const tierShift = selectedMap?.enemyTierShift ?? 0;
     let delay = 500;
-
-    waveConfig.enemies.forEach(({ type, count }) => {
+    for (const { type, count } of waveConfig.enemies) {
       for (let i = 0; i < count; i++) {
-        const timeoutId = setTimeout(() => {
-          const state = useGameStore.getState();
-          if (state.isPlaying && !state.isPaused && state.waveInProgress) {
-            state.spawnEnemy(
-              type as any,
-              waveConfig.healthMultiplier * challengeHealthMultiplier,
-              waveConfig.speedMultiplier * challengeSpeedMultiplier
-            );
-          }
-        }, delay / gameSpeed);
-        spawnTimeoutsRef.current.push(timeoutId);
-        delay += GAME_CONFIG.ENEMY_SPAWN_DELAY;
+        const promoted = promoteEnemyType(type, tierShift);
+        schedule.push({ atMs: delay, type: promoted });
+        delay += GAME_CONFIG.ENEMY_SPAWN_DELAY * mapSpawnMult;
       }
-    });
+    }
 
-    const completionTimeout = setTimeout(() => {
-      spawningCompleteRef.current = true;
-    }, (delay + 100) / gameSpeed);
-
-    return () => {
-      spawnTimeoutsRef.current.forEach(t => clearTimeout(t));
-      clearTimeout(completionTimeout);
-    };
-  }, [waveInProgress, currentWave, isPlaying, gameSpeed, dailyChallenge]);
+    waveScheduleRef.current = schedule;
+    waveSpawnCursorRef.current = 0;
+    waveElapsedMsRef.current = 0;
+    spawningCompleteRef.current = false;
+    waveKeyRef.current = waveId;
+  }, [waveInProgress, currentWave, isPlaying, dailyChallenge, selectedMap]);
 
   useEffect(() => {
     if (!waveInProgress || currentWave <= 0) return;
@@ -1576,9 +1714,8 @@ export default function GameScreen() {
     // Save game state for resume
     saveGameState();
     await handleSaveCoins(getCurrentCoins());
-    playerStore.recordGame(currentWave, enemiesKilled, towersPlaced);
     router.replace('/');
-  }, [saveGameState, getCurrentCoins, currentWave, enemiesKilled, towersPlaced, router, playerStore]);
+  }, [saveGameState, getCurrentCoins, router]);
 
   const handleCancelExit = useCallback(() => {
     setShowExitWarning(false);
@@ -1653,10 +1790,16 @@ export default function GameScreen() {
   }, [selectedPlacedTower, setTowerTargeting]);
 
   const handleGameEnd = useCallback(async () => {
+    if (gameEndHandledRef.current) return;
+    gameEndHandledRef.current = true;
     if (!playerStore.playerId) return;
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
-    const baseXpReward = Math.max(1, currentWave * 2);
+    // Slower progression: modest wave XP + small kill XP + light round completion XP.
+    const waveXp = Math.max(1, Math.floor(currentWave * 0.65));
+    const killXp = Math.floor(enemiesKilled * 0.06);
+    const roundXp = currentWave >= 1 ? 1 : 0;
+    const baseXpReward = waveXp + killXp + roundXp;
     const waveGemProgress = useGameStore.getState().runGemsFromWavePart;
     const remainderPerf = endGamePerformanceRemainder(currentWave, enemiesKilled, waveGemProgress);
     const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
@@ -1676,6 +1819,7 @@ export default function GameScreen() {
       }
       const runGemsTotal = totalGemReward + comboResult.bonusGems;
       playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+      playerStore.recordMapBestWave(playerStore.currentMapId, currentWave);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
       return;
@@ -1709,6 +1853,7 @@ export default function GameScreen() {
       const runGemsTotal =
         (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
       playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+      playerStore.recordMapBestWave(playerStore.currentMapId, currentWave);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
     } catch (error) {
@@ -1717,10 +1862,15 @@ export default function GameScreen() {
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
-    if (isGameOver) {
-      handleGameEnd();
+    if (!isGameOver) {
+      gameEndHandledRef.current = false;
+      return;
     }
-  }, [isGameOver, handleGameEnd]);
+    if (canUseAdRevive()) {
+      return;
+    }
+    void handleGameEnd();
+  }, [isGameOver, handleGameEnd, canUseAdRevive]);
 
   useEffect(() => {
     const completed = dailyMissions.filter((m) => m.completed).length;
@@ -1748,80 +1898,44 @@ export default function GameScreen() {
   ]);
 
   const handleWatchAdForRevive = useCallback(async () => {
-    const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
-    
-    if (nativeAdsReady && isRewardedAdReady()) {
-      // Show real rewarded ad for revive
-      try {
-        const reward = await showRewardedAd();
-        if (reward) {
-          grantRevive();
-          consumeRevive();
-          
-          if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
-            try {
-              await rewardApi.claim({
-                player_id: playerStore.playerId,
-                reward_type: 'revive',
-                ad_type: 'rewarded',
-              });
-            } catch (e) {
-              console.error('Error claiming reward:', e);
-            }
-          }
-          // Pre-load next ad
-          loadRewardedAd();
-        } else {
-          Alert.alert('No Reward', 'You need to watch the full ad to revive.');
+    if (!isGameOver || !canUseAdRevive() || isReviving) return;
+    setIsReviving(true);
+    try {
+      // TODO: integrate real ad SDK here - expo-ads or chosen provider.
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      grantRevive();
+      const didRevive = consumeRevive();
+      if (!didRevive) return;
+      setGameOverStep('over');
+      setIsReviving(false);
+      if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
+        try {
+          await rewardApi.claim({
+            player_id: playerStore.playerId,
+            reward_type: 'revive',
+            ad_type: 'rewarded_simulated',
+          });
+        } catch (e) {
+          console.error('Error claiming revive reward:', e);
         }
-      } catch (e) {
-        console.error('Error showing revive ad:', e);
-        Alert.alert('Error', 'Failed to show ad. Please try again.');
       }
-    } else if (nativeAdsReady && !isRewardedAdReady()) {
-      // Try to load ad
-      Alert.alert('Loading Ad', 'Please wait...');
-      const loaded = await loadRewardedAd();
-      if (loaded) {
-        handleWatchAdForRevive();
-      } else {
-        Alert.alert('Ad Unavailable', 'No ads available right now.');
-      }
-    } else {
-      // Non-native fallback (development/web)
-      Alert.alert(
-        'Watch Ad',
-        'Rewarded ads require a native build.\n\nSimulate watching ad to revive?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Simulate',
-            onPress: async () => {
-              grantRevive();
-              consumeRevive();
-              
-              if (playerStore.playerId && isServerBackedPlayerId(playerStore.playerId)) {
-                try {
-                  await rewardApi.claim({
-                    player_id: playerStore.playerId,
-                    reward_type: 'revive',
-                    ad_type: 'rewarded',
-                  });
-                } catch (e) {
-                  console.error('Error claiming reward:', e);
-                }
-              }
-            },
-          },
-        ]
-      );
+      return;
+    } finally {
+      setIsReviving(false);
     }
-  }, [playerStore, grantRevive, consumeRevive]);
+  }, [isGameOver, canUseAdRevive, isReviving, grantRevive, consumeRevive, playerStore.playerId]);
 
   const handleRestart = useCallback(() => {
     playerStore.clearSavedGame(); // Clear saved game on restart
     restartGame();
   }, [restartGame, playerStore]);
+
+  const handleSeeResults = useCallback(() => {
+    if (!gameEndHandledRef.current) {
+      void handleGameEnd();
+    }
+    setGameOverStep('results');
+  }, [handleGameEnd]);
 
   const handleExit = useCallback(() => {
     playerStore.clearSavedGame(); // Clear saved game on exit after game over
@@ -1834,7 +1948,10 @@ export default function GameScreen() {
   };
 
   const rewardSummary = useMemo(() => {
-    const baseXpReward = Math.max(1, currentWave * 2);
+    const waveXp = Math.max(1, Math.floor(currentWave * 0.65));
+    const killXp = Math.floor(enemiesKilled * 0.06);
+    const roundXp = currentWave >= 1 ? 1 : 0;
+    const baseXpReward = waveXp + killXp + roundXp;
     const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
     const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
     const challengeGemReward = Math.floor(P_scaled * Math.max(0, dailyChallenge.gemMultiplier - 1));
@@ -1874,7 +1991,8 @@ export default function GameScreen() {
   }, [dailyMissions]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <GameRuntimeErrorBoundary onRecover={() => router.replace('/')}>
+      <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={handleExitAttempt} style={styles.headerButton}>
@@ -1882,6 +2000,12 @@ export default function GameScreen() {
         </TouchableOpacity>
         
         <View style={styles.statsRow}>
+          <View style={styles.playerHudBadge}>
+            <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={20} />
+            <Text style={styles.playerHudName} numberOfLines={1}>
+              {playerStore.nickname}
+            </Text>
+          </View>
           <View style={styles.stat}>
             <Ionicons name="heart" size={16} color="#E74C3C" />
             <Text style={styles.statValue}>{baseHealth}</Text>
@@ -2047,7 +2171,13 @@ export default function GameScreen() {
         triumphCount={sessionSlaughterTriumphs}
         triumphsNeeded={SESSION_BOUNTY_TRIUMPHS_NEEDED}
         rewardSummary={rewardSummary}
-        onSeeResults={() => setGameOverStep('results')}
+        canRevive={reviveAvailable}
+        reviveUsed={!canUseAdRevive()}
+        onRevive={() => {
+          void handleWatchAdForRevive();
+        }}
+        isReviving={isReviving}
+        onSeeResults={handleSeeResults}
         onHome={handleExit}
         onPlayAgain={handleRestart}
       />
@@ -2094,14 +2224,43 @@ export default function GameScreen() {
           </TouchableOpacity>
         </View>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </GameRuntimeErrorBoundary>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
+  },
+  runtimeErrorWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  runtimeErrorTitle: {
+    color: TacticalTheme.accent,
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  runtimeErrorBody: {
+    color: TacticalTheme.text,
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  runtimeErrorButton: {
+    backgroundColor: TacticalTheme.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+  runtimeErrorButtonText: {
+    color: TacticalTheme.white,
+    fontWeight: '700',
   },
   header: {
     flexDirection: 'row',
@@ -2109,7 +2268,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 6,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
   },
   headerButton: {
     padding: 6,
@@ -2118,18 +2277,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  playerHudBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: 140,
+  },
+  playerHudName: {
+    color: TacticalTheme.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   stat: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
   statValue: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: 'bold',
   },
   gemStatValue: {
-    color: '#a8e6ff',
+    color: TacticalTheme.textMuted,
   },
   coinMultHint: {
     flexDirection: 'row',
@@ -2137,12 +2307,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 4,
-    backgroundColor: '#121a2a',
+    backgroundColor: TacticalTheme.panelAlt,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   coinMultHintText: {
-    color: '#c9b85c',
+    color: TacticalTheme.accent,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -2152,9 +2322,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: '#0d1118',
+    backgroundColor: TacticalTheme.bgElevated,
     borderBottomWidth: 1,
-    borderBottomColor: '#1e2a3c',
+    borderBottomColor: TacticalTheme.border,
   },
   carnageBarLeft: {
     flexDirection: 'row',
@@ -2162,12 +2332,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   carnageBarStrong: {
-    color: '#FF6B4A',
+    color: TacticalTheme.accent,
     fontSize: 18,
     fontWeight: '800',
   },
   carnageBarLabel: {
-    color: '#6b7c99',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     fontWeight: '600',
   },
@@ -2175,12 +2345,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   carnageBarMuted: {
-    color: '#5a6a85',
+    color: TacticalTheme.textSubtle,
     fontSize: 10,
     fontWeight: '600',
   },
   carnageBarSession: {
-    color: '#5dade2',
+    color: TacticalTheme.accent,
     fontSize: 16,
     fontWeight: '800',
   },
@@ -2190,12 +2360,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   carnageBarStars: {
-    color: '#f1c40f',
+    color: TacticalTheme.accent,
     fontSize: 14,
     fontWeight: '800',
   },
   carnageBarStarsHint: {
-    color: '#6b7c99',
+    color: TacticalTheme.textMuted,
     fontSize: 10,
     fontWeight: '600',
   },
@@ -2204,36 +2374,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     paddingVertical: 6,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   speedButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 4,
-    backgroundColor: '#2a2a4e',
+    backgroundColor: TacticalTheme.panelAlt,
     minWidth: 48,
     alignItems: 'center',
   },
   speedButtonActive: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   speedButtonLocked: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: TacticalTheme.borderStrong,
   },
   speedButtonText: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 12,
     fontWeight: 'bold',
   },
   speedButtonTextActive: {
-    color: '#fff',
+    color: TacticalTheme.text,
   },
   speedButtonTextLocked: {
-    color: '#888',
+    color: TacticalTheme.textSubtle,
   },
   lockIcon: {
     fontSize: 10,
@@ -2244,9 +2414,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   waveInfoText: {
     color: '#fff',
@@ -2651,21 +2821,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   gameOverModal: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.panel,
     borderRadius: 16,
     padding: 32,
     alignItems: 'center',
     width: '85%',
     maxWidth: 350,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
   },
   gameOverTitle: {
-    color: '#E74C3C',
+    color: TacticalTheme.accent,
     fontSize: 32,
     fontWeight: 'bold',
     marginBottom: 16,
   },
   gameOverWave: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 24,
     marginBottom: 8,
   },
@@ -2679,7 +2851,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   gameOverKillsNumber: {
-    color: '#FF6B4A',
+    color: TacticalTheme.accent,
     fontSize: 56,
     fontWeight: '800',
     lineHeight: 60,
@@ -2688,13 +2860,13 @@ const styles = StyleSheet.create({
     textShadowRadius: 16,
   },
   gameOverKillsCaption: {
-    color: '#b8c5dd',
+    color: TacticalTheme.textMuted,
     fontSize: 14,
     fontWeight: '600',
     marginTop: 4,
   },
   gameOverSlaughterHint: {
-    color: '#8fa4c4',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     textAlign: 'center',
     lineHeight: 18,
@@ -2705,29 +2877,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f1c40f',
+    backgroundColor: TacticalTheme.accentSoft,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
     marginBottom: 10,
   },
   slaughterEarnedText: {
-    color: '#1a0f0a',
+    color: TacticalTheme.text,
     fontSize: 13,
     fontWeight: '800',
     flex: 1,
   },
   gameOverSessionLine: {
-    color: '#c5d2e8',
+    color: TacticalTheme.text,
     fontSize: 14,
     marginBottom: 4,
   },
   gameOverSessionEm: {
-    color: '#5dade2',
+    color: TacticalTheme.accent,
     fontWeight: '800',
   },
   gameOverTriumphLine: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginBottom: 10,
   },
@@ -2779,14 +2951,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 12,
     width: '100%',
   },
   resultsPrimaryText: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 17,
     fontWeight: 'bold',
   },
@@ -2878,19 +3050,57 @@ const styles = StyleSheet.create({
   watchAdButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#9B59B6',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 14,
     paddingHorizontal: 24,
-    borderRadius: 8,
+    borderRadius: 10,
     marginBottom: 12,
     gap: 8,
     width: '100%',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: TacticalTheme.borderStrong,
+  },
+  watchAdButtonDisabled: {
+    opacity: 0.6,
   },
   watchAdText: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  revivePromptWrap: {
+    width: '100%',
+    backgroundColor: TacticalTheme.bgElevated,
+    borderColor: TacticalTheme.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  revivePromptTitle: {
+    color: TacticalTheme.accent,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  revivePromptBody: {
+    color: TacticalTheme.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  revivePromptLimit: {
+    color: TacticalTheme.textSubtle,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  reviveUsedText: {
+    color: TacticalTheme.textSubtle,
+    fontSize: 12,
+    marginBottom: 8,
   },
   restartButton: {
     backgroundColor: '#4A90D9',

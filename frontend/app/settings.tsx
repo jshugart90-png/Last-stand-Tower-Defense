@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -17,12 +17,20 @@ import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS } from '../src/constants/game';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
+import { ensureAudioReady, getAudioDebugState, playSfx } from '../src/services/audioService';
+import { TacticalTheme } from '../src/theme/colors';
+import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [changeNameOpen, setChangeNameOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+  const [adminWaveDraft, setAdminWaveDraft] = useState(String(playerStore.adminStartWave || 1));
+
+  useEffect(() => {
+    setAdminWaveDraft(String(playerStore.adminStartWave || 1));
+  }, [playerStore.adminStartWave]);
 
   const openChangeName = () => {
     setNameDraft(playerStore.nickname || '');
@@ -88,6 +96,22 @@ export default function SettingsScreen() {
     );
   };
 
+  const handleTestAudio = async () => {
+    const ok = await ensureAudioReady();
+    if (!ok) {
+      const dbg = getAudioDebugState();
+      Alert.alert(
+        'Audio unavailable',
+        `Could not initialize audio engine.\n${dbg.lastError ?? 'No extra details.'}`
+      );
+      return;
+    }
+    await playSfx('combo');
+    setTimeout(() => {
+      void playSfx('chest');
+    }, 120);
+  };
+
   const handleResetProgress = () => {
     Alert.alert(
       'Reset Progress',
@@ -104,6 +128,12 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  const saveAdminWaveOverride = () => {
+    const next = Math.max(1, Math.min(200, Math.floor(Number(adminWaveDraft) || 1)));
+    playerStore.setAdminStartWave(next);
+    setAdminWaveDraft(String(next));
   };
 
   return (
@@ -144,7 +174,7 @@ export default function SettingsScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={TacticalTheme.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Settings</Text>
         <View style={styles.backButton} />
@@ -219,6 +249,11 @@ export default function SettingsScreen() {
               disabled={!playerStore.musicEnabled}
             />
           </View>
+
+          <TouchableOpacity style={styles.audioTestButton} onPress={() => void handleTestAudio()}>
+            <Ionicons name="play-circle-outline" size={20} color="#fff" />
+            <Text style={styles.audioTestButtonText}>Test Sound</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Feedback Section */}
@@ -304,7 +339,10 @@ export default function SettingsScreen() {
           >
             <View>
               <Text style={styles.infoLabel}>Display name</Text>
-              <Text style={styles.infoValue}>{playerStore.nickname}</Text>
+              <View style={styles.nameValueRow}>
+                <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={18} />
+                <Text style={styles.infoValue}>{playerStore.nickname}</Text>
+              </View>
             </View>
             <View style={styles.nameChangeChevron}>
               <Text style={styles.nameChangeHint}>Change</Text>
@@ -402,6 +440,51 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Admin / Testing Tools */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Admin / Testing Tools</Text>
+          <Text style={styles.settingHint}>
+            Testing only. Use this to start runs from higher waves on the selected map.
+          </Text>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Ionicons name="flask-outline" size={24} color="#ff6b5d" />
+              <Text style={styles.settingLabel}>Enable Admin Mode</Text>
+            </View>
+            <Switch
+              value={playerStore.adminModeEnabled}
+              onValueChange={playerStore.setAdminModeEnabled}
+              trackColor={{ false: '#333', true: '#ff6b5d' }}
+              thumbColor={playerStore.adminModeEnabled ? '#fff' : '#666'}
+            />
+          </View>
+
+          {playerStore.adminModeEnabled && (
+            <View style={styles.adminWaveBlock}>
+              <Text style={styles.adminWaveLabel}>Start wave override (1-200)</Text>
+              <View style={styles.adminWaveRow}>
+                <TextInput
+                  style={styles.adminWaveInput}
+                  keyboardType="number-pad"
+                  value={adminWaveDraft}
+                  onChangeText={setAdminWaveDraft}
+                  onBlur={saveAdminWaveOverride}
+                  maxLength={3}
+                  placeholder="1"
+                  placeholderTextColor="#666"
+                />
+                <TouchableOpacity style={styles.adminWaveApplyBtn} onPress={saveAdminWaveOverride}>
+                  <Text style={styles.adminWaveApplyText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.settingHint}>
+                New runs start from wave {playerStore.adminStartWave}. Turn Admin Mode off to restore normal flow.
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* Version */}
         <View style={styles.versionContainer}>
           <Text style={styles.versionText}>Last Stand Defense v1.0.0</Text>
@@ -415,7 +498,7 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: TacticalTheme.bg,
   },
   header: {
     flexDirection: 'row',
@@ -424,7 +507,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   backButton: {
     width: 40,
@@ -433,7 +516,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 20,
     fontWeight: 'bold',
   },
@@ -444,10 +527,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4e',
+    borderBottomColor: TacticalTheme.border,
   },
   sectionTitle: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 14,
     fontWeight: 'bold',
     textTransform: 'uppercase',
@@ -465,11 +548,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   settingLabel: {
-    color: '#fff',
+    color: TacticalTheme.text,
     fontSize: 16,
   },
   settingHint: {
-    color: '#8da3c0',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: -4,
     marginBottom: 12,
@@ -486,12 +569,12 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   volumeLabel: {
-    color: '#c5d2e8',
+    color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: '600',
   },
   volumePct: {
-    color: '#8da3c0',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
     fontWeight: '700',
   },
@@ -499,9 +582,66 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 36,
   },
+  audioTestButton: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: TacticalTheme.panelAlt,
+    borderRadius: 8,
+    paddingVertical: 10,
+  },
+  audioTestButtonText: {
+    color: TacticalTheme.text,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  adminWaveBlock: {
+    marginTop: 8,
+    backgroundColor: TacticalTheme.panel,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    borderRadius: 10,
+    padding: 10,
+  },
+  adminWaveLabel: {
+    color: TacticalTheme.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  adminWaveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  adminWaveInput: {
+    flex: 1,
+    backgroundColor: TacticalTheme.bgElevated,
+    color: TacticalTheme.text,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  adminWaveApplyBtn: {
+    backgroundColor: TacticalTheme.accent,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  adminWaveApplyText: {
+    color: TacticalTheme.white,
+    fontWeight: '800',
+  },
   vfxSegment: {
     flexDirection: 'row',
-    backgroundColor: '#0f0f23',
+    backgroundColor: TacticalTheme.bgElevated,
     borderRadius: 8,
     overflow: 'hidden',
   },
@@ -510,15 +650,15 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   vfxButtonActive: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   vfxButtonText: {
-    color: '#97a7c2',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     fontWeight: '700',
   },
   vfxButtonTextActive: {
-    color: '#fff',
+    color: TacticalTheme.text,
   },
   nameModalOverlay: {
     flex: 1,
@@ -603,6 +743,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  nameValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   premiumText: {
     color: '#FFD700',

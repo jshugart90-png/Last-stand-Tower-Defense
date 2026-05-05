@@ -27,11 +27,12 @@ import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
 } from '../utils/missionReset';
-import { DEFAULT_ARENA_ID } from '../constants/arenaMaps';
+import { DEFAULT_MAP_ID } from '../constants/maps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../constants/sessionProgress';
+import { DEFAULT_PLAYER_LOGO_ID } from '../constants/logos';
 
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
@@ -182,6 +183,14 @@ interface PlayerState {
 
   /** Next-run arena selection (persisted). */
   currentMapId: string;
+  unlockedMapIds: string[];
+  mapBestWaves: Record<string, number>;
+  unlockedLogos: string[];
+  selectedLogoId: string;
+  /** Testing-only: unlocks wave override controls in Settings. */
+  adminModeEnabled: boolean;
+  /** Testing-only: first wave to start from (1 = normal start). */
+  adminStartWave: number;
 }
 
 interface PlayerActions {
@@ -197,6 +206,7 @@ interface PlayerActions {
   addGems: (amount: number) => void;
   
   // Stats
+  registerRunStarted: () => void;
   recordGame: (
     wavesReached: number,
     enemiesKilled?: number,
@@ -243,6 +253,16 @@ interface PlayerActions {
   addArenaExpansion: () => void;
 
   setCurrentMapId: (mapId: string) => void;
+  isMapUnlocked: (mapId: string) => boolean;
+  unlockMapWithGems: (mapId: string, cost: number) => boolean;
+  unlockMapByProgress: (mapId: string) => void;
+  recordMapBestWave: (mapId: string, wave: number) => void;
+  getMapBestWave: (mapId: string) => number;
+  purchaseLogo: (logoId: string, price: number) => boolean;
+  equipLogo: (logoId: string) => void;
+  isLogoUnlocked: (logoId: string) => boolean;
+  setAdminModeEnabled: (enabled: boolean) => void;
+  setAdminStartWave: (wave: number) => void;
   
   // Settings
   toggleSound: () => void;
@@ -275,6 +295,43 @@ interface PlayerActions {
   // Reset
   resetPlayer: () => void;
 }
+
+// Slower progression curve (noticeably slower than fixed 100 XP levels)
+const XP_LEVEL_BASE = 180;
+const XP_LEVEL_STEP = 22;
+
+export const getXpForNextLevel = (currentLevel: number): number =>
+  XP_LEVEL_BASE + Math.max(0, currentLevel - 1) * XP_LEVEL_STEP;
+
+const getTotalXpToReachLevel = (level: number): number => {
+  const target = Math.max(1, Math.floor(level));
+  if (target <= 1) return 0;
+  let total = 0;
+  for (let lv = 1; lv < target; lv++) total += getXpForNextLevel(lv);
+  return total;
+};
+
+export const getLevelFromXp = (xp: number): number => {
+  const clamped = Math.max(0, Math.floor(xp));
+  let level = 1;
+  let required = getXpForNextLevel(level);
+  let remaining = clamped;
+  while (remaining >= required) {
+    remaining -= required;
+    level += 1;
+    required = getXpForNextLevel(level);
+  }
+  return level;
+};
+
+export const getXpProgress = (xp: number) => {
+  const totalXp = Math.max(0, Math.floor(xp));
+  const level = getLevelFromXp(totalXp);
+  const levelStartXp = getTotalXpToReachLevel(level);
+  const xpIntoLevel = totalXp - levelStartXp;
+  const xpNeeded = getXpForNextLevel(level);
+  return { level, xpIntoLevel, xpNeeded };
+};
 
 const initialState: PlayerState = {
   playerId: null,
@@ -332,7 +389,13 @@ const initialState: PlayerState = {
   dailyChallengeRunCombo: 0,
   lastDailyChallengeRunAt: null,
   savedGame: null,
-  currentMapId: DEFAULT_ARENA_ID,
+  currentMapId: DEFAULT_MAP_ID,
+  unlockedMapIds: [DEFAULT_MAP_ID],
+  mapBestWaves: {},
+  unlockedLogos: ['shadow_operative', 'tower_sentinel', 'drone_commander', 'fortification_expert', 'wave_breaker'],
+  selectedLogoId: DEFAULT_PLAYER_LOGO_ID,
+  adminModeEnabled: false,
+  adminStartWave: 1,
 };
 
 const playerPersistKeys = [
@@ -385,6 +448,12 @@ const playerPersistKeys = [
   'lastDailyChallengeRunAt',
   'savedGame',
   'currentMapId',
+  'unlockedMapIds',
+  'mapBestWaves',
+  'unlockedLogos',
+  'selectedLogoId',
+  'adminModeEnabled',
+  'adminStartWave',
 ] as const;
 
 const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
@@ -510,8 +579,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     // Progression
     addXp: (amount) => {
       set(state => {
-        const newXp = state.xp + amount;
-        const newLevel = Math.floor(newXp / 100) + 1;
+        const gain = Math.max(0, Math.floor(amount));
+        const newXp = state.xp + gain;
+        const newLevel = getLevelFromXp(newXp);
         return { xp: newXp, level: newLevel };
       });
     },
@@ -520,6 +590,43 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
     // Stats
+    registerRunStarted: () => {
+      set((state) => {
+        const dailyResetPatch = maybeResetDailyMissions(state);
+        const weeklyResetPatch = maybeResetWeeklyMissions(state);
+        let missions = dailyResetPatch.dailyMissions ?? state.dailyMissions;
+        let weeklyMissions = weeklyResetPatch.weeklyMissions ?? state.weeklyMissions;
+        let gemsFromMissions = 0;
+        let gemsFromAchievements = 0;
+        const nextGamesPlayed = state.gamesPlayed + 1;
+
+        const gamesMission = applyMissionProgress(missions, 'play_games', 1);
+        missions = gamesMission.missions;
+        gemsFromMissions += gamesMission.gemsEarned;
+
+        const weeklyGamesMission = applyWeeklyMissionProgress(weeklyMissions, 'play_games', 1);
+        weeklyMissions = weeklyGamesMission.missions;
+        gemsFromMissions += weeklyGamesMission.gemsEarned;
+
+        let achievements = state.achievements;
+        if (nextGamesPlayed >= 25) {
+          const unlock = unlockAchievement(achievements, 'games_25');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+
+        return {
+          ...dailyResetPatch,
+          ...weeklyResetPatch,
+          gamesPlayed: nextGamesPlayed,
+          dailyMissions: missions,
+          weeklyMissions,
+          gems: state.gems + gemsFromMissions + gemsFromAchievements,
+          achievements,
+        };
+      });
+    },
+
     recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0, gemsEarnedThisRun) => {
       set((state) => {
         const dailyResetPatch = maybeResetDailyMissions(state);
@@ -529,10 +636,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         let gemsFromMissions = 0;
         let gemsFromAchievements = 0;
 
-        const gamesMission = applyMissionProgress(missions, 'play_games', 1);
-        missions = gamesMission.missions;
-        gemsFromMissions += gamesMission.gemsEarned;
-
         const enemiesMission = applyMissionProgress(missions, 'kill_enemies', enemiesKilled);
         missions = enemiesMission.missions;
         gemsFromMissions += enemiesMission.gemsEarned;
@@ -540,10 +643,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         const wavesMission = applyMissionProgress(missions, 'survive_waves', wavesReached);
         missions = wavesMission.missions;
         gemsFromMissions += wavesMission.gemsEarned;
-
-        const weeklyGamesMission = applyWeeklyMissionProgress(weeklyMissions, 'play_games', 1);
-        weeklyMissions = weeklyGamesMission.missions;
-        gemsFromMissions += weeklyGamesMission.gemsEarned;
 
         const weeklyEnemiesMission = applyWeeklyMissionProgress(weeklyMissions, 'kill_enemies', enemiesKilled);
         weeklyMissions = weeklyEnemiesMission.missions;
@@ -603,12 +702,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           achievements = unlock.achievements;
           gemsFromAchievements += unlock.gemsEarned;
         }
-        const nextGamesPlayed = state.gamesPlayed + 1;
-        if (nextGamesPlayed >= 25) {
-          const unlock = unlockAchievement(achievements, 'games_25');
-          achievements = unlock.achievements;
-          gemsFromAchievements += unlock.gemsEarned;
-        }
         if (state.gems >= 2500) {
           const unlock = unlockAchievement(achievements, 'gem_hoarder');
           achievements = unlock.achievements;
@@ -628,7 +721,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           ...dailyResetPatch,
           ...weeklyResetPatch,
           totalWavesSurvived: state.totalWavesSurvived + wavesReached,
-          gamesPlayed: nextGamesPlayed,
           bestWave: nextBestWave,
           lifetimeEnemiesKilled: nextEnemiesKilled,
           lifetimeTowersPlaced: nextTowersPlaced,
@@ -851,6 +943,54 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
 
     setCurrentMapId: (mapId) => set({ currentMapId: mapId }),
+    isMapUnlocked: (mapId) => get().unlockedMapIds.includes(mapId),
+    unlockMapWithGems: (mapId, cost) => {
+      const s = get();
+      if (s.unlockedMapIds.includes(mapId)) return true;
+      if (cost > 0 && s.gems < cost) return false;
+      set({
+        gems: s.gems - Math.max(0, cost),
+        unlockedMapIds: [...s.unlockedMapIds, mapId],
+      });
+      return true;
+    },
+    unlockMapByProgress: (mapId) => {
+      const s = get();
+      if (s.unlockedMapIds.includes(mapId)) return;
+      set({ unlockedMapIds: [...s.unlockedMapIds, mapId] });
+    },
+    recordMapBestWave: (mapId, wave) => {
+      if (!mapId || !Number.isFinite(wave)) return;
+      set((s) => {
+        const prev = s.mapBestWaves[mapId] ?? 0;
+        if (wave <= prev) return s;
+        return {
+          mapBestWaves: { ...s.mapBestWaves, [mapId]: wave },
+        };
+      });
+    },
+    getMapBestWave: (mapId) => get().mapBestWaves[mapId] ?? 0,
+    purchaseLogo: (logoId, price) => {
+      const s = get();
+      if (s.unlockedLogos.includes(logoId)) return true;
+      if (price > 0 && s.gems < price) return false;
+      set({
+        gems: s.gems - Math.max(0, price),
+        unlockedLogos: [...s.unlockedLogos, logoId],
+      });
+      return true;
+    },
+    equipLogo: (logoId) => {
+      const s = get();
+      if (!s.unlockedLogos.includes(logoId)) return;
+      set({ selectedLogoId: logoId });
+    },
+    isLogoUnlocked: (logoId) => get().unlockedLogos.includes(logoId),
+    setAdminModeEnabled: (enabled) => set({ adminModeEnabled: enabled }),
+    setAdminStartWave: (wave) =>
+      set({
+        adminStartWave: Math.max(1, Math.min(200, Math.floor(wave) || 1)),
+      }),
 
     // Settings
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
@@ -908,6 +1048,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
         unlockedSpeeds: (data.unlockedSpeeds as GameSpeed[]) || state.unlockedSpeeds,
+        unlockedLogos:
+          Array.isArray(data.unlockedLogos) && data.unlockedLogos.length > 0
+            ? data.unlockedLogos
+            : state.unlockedLogos,
+        selectedLogoId:
+          typeof data.selectedLogoId === 'string' && data.selectedLogoId.trim().length > 0
+            ? data.selectedLogoId
+            : state.selectedLogoId,
         lifetimeEnemiesKilled:
           typeof data.lifetimeEnemiesKilled === 'number'
             ? data.lifetimeEnemiesKilled
@@ -952,7 +1100,35 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           typeof p?.coinIncomeUpgradeLevel === 'number'
             ? Math.min(COIN_INCOME_UPGRADE_MAX, Math.max(0, p.coinIncomeUpgradeLevel))
             : 0,
-        currentMapId: p?.currentMapId ?? DEFAULT_ARENA_ID,
+        currentMapId: p?.currentMapId ?? DEFAULT_MAP_ID,
+        unlockedMapIds:
+          Array.isArray(p?.unlockedMapIds) && p.unlockedMapIds.length > 0
+            ? Array.from(new Set([DEFAULT_MAP_ID, ...p.unlockedMapIds]))
+            : [DEFAULT_MAP_ID],
+        mapBestWaves:
+          p?.mapBestWaves && typeof p.mapBestWaves === 'object' ? p.mapBestWaves : {},
+        unlockedLogos:
+          Array.isArray(p?.unlockedLogos) && p.unlockedLogos.length > 0
+            ? Array.from(
+                new Set([
+                  'shadow_operative',
+                  'tower_sentinel',
+                  'drone_commander',
+                  'fortification_expert',
+                  'wave_breaker',
+                  ...p.unlockedLogos,
+                ])
+              )
+            : ['shadow_operative', 'tower_sentinel', 'drone_commander', 'fortification_expert', 'wave_breaker'],
+        selectedLogoId:
+          typeof p?.selectedLogoId === 'string' && p.selectedLogoId.trim().length > 0
+            ? p.selectedLogoId
+            : DEFAULT_PLAYER_LOGO_ID,
+        adminModeEnabled: Boolean(p?.adminModeEnabled),
+        adminStartWave:
+          typeof p?.adminStartWave === 'number'
+            ? Math.max(1, Math.min(200, Math.floor(p.adminStartWave)))
+            : 1,
         sessionEnemiesKilledTotal:
           typeof p?.sessionEnemiesKilledTotal === 'number'
             ? Math.max(0, p.sessionEnemiesKilledTotal)
