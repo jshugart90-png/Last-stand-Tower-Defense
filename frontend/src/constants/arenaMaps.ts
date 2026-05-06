@@ -295,7 +295,7 @@ const ARENAS: ArenaMapDefinition[] = [
       ],
       true
     ),
-    theme: t('#070b0f', '#13202a', '#234055', '#5dade244', '#1abc9c44'),
+    theme: t('#070b0f', '#1a2228', '#353842', '#cf2f2f44', '#1abc9c44'),
   },
   {
     id: 'void_switchback',
@@ -376,7 +376,7 @@ const ARENAS: ArenaMapDefinition[] = [
       ],
       true
     ),
-    theme: t('#090c11', '#1a2233', '#2c3e65', '#f39c1244', '#3498db55'),
+    theme: t('#090c11', '#1c222c', '#383642', '#f39c1244', '#cf2f2f55'),
   },
 ];
 

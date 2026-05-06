@@ -35,6 +35,16 @@ import {
 } from '../services/audioService';
 import { usePlayerStore } from './playerStore';
 
+/** Cleared on new runs / game end so dismiss callbacks never stack or fire after teardown. */
+let bonusPopupDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearBonusPopupDismissTimer() {
+  if (bonusPopupDismissTimer !== null) {
+    clearTimeout(bonusPopupDismissTimer);
+    bonusPopupDismissTimer = null;
+  }
+}
+
 function scaleRunCoinsFromKill(baseReward: number): number {
   const lv = usePlayerStore.getState().coinIncomeUpgradeLevel ?? 0;
   return Math.max(1, Math.floor(baseReward * getRunCoinIncomeMultiplier(lv)));
@@ -359,6 +369,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
 
     if (useArena && def) {
+      clearBonusPopupDismissTimer();
       const arenaRoute = def.route.map((p) => ({ x: p.x, y: p.y }));
       set({
         isPlaying: true,
@@ -421,6 +432,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       y: gridRows - 1,
     };
 
+    clearBonusPopupDismissTimer();
     set({
       isPlaying: true,
       isPaused: false,
@@ -473,7 +485,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   pauseGame: () => set({ isPaused: true }),
   resumeGame: () => set({ isPaused: false }),
-  endGame: () => set({ isPlaying: false, isGameOver: true }),
+  endGame: () => {
+    clearBonusPopupDismissTimer();
+    set({ isPlaying: false, isGameOver: true });
+  },
   
   restartGame: () => {
     const {
@@ -503,6 +518,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   // Wave management
   startWave: () => {
+    clearBonusPopupDismissTimer();
     void playWaveStartFanfare();
     set(state => ({
       currentWave: state.currentWave + 1,
@@ -542,13 +558,19 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       runGemsFromWavePart: newWaveGemTotal,
     });
     
-    // Auto-dismiss the bonus popup after 2 seconds
-    setTimeout(() => {
-      useGameStore.setState({ showBonusPopup: false });
+    clearBonusPopupDismissTimer();
+    bonusPopupDismissTimer = setTimeout(() => {
+      bonusPopupDismissTimer = null;
+      try {
+        useGameStore.setState({ showBonusPopup: false });
+      } catch (e) {
+        console.error('[endWave] bonus popup dismiss failed', e);
+      }
     }, 2000);
   },
 
   dismissBonusPopup: () => {
+    clearBonusPopupDismissTimer();
     set({ showBonusPopup: false });
   },
 
@@ -735,19 +757,24 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     if (!state.isPlaying || state.isPaused) return;
 
+    try {
     const now = Date.now();
     const adjustedDelta = deltaTime * state.gameSpeed;
 
-    // Update auto wave timer (only after wave 1)
+    // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
+    // `>= 100` throttle compared delta to the *unchanged* store value, so at 1x–2x speed the
+    // timer never moved (frozen countdown / no auto-start).
     if (!state.waveInProgress && state.autoWaveTimer > 0 && state.currentWave > 0) {
       const newTimer = state.autoWaveTimer - adjustedDelta;
       if (newTimer <= 0) {
-        get().startWave();
+        try {
+          get().startWave();
+        } catch (e) {
+          console.error('[gameTick] auto startWave failed', e);
+        }
         return;
       }
-      if (Math.abs(newTimer - state.autoWaveTimer) >= 100) {
-        set({ autoWaveTimer: newTimer });
-      }
+      set({ autoWaveTimer: newTimer });
     }
 
     // ====== MOVE ENEMIES ======
@@ -1131,6 +1158,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
       selectedPlacedTower: nextSelected,
     });
+    } catch (err) {
+      console.error('[gameTick] uncaught error — tick aborted for this step', err);
+    }
   },
 
   // Base damage

@@ -103,7 +103,7 @@ export default function ShopScreen() {
         id: s.id,
         name: s.name,
         price: s.price,
-        color: SKIN_COLORS[s.id] ?? '#4A90D9',
+        color: SKIN_COLORS[s.id] ?? TacticalTheme.towerMachineGun,
       }))
     );
     setLoading(false);
@@ -608,7 +608,7 @@ export default function ShopScreen() {
               style={[styles.unlockButton, !canAffordUnlock && styles.disabledButton]}
               onPress={() => handlePurchaseTower(towerType)}
             >
-              <FontAwesome5 name="gem" size={12} color="#4A90D9" />
+              <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
               <Text style={styles.buttonText}>{unlockPrice}</Text>
             </TouchableOpacity>
           ) : (
@@ -657,7 +657,7 @@ export default function ShopScreen() {
             style={[styles.buySpeedButton, !canAfford && styles.disabledButton]}
             onPress={() => handlePurchaseSpeed(speed)}
           >
-            <FontAwesome5 name="gem" size={12} color="#4A90D9" />
+            <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
             <Text style={styles.buttonText}>{price}</Text>
           </TouchableOpacity>
         )}
@@ -722,7 +722,7 @@ export default function ShopScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Shop</Text>
         <View style={styles.coinsDisplay}>
-          <FontAwesome5 name="gem" size={16} color="#4A90D9" />
+          <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
       </View>
@@ -842,7 +842,7 @@ export default function ShopScreen() {
                     style={styles.startingCoinsBuy}
                     onPress={handlePurchaseStartingCoins}
                   >
-                    <FontAwesome5 name="gem" size={12} color="#4A90D9" />
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
                     <Text style={styles.buttonText}>
                       {getStartingCoinsUpgradePrice(playerStore.startingCoinUpgradeLevel)}
                     </Text>
@@ -876,7 +876,7 @@ export default function ShopScreen() {
                 disabled={purchaseLoading}
               >
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="gem" size={24} color="#4A90D9" />
+                  <FontAwesome5 name="gem" size={24} color={TacticalTheme.gem} />
                 </View>
                 <Text style={styles.coinPackAmount}>100</Text>
                 <Text style={styles.coinPackLabel}>Gems</Text>
@@ -899,7 +899,7 @@ export default function ShopScreen() {
                   <Text style={styles.popularBadgeText}>POPULAR</Text>
                 </View>
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="gem" size={28} color="#4A90D9" />
+                  <FontAwesome5 name="gem" size={28} color={TacticalTheme.gem} />
                 </View>
                 <Text style={styles.coinPackAmount}>500</Text>
                 <Text style={styles.coinPackLabel}>Gems</Text>
@@ -919,8 +919,8 @@ export default function ShopScreen() {
                 disabled={purchaseLoading}
               >
                 <View style={styles.coinPackIconWrap}>
-                  <FontAwesome5 name="gem" size={32} color="#4A90D9" />
-                  <FontAwesome5 name="gem" size={18} color="#4A90D9" style={{ position: 'absolute', top: -4, right: -8 }} />
+                  <FontAwesome5 name="gem" size={32} color={TacticalTheme.gem} />
+                  <FontAwesome5 name="gem" size={18} color={TacticalTheme.gem} style={{ position: 'absolute', top: -4, right: -8 }} />
                 </View>
                 <Text style={styles.coinPackAmount}>1,500</Text>
                 <Text style={styles.coinPackLabel}>Gems</Text>
@@ -1036,7 +1036,7 @@ export default function ShopScreen() {
               style={styles.restoreButton}
               onPress={handleRestorePurchases}
             >
-              <Ionicons name="refresh" size={16} color="#4A90D9" />
+              <Ionicons name="refresh" size={16} color={TacticalTheme.accent} />
               <Text style={styles.restoreText}>Restore Purchases</Text>
             </TouchableOpacity>
           </View>
@@ -1051,7 +1051,7 @@ export default function ShopScreen() {
             </Text>
             
             {loading ? (
-              <ActivityIndicator size="large" color="#4A90D9" style={styles.loader} />
+              <ActivityIndicator size="large" color={TacticalTheme.accent} style={styles.loader} />
             ) : (
               <View style={styles.skinsGrid}>
                 {skins.map((skin) => {
@@ -1072,7 +1072,7 @@ export default function ShopScreen() {
                           style={styles.skinBuyButton}
                           onPress={() => handleBuySkin(skin)}
                         >
-                          <FontAwesome5 name="gem" size={10} color="#4A90D9" />
+                          <FontAwesome5 name="gem" size={10} color={TacticalTheme.gem} />
                           <Text style={styles.skinPrice}>
                             {skin.price === 0 ? 'Free' : skin.price}
                           </Text>
@@ -1392,7 +1392,7 @@ const styles = StyleSheet.create({
   },
   // Arena
   arenaCard: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -1435,7 +1435,7 @@ const styles = StyleSheet.create({
   premiumCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     padding: 16,
     borderRadius: 12,
     borderWidth: 2,
@@ -1476,7 +1476,7 @@ const styles = StyleSheet.create({
   },
   skinCard: {
     width: '30%',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 12,
     padding: 12,
     alignItems: 'center',
@@ -1611,7 +1611,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   restoreText: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 14,
   },
   // Coin Pack styles
@@ -1624,16 +1624,16 @@ const styles = StyleSheet.create({
   },
   coinPackCard: {
     width: '47%' as any,
-    backgroundColor: '#1e2a4a',
+    backgroundColor: TacticalTheme.surfaceElevated,
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2a3a5e',
+    borderColor: TacticalTheme.border,
     marginBottom: 4,
   },
   coinPackPopular: {
-    borderColor: '#4A90D9',
+    borderColor: TacticalTheme.accent,
     borderWidth: 2,
   },
   coinPackMega: {
@@ -1644,7 +1644,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#2a3a5e',
+    backgroundColor: TacticalTheme.panelAlt,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 10,
@@ -1669,7 +1669,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   coinPackPricePopular: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   coinPackPriceMega: {
     backgroundColor: '#E74C3C',
@@ -1683,7 +1683,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -1,
     right: -1,
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     borderTopRightRadius: 11,
     borderBottomLeftRadius: 8,
     paddingHorizontal: 8,

@@ -1,3 +1,5 @@
+import { TacticalTheme } from '../theme/colors';
+
 // Tower targeting modes
 export type TargetingMode = 'first' | 'last' | 'strongest' | 'closest';
 
@@ -43,7 +45,7 @@ export const TOWERS = {
     },
     unlockPrice: 0,
     icon: 'crosshairs',
-    color: '#4A90D9',
+    color: TacticalTheme.towerMachineGun,
   },
   sniper: {
     id: 'sniper',
@@ -367,10 +369,10 @@ export const getShopUpgradeCost = (towerType: TowerType, currentLevel: number): 
 
 // Skin colors (equipped per tower type via player store)
 export const SKIN_COLORS: Record<string, string> = {
-  default: '#4A90D9',
+  default: TacticalTheme.towerMachineGun,
   neon: '#00FF88',
   military: '#5D6D3A',
-  ice: '#00D4FF',
+  ice: TacticalTheme.freezeTint,
   gold: '#FFD700',
   cyber: '#FF00FF',
   crimson: '#E74C3C',
@@ -380,7 +382,7 @@ export const SKIN_COLORS: Record<string, string> = {
 
 /** Unlockable cosmetics (gems). `default` is free. */
 export const COSMETIC_SKINS: { id: keyof typeof SKIN_COLORS; name: string; price: number }[] = [
-  { id: 'default', name: 'Classic Blue', price: 0 },
+  { id: 'default', name: 'Classic Slate', price: 0 },
   { id: 'neon', name: 'Neon Strike', price: 45 },
   { id: 'military', name: 'OD Green', price: 35 },
   { id: 'ice', name: 'Frost', price: 40 },

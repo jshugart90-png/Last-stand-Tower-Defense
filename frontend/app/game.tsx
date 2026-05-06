@@ -500,7 +500,7 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
           top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2,
           width: enemySize,
           height: enemySize,
-          backgroundColor: isSlowed ? '#00D4FF' : enemyDef.color,
+          backgroundColor: isSlowed ? TacticalTheme.freezeTint : enemyDef.color,
         },
       ]}
     >
@@ -937,7 +937,7 @@ const GameBoard = React.memo(({
                     py += (dy / dist) * lead;
                   }
                 }
-                const bg = proj.isFreeze ? '#00D4FF' : proj.isSplash ? '#FF6B35' : '#FFD700';
+                const bg = proj.isFreeze ? TacticalTheme.freezeTint : proj.isSplash ? '#FF6B35' : '#FFD700';
                 return (
                   <GameProjectileSprite
                     key={proj.id}
@@ -1181,7 +1181,7 @@ const ExitWarningModal = ({
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.modalOverlay}>
         <View style={styles.exitWarningModal}>
-          <Ionicons name="pause-circle" size={48} color="#4A90D9" />
+          <Ionicons name="pause-circle" size={48} color={TacticalTheme.accent} />
           <Text style={styles.exitWarningTitle}>Game Paused</Text>
           <Text style={styles.exitWarningSubtitle}>Wave {currentWave} • {coins} coins</Text>
           <Text style={styles.exitWarningText}>
@@ -1567,53 +1567,71 @@ export default function GameScreen() {
 
     const runTick = () => {
       if (cancelled) return;
-      const now = Date.now();
-      const rawDelta = now - lastUpdateRef.current;
-      lastUpdateRef.current = now;
-      frameAccumRef.current += Math.min(rawDelta, MAX_FRAME_DELTA_MS);
+      try {
+        const now = Date.now();
+        const rawDelta = now - lastUpdateRef.current;
+        lastUpdateRef.current = now;
+        frameAccumRef.current += Math.min(rawDelta, MAX_FRAME_DELTA_MS);
 
-      let substeps = 0;
-      while (frameAccumRef.current >= LOOP_STEP_MS && substeps < MAX_SUBSTEPS_PER_FRAME) {
-        frameAccumRef.current -= LOOP_STEP_MS;
-        substeps += 1;
-        const state = useGameStore.getState();
-        if (!state.isPlaying || state.isPaused) break;
-        state.gameTick(LOOP_STEP_MS);
+        let substeps = 0;
+        while (frameAccumRef.current >= LOOP_STEP_MS && substeps < MAX_SUBSTEPS_PER_FRAME) {
+          frameAccumRef.current -= LOOP_STEP_MS;
+          substeps += 1;
+          try {
+            let state = useGameStore.getState();
+            if (!state.isPlaying || state.isPaused) break;
+            state.gameTick(LOOP_STEP_MS);
+            // gameTick may start a wave (auto-timer) or otherwise mutate store — always read fresh.
+            state = useGameStore.getState();
 
-        if (state.waveInProgress) {
-          waveElapsedMsRef.current += LOOP_STEP_MS * state.gameSpeed;
-          while (
-            waveSpawnCursorRef.current < waveScheduleRef.current.length &&
-            waveScheduleRef.current[waveSpawnCursorRef.current].atMs <= waveElapsedMsRef.current
-          ) {
-            const next = waveScheduleRef.current[waveSpawnCursorRef.current];
-            const waveConfig = getWaveConfig(state.currentWave);
-            const mapHealthMult = selectedMap?.enemyHealthMultiplier ?? 1;
-            const mapSpeedMult = selectedMap?.enemySpeedMultiplier ?? 1;
-            state.spawnEnemy(
-              next.type as EnemyType,
-              waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult,
-              waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult
-            );
-            waveSpawnCursorRef.current += 1;
-          }
-          if (waveSpawnCursorRef.current >= waveScheduleRef.current.length) {
-            spawningCompleteRef.current = true;
-          }
-        }
-
-        if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
-          endWave();
-          spawningCompleteRef.current = false;
-          handleSaveCoins(state.coins);
-          const completedWave = useGameStore.getState().currentWave;
-          if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
-            const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
-            if (nativeAdsReady && isInterstitialAdReady()) {
-              void showInterstitialAd().catch(console.error);
+            if (state.waveInProgress) {
+              waveElapsedMsRef.current += LOOP_STEP_MS * state.gameSpeed;
+              while (
+                waveSpawnCursorRef.current < waveScheduleRef.current.length &&
+                waveScheduleRef.current[waveSpawnCursorRef.current].atMs <= waveElapsedMsRef.current
+              ) {
+                const next = waveScheduleRef.current[waveSpawnCursorRef.current];
+                const waveConfig = getWaveConfig(state.currentWave);
+                const mapHealthMult = selectedMap?.enemyHealthMultiplier ?? 1;
+                const mapSpeedMult = selectedMap?.enemySpeedMultiplier ?? 1;
+                try {
+                  state.spawnEnemy(
+                    next.type as EnemyType,
+                    waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult,
+                    waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult
+                  );
+                } catch (e) {
+                  console.error('[game loop] spawnEnemy failed', e);
+                }
+                waveSpawnCursorRef.current += 1;
+              }
+              if (waveSpawnCursorRef.current >= waveScheduleRef.current.length) {
+                spawningCompleteRef.current = true;
+              }
             }
+
+            if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
+              try {
+                endWave();
+                spawningCompleteRef.current = false;
+                handleSaveCoins(state.coins);
+                const completedWave = useGameStore.getState().currentWave;
+                if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
+                  const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
+                  if (nativeAdsReady && isInterstitialAdReady()) {
+                    void showInterstitialAd().catch(console.error);
+                  }
+                }
+              } catch (e) {
+                console.error('[game loop] endWave failed', e);
+              }
+            }
+          } catch (e) {
+            console.error('[game loop] substep failed', e);
           }
         }
+      } catch (e) {
+        console.error('[game loop] frame tick failed', e);
       }
 
       rafRef.current = requestAnimationFrame(runTick);
@@ -2016,12 +2034,12 @@ export default function GameScreen() {
           </View>
           {!isGameOver && (
             <View style={styles.stat}>
-              <MaterialCommunityIcons name="diamond-stone" size={15} color="#5dade2" />
+              <MaterialCommunityIcons name="diamond-stone" size={15} color={TacticalTheme.gem} />
               <Text style={[styles.statValue, styles.gemStatValue]}>{gemsHudDisplay}</Text>
             </View>
           )}
           <View style={styles.stat}>
-            <MaterialCommunityIcons name="waves" size={16} color="#4A90D9" />
+            <MaterialCommunityIcons name="waves" size={16} color={TacticalTheme.accent} />
             <Text style={styles.statValue}>{currentWave}</Text>
           </View>
         </View>
@@ -2424,13 +2442,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   mapInfoText: {
-    color: '#b8c9de',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     marginTop: 2,
     fontWeight: '600',
   },
   challengeInfoText: {
-    color: '#8fb4e5',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
   },
@@ -2500,13 +2518,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 4,
     gap: 8,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
   },
   zoomButton: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2548,16 +2566,16 @@ const styles = StyleSheet.create({
     borderColor: '#2a2a4e',
   },
   pathCell: {
-    backgroundColor: '#2a3a55',
+    backgroundColor: TacticalTheme.surfaceElevated,
   },
   canPlaceOnPath: {
-    backgroundColor: 'rgba(74, 144, 217, 0.22)',
+    backgroundColor: TacticalTheme.accentRgba22,
     borderWidth: 2,
-    borderColor: '#6CB8FF',
+    borderColor: TacticalTheme.selectionGlow,
   },
   canPlaceCell: {
-    backgroundColor: 'rgba(74, 144, 217, 0.28)',
-    borderColor: '#5CADFF',
+    backgroundColor: TacticalTheme.accentRgba28,
+    borderColor: TacticalTheme.selectionGlowStrong,
     borderWidth: 2,
   },
   spawnCell: {
@@ -2569,9 +2587,9 @@ const styles = StyleSheet.create({
   rangeIndicator: {
     position: 'absolute',
     zIndex: 8,
-    backgroundColor: 'rgba(74, 144, 217, 0.15)',
+    backgroundColor: TacticalTheme.accentRgba15,
     borderWidth: 2,
-    borderColor: 'rgba(74, 144, 217, 0.4)',
+    borderColor: TacticalTheme.accentRgba40,
   },
   laserBeam: {
     position: 'absolute',
@@ -2648,7 +2666,7 @@ const styles = StyleSheet.create({
   },
   towerPanel: {
     maxHeight: 90,
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderTopWidth: 1,
     borderTopColor: '#2a2a4e',
   },
@@ -2667,7 +2685,7 @@ const styles = StyleSheet.create({
   },
   towerButtonSelected: {
     borderWidth: 2,
-    borderColor: '#4A90D9',
+    borderColor: TacticalTheme.accent,
   },
   towerButtonLocked: {
     opacity: 0.5,
@@ -2697,7 +2715,7 @@ const styles = StyleSheet.create({
     color: '#E74C3C',
   },
   towerOptionsPanel: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     padding: 12,
     borderTopWidth: 1,
     borderTopColor: '#2a2a4e',
@@ -2762,7 +2780,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   targetingButtonActive: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   targetingButtonText: {
     color: '#888',
@@ -2781,7 +2799,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 10,
     borderRadius: 6,
     gap: 6,
@@ -2805,7 +2823,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   instructionBar: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 6,
     paddingHorizontal: 16,
   },
@@ -2905,16 +2923,16 @@ const styles = StyleSheet.create({
   },
   resultsHeroCard: {
     width: '100%',
-    backgroundColor: '#1a2540',
+    backgroundColor: TacticalTheme.surfaceDeepAlt,
     borderRadius: 12,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#2d4a78',
+    borderColor: TacticalTheme.borderStrong,
     alignItems: 'center',
   },
   resultsHeroLabel: {
-    color: '#8fa4c4',
+    color: TacticalTheme.textMuted,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 2,
@@ -2971,7 +2989,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   resultsChallenge: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 13,
     marginBottom: 14,
     alignSelf: 'flex-start',
@@ -2986,14 +3004,14 @@ const styles = StyleSheet.create({
   },
   resultsStat: {
     width: '47%',
-    backgroundColor: '#1f2c4a',
+    backgroundColor: TacticalTheme.surfaceElevated,
     borderRadius: 10,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#2a3f63',
+    borderColor: TacticalTheme.borderStrong,
   },
   resultsStatLabel: {
-    color: '#9bb0cc',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     marginBottom: 4,
   },
@@ -3024,16 +3042,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   playAgainSecondaryText: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 16,
     fontWeight: '600',
   },
   rewardSummaryBox: {
     width: '100%',
-    backgroundColor: '#1f2c4a',
+    backgroundColor: TacticalTheme.surfaceElevated,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#385a8f',
+    borderColor: TacticalTheme.borderStrong,
     padding: 10,
     marginBottom: 14,
   },
@@ -3044,7 +3062,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   rewardSummaryText: {
-    color: '#d6e3f7',
+    color: TacticalTheme.text,
     fontSize: 12,
   },
   watchAdButton: {
@@ -3103,7 +3121,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   restartButton: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 8,
@@ -3117,7 +3135,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   resultsButton: {
-    backgroundColor: '#2a3f67',
+    backgroundColor: TacticalTheme.panelAlt,
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
@@ -3126,7 +3144,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   resultsText: {
-    color: '#d8e6fb',
+    color: TacticalTheme.text,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -3139,7 +3157,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   exitWarningModal: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
@@ -3147,7 +3165,7 @@ const styles = StyleSheet.create({
     maxWidth: 320,
   },
   exitWarningTitle: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 24,
     fontWeight: 'bold',
     marginTop: 12,
@@ -3188,7 +3206,7 @@ const styles = StyleSheet.create({
   },
   cancelExitButton: {
     flex: 1,
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -3212,7 +3230,7 @@ const styles = StyleSheet.create({
   },
   // Resume modal styles
   resumeModal: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',

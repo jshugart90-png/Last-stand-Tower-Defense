@@ -64,7 +64,7 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
           <Ionicons
             name={steps[step].icon as any}
             size={64}
-            color="#4A90D9"
+            color={TacticalTheme.accent}
             style={tutorialStyles.icon}
           />
           <Text style={tutorialStyles.title}>{steps[step].title}</Text>
@@ -98,7 +98,7 @@ const tutorialStyles = StyleSheet.create({
     alignItems: 'center',
   },
   card: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 24,
     padding: 32,
     alignItems: 'center',
@@ -109,14 +109,14 @@ const tutorialStyles = StyleSheet.create({
     marginBottom: 16,
   },
   title: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 28,
     fontWeight: 'bold',
     marginBottom: 12,
     textAlign: 'center',
   },
   description: {
-    color: '#aaa',
+    color: TacticalTheme.textSubtle,
     fontSize: 16,
     textAlign: 'center',
     marginBottom: 24,
@@ -134,10 +134,10 @@ const tutorialStyles = StyleSheet.create({
     backgroundColor: '#333',
   },
   dotActive: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   button: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 16,
     paddingHorizontal: 48,
     borderRadius: 12,
@@ -197,7 +197,7 @@ const nicknameStyles = StyleSheet.create({
     alignItems: 'center',
   },
   card: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 24,
     padding: 32,
     alignItems: 'center',
@@ -205,23 +205,23 @@ const nicknameStyles = StyleSheet.create({
     maxWidth: 350,
   },
   title: {
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 24,
   },
   input: {
-    backgroundColor: '#0f0f23',
+    backgroundColor: TacticalTheme.bg,
     borderRadius: 12,
     padding: 16,
-    color: '#fff',
+    color: TacticalTheme.white,
     fontSize: 18,
     width: '100%',
     textAlign: 'center',
     marginBottom: 24,
   },
   button: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
     paddingVertical: 16,
     paddingHorizontal: 48,
     borderRadius: 12,
@@ -538,11 +538,11 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
         <View style={styles.splashContainer}>
-          <MaterialCommunityIcons name="shield-sword" size={100} color="#4A90D9" />
+          <MaterialCommunityIcons name="shield-sword" size={100} color={TacticalTheme.accent} />
           <Text style={styles.splashTitle}>LAST STAND</Text>
           <Text style={styles.splashSubtitle}>DEFENSE</Text>
           <View style={styles.splashLoader}>
-            <ActivityIndicator size="large" color="#4A90D9" />
+            <ActivityIndicator size="large" color={TacticalTheme.accent} />
             <Text style={styles.splashLoadingText}>Loading...</Text>
           </View>
         </View>
@@ -564,7 +564,7 @@ export default function HomeScreen() {
           <Text style={styles.playerLevel}>Level {playerStore.level}</Text>
         </View>
         <View style={styles.currencyContainer}>
-          <FontAwesome5 name="gem" size={16} color="#4A90D9" />
+          <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.currencyText}>{playerStore.gems}</Text>
         </View>
       </View>
@@ -573,7 +573,7 @@ export default function HomeScreen() {
       <View style={styles.content}>
         {/* Game title */}
         <View style={styles.titleContainer}>
-          <MaterialCommunityIcons name="shield-sword" size={64} color="#4A90D9" />
+          <MaterialCommunityIcons name="shield-sword" size={64} color={TacticalTheme.accent} />
           <Text style={styles.title}>LAST STAND</Text>
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
@@ -813,9 +813,9 @@ const styles = StyleSheet.create({
     borderColor: '#2a3548',
   },
   arenaCardSelected: {
-    borderColor: '#4A90D9',
+    borderColor: TacticalTheme.accent,
     backgroundColor: TacticalTheme.panel,
-    shadowColor: '#4A90D9',
+    shadowColor: TacticalTheme.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.35,
     shadowRadius: 8,
@@ -834,7 +834,7 @@ const styles = StyleSheet.create({
     minHeight: 34,
   },
   arenaDesc: {
-    color: '#8fa4c4',
+    color: TacticalTheme.textMuted,
     fontSize: 11,
     lineHeight: 15,
     marginBottom: 8,
@@ -853,14 +853,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   subtitle: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 28,
     fontWeight: 'bold',
     letterSpacing: 8,
   },
   dailyBonusCard: {
     width: '100%',
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: TacticalTheme.border,

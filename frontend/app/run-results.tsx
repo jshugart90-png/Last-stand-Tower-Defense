@@ -6,6 +6,7 @@ import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-ico
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS, TOWER_UNLOCK_PRICES, TowerType } from '../src/constants/game';
 import { playSfx } from '../src/services/audioService';
+import { TacticalTheme } from '../src/theme/colors';
 
 const toNum = (v: string | string[] | undefined, fallback = 0): number => {
   const raw = Array.isArray(v) ? v[0] : v;
@@ -74,7 +75,7 @@ export default function RunResultsScreen() {
 
       <View style={styles.grid}>
         <View style={styles.card}>
-          <MaterialCommunityIcons name="waves" size={20} color="#4A90D9" />
+          <MaterialCommunityIcons name="waves" size={20} color={TacticalTheme.accent} />
           <Text style={styles.label}>Wave</Text>
           <Text style={styles.value}>{wave}</Text>
         </View>
@@ -162,7 +163,7 @@ export default function RunResultsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1a1a2e', padding: 16 },
+  container: { flex: 1, backgroundColor: TacticalTheme.bgElevated, padding: 16 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   homeHeaderButton: {
     flexDirection: 'row',
@@ -173,27 +174,55 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
   },
-  homeHeaderText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  homeHeaderText: { color: TacticalTheme.white, fontSize: 14, fontWeight: '700' },
   closeButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  challengeCard: { backgroundColor: '#16213e', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a4e', padding: 12, marginBottom: 12 },
-  challengeLabel: { color: '#8aa0bf', fontSize: 12 },
-  challengeName: { color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 2 },
+  title: { color: TacticalTheme.white, fontSize: 24, fontWeight: 'bold' },
+  challengeCard: {
+    backgroundColor: TacticalTheme.surfaceDeep,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    padding: 12,
+    marginBottom: 12,
+  },
+  challengeLabel: { color: TacticalTheme.textMuted, fontSize: 12 },
+  challengeName: { color: TacticalTheme.white, fontSize: 18, fontWeight: '700', marginTop: 2 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
-  card: { width: '48%', backgroundColor: '#16213e', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a4e', padding: 12 },
-  label: { color: '#9bb0cc', fontSize: 12, marginTop: 6 },
-  value: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  rewardCard: { backgroundColor: '#16213e', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a4e', padding: 14, marginBottom: 14 },
-  rewardTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  card: {
+    width: '48%',
+    backgroundColor: TacticalTheme.surfaceDeep,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    padding: 12,
+  },
+  label: { color: TacticalTheme.textMuted, fontSize: 12, marginTop: 6 },
+  value: { color: TacticalTheme.white, fontSize: 22, fontWeight: 'bold' },
+  rewardCard: {
+    backgroundColor: TacticalTheme.surfaceDeep,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    padding: 14,
+    marginBottom: 14,
+  },
+  rewardTitle: { color: TacticalTheme.white, fontSize: 18, fontWeight: '700', marginBottom: 8 },
   rewardRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  rewardText: { color: '#d0d9e8' },
+  rewardText: { color: TacticalTheme.textMuted },
   rewardValue: { color: '#2ECC71', fontWeight: '700' },
-  nextUnlockCard: { backgroundColor: '#16213e', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a4e', padding: 14, marginBottom: 14 },
-  nextUnlockTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  nextUnlockName: { color: '#4A90D9', fontSize: 15, marginTop: 4, fontWeight: '700' },
-  nextUnlockText: { color: '#c8d6ec', marginTop: 4, fontSize: 12 },
+  nextUnlockCard: {
+    backgroundColor: TacticalTheme.surfaceDeep,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    padding: 14,
+    marginBottom: 14,
+  },
+  nextUnlockTitle: { color: TacticalTheme.white, fontSize: 16, fontWeight: '700' },
+  nextUnlockName: { color: TacticalTheme.accent, fontSize: 15, marginTop: 4, fontWeight: '700' },
+  nextUnlockText: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 12 },
   unlockCta: { marginTop: 10, backgroundColor: '#2ECC71', borderRadius: 8, alignItems: 'center', paddingVertical: 10 },
-  unlockCtaText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  unlockCtaText: { color: TacticalTheme.white, fontSize: 13, fontWeight: '700' },
   ctaHome: {
     marginTop: 8,
     backgroundColor: '#2ECC71',
@@ -204,7 +233,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  cta: { marginTop: 10, backgroundColor: '#4A90D9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  ctaHint: { color: '#8da5c4', textAlign: 'center', fontSize: 12, marginTop: 8 },
+  cta: {
+    marginTop: 10,
+    backgroundColor: TacticalTheme.accent,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ctaText: { color: TacticalTheme.white, fontSize: 16, fontWeight: 'bold' },
+  ctaHint: { color: TacticalTheme.textMuted, textAlign: 'center', fontSize: 12, marginTop: 8 },
 });

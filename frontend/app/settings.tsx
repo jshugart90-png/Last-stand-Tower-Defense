@@ -187,13 +187,13 @@ export default function SettingsScreen() {
           
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
-              <Ionicons name="volume-high" size={24} color="#4A90D9" />
+              <Ionicons name="volume-high" size={24} color={TacticalTheme.accent} />
               <Text style={styles.settingLabel}>Sound Effects</Text>
             </View>
             <Switch
               value={playerStore.soundEnabled}
               onValueChange={playerStore.toggleSound}
-              trackColor={{ false: '#333', true: '#4A90D9' }}
+              trackColor={{ false: '#333', true: TacticalTheme.accent }}
               thumbColor={playerStore.soundEnabled ? '#fff' : '#666'}
             />
           </View>
@@ -212,7 +212,7 @@ export default function SettingsScreen() {
               maximumValue={1}
               value={playerStore.sfxVolume}
               onValueChange={playerStore.setSfxVolume}
-              minimumTrackTintColor="#4A90D9"
+              minimumTrackTintColor={TacticalTheme.accent}
               maximumTrackTintColor="#2a2a4e"
               thumbTintColor={playerStore.soundEnabled ? '#fff' : '#555'}
               disabled={!playerStore.soundEnabled}
@@ -311,13 +311,13 @@ export default function SettingsScreen() {
 
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
-              <Ionicons name="play-forward" size={24} color="#4A90D9" />
+              <Ionicons name="play-forward" size={24} color={TacticalTheme.accent} />
               <Text style={styles.settingLabel}>Auto-Start Waves</Text>
             </View>
             <Switch
               value={playerStore.autoStartWaves}
               onValueChange={playerStore.toggleAutoStartWaves}
-              trackColor={{ false: '#333', true: '#4A90D9' }}
+              trackColor={{ false: '#333', true: TacticalTheme.accent }}
               thumbColor={playerStore.autoStartWaves ? '#fff' : '#666'}
             />
           </View>
@@ -403,7 +403,7 @@ export default function SettingsScreen() {
           <Text style={styles.sectionTitle}>Purchases</Text>
           
           <TouchableOpacity style={styles.actionButton} onPress={handleRestorePurchases}>
-            <Ionicons name="refresh" size={24} color="#4A90D9" />
+            <Ionicons name="refresh" size={24} color={TacticalTheme.accent} />
             <Text style={styles.actionButtonText}>Restore Purchases</Text>
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
@@ -668,7 +668,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   nameModalCard: {
-    backgroundColor: '#16213e',
+    backgroundColor: TacticalTheme.surfaceDeep,
     borderRadius: 16,
     padding: 24,
     width: '100%',
@@ -702,12 +702,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   nameModalBtnGhostText: {
-    color: '#97a7c2',
+    color: TacticalTheme.textMuted,
     fontSize: 16,
     fontWeight: '600',
   },
   nameModalBtnPrimary: {
-    backgroundColor: '#4A90D9',
+    backgroundColor: TacticalTheme.accent,
   },
   nameModalBtnPrimaryText: {
     color: '#fff',
@@ -726,7 +726,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   nameChangeHint: {
-    color: '#4A90D9',
+    color: TacticalTheme.accent,
     fontSize: 14,
     fontWeight: '600',
   },
