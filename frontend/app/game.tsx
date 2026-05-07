@@ -137,7 +137,52 @@ const getUtcDayKey = (ts: number) => {
 
 const LOOP_STEP_MS = 1000 / 30;
 const MAX_FRAME_DELTA_MS = 250;
-const MAX_SUBSTEPS_PER_FRAME = 6;
+/** Base simulation slices per rendered frame (scaled up when gameSpeed is high). */
+const BASE_MAX_SUBSTEPS_PER_FRAME = 6;
+const MAX_SUBSTEPS_CAP = 14;
+
+/** Build wave spawn schedule synchronously inside RAF — never rely on useEffect for this (effects run after RAF, causing empty schedules and instant erroneous endWave). */
+function ensureWaveSpawnSchedule(args: {
+  waveKeyRef: React.MutableRefObject<string>;
+  scheduleRef: React.MutableRefObject<{ atMs: number; type: EnemyType }[]>;
+  spawnCursorRef: React.MutableRefObject<number>;
+  elapsedRef: React.MutableRefObject<number>;
+  spawningCompleteRef: React.MutableRefObject<boolean>;
+  currentWave: number;
+  waveChallengeKey: string;
+  selectedMap: ReturnType<typeof getMapById> | undefined;
+}) {
+  const {
+    waveKeyRef,
+    scheduleRef,
+    spawnCursorRef,
+    elapsedRef,
+    spawningCompleteRef,
+    currentWave,
+    waveChallengeKey,
+    selectedMap,
+  } = args;
+  if (waveKeyRef.current === waveChallengeKey && scheduleRef.current.length > 0) return;
+
+  const waveConfig = getWaveConfig(currentWave);
+  const schedule: { atMs: number; type: EnemyType }[] = [];
+  const mapSpawnMult = selectedMap?.spawnDelayMultiplier ?? 1;
+  const tierShift = selectedMap?.enemyTierShift ?? 0;
+  let delay = 500;
+  for (const { type, count } of waveConfig.enemies) {
+    for (let i = 0; i < count; i++) {
+      const promoted = promoteEnemyType(type, tierShift);
+      schedule.push({ atMs: delay, type: promoted });
+      delay += GAME_CONFIG.ENEMY_SPAWN_DELAY * mapSpawnMult;
+    }
+  }
+
+  scheduleRef.current = schedule;
+  spawnCursorRef.current = 0;
+  elapsedRef.current = 0;
+  spawningCompleteRef.current = false;
+  waveKeyRef.current = waveChallengeKey;
+}
 
 // Helper function for tower icons
 const getTowerIcon = (type: TowerType, size = 20) => {
@@ -1315,7 +1360,6 @@ export default function GameScreen() {
     resumeGame,
     restartGame,
     startWave,
-    endWave,
     canPlaceTower,
     getTowerAt,
     getTowerCost,
@@ -1365,7 +1409,6 @@ export default function GameScreen() {
       resumeGame: s.resumeGame,
       restartGame: s.restartGame,
       startWave: s.startWave,
-      endWave: s.endWave,
       canPlaceTower: s.canPlaceTower,
       getTowerAt: s.getTowerAt,
       getTowerCost: s.getTowerCost,
@@ -1443,6 +1486,12 @@ export default function GameScreen() {
   const reviveAvailable = isGameOver && canUseAdRevive();
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
+
+  const waveChallengeKey = useMemo(
+    () =>
+      `${dailyChallenge.enemyHealthMultiplier}:${dailyChallenge.enemySpeedMultiplier}`,
+    [dailyChallenge.enemyHealthMultiplier, dailyChallenge.enemySpeedMultiplier]
+  );
 
   const boardWidth = gridCols * cellSize;
   const boardHeight = gridRows * cellSize;
@@ -1568,23 +1617,44 @@ export default function GameScreen() {
     const runTick = () => {
       if (cancelled) return;
       try {
+        const live = useGameStore.getState();
+        if (!live.isPlaying || live.isPaused) {
+          return;
+        }
+
         const now = Date.now();
         const rawDelta = now - lastUpdateRef.current;
         lastUpdateRef.current = now;
         frameAccumRef.current += Math.min(rawDelta, MAX_FRAME_DELTA_MS);
 
+        const maxSubsteps = Math.min(
+          MAX_SUBSTEPS_CAP,
+          BASE_MAX_SUBSTEPS_PER_FRAME + Math.floor(live.gameSpeed / 2)
+        );
+
         let substeps = 0;
-        while (frameAccumRef.current >= LOOP_STEP_MS && substeps < MAX_SUBSTEPS_PER_FRAME) {
+        while (frameAccumRef.current >= LOOP_STEP_MS && substeps < maxSubsteps) {
           frameAccumRef.current -= LOOP_STEP_MS;
           substeps += 1;
           try {
             let state = useGameStore.getState();
             if (!state.isPlaying || state.isPaused) break;
             state.gameTick(LOOP_STEP_MS);
-            // gameTick may start a wave (auto-timer) or otherwise mutate store — always read fresh.
             state = useGameStore.getState();
 
             if (state.waveInProgress) {
+              const scheduleKeyForWave = `${state.currentWave}:${waveChallengeKey}`;
+              ensureWaveSpawnSchedule({
+                waveKeyRef,
+                scheduleRef: waveScheduleRef,
+                spawnCursorRef: waveSpawnCursorRef,
+                elapsedRef: waveElapsedMsRef,
+                spawningCompleteRef,
+                currentWave: state.currentWave,
+                waveChallengeKey: scheduleKeyForWave,
+                selectedMap,
+              });
+
               waveElapsedMsRef.current += LOOP_STEP_MS * state.gameSpeed;
               while (
                 waveSpawnCursorRef.current < waveScheduleRef.current.length &&
@@ -1610,13 +1680,15 @@ export default function GameScreen() {
               }
             }
 
+            state = useGameStore.getState();
             if (state.waveInProgress && state.enemies.length === 0 && spawningCompleteRef.current) {
               try {
-                endWave();
+                useGameStore.getState().endWave();
                 spawningCompleteRef.current = false;
                 handleSaveCoins(state.coins);
                 const completedWave = useGameStore.getState().currentWave;
-                if (completedWave > 0 && completedWave % 10 === 0 && !playerStore.premium) {
+                const premium = usePlayerStore.getState().premium;
+                if (completedWave > 0 && completedWave % 10 === 0 && !premium) {
                   const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
                   if (nativeAdsReady && isInterstitialAdReady()) {
                     void showInterstitialAd().catch(console.error);
@@ -1634,7 +1706,12 @@ export default function GameScreen() {
         console.error('[game loop] frame tick failed', e);
       }
 
-      rafRef.current = requestAnimationFrame(runTick);
+      if (!cancelled) {
+        const s = useGameStore.getState();
+        if (s.isPlaying && !s.isPaused) {
+          rafRef.current = requestAnimationFrame(runTick);
+        }
+      }
     };
 
     rafRef.current = requestAnimationFrame(runTick);
@@ -1645,8 +1722,9 @@ export default function GameScreen() {
         rafRef.current = null;
       }
     };
-  }, [isPlaying, isPaused, endWave, playerStore.premium, dailyChallenge, selectedMap]);
+  }, [isPlaying, isPaused, waveChallengeKey, selectedMap, dailyChallenge]);
 
+  /** Reset spawn refs between waves / when not running (schedule is filled synchronously in RAF). */
   useEffect(() => {
     if (!waveInProgress || !isPlaying) {
       waveScheduleRef.current = [];
@@ -1654,34 +1732,22 @@ export default function GameScreen() {
       waveElapsedMsRef.current = 0;
       spawningCompleteRef.current = false;
       waveKeyRef.current = '';
-      return;
     }
+  }, [waveInProgress, isPlaying]);
 
-    const waveId = `${currentWave}:${dailyChallenge.enemyHealthMultiplier}:${dailyChallenge.enemySpeedMultiplier}`;
-    if (waveKeyRef.current === waveId && waveScheduleRef.current.length > 0) return;
-
-    const waveConfig = getWaveConfig(currentWave);
-    const schedule: { atMs: number; type: EnemyType }[] = [];
-    const mapSpawnMult = selectedMap?.spawnDelayMultiplier ?? 1;
-    const tierShift = selectedMap?.enemyTierShift ?? 0;
-    let delay = 500;
-    for (const { type, count } of waveConfig.enemies) {
-      for (let i = 0; i < count; i++) {
-        const promoted = promoteEnemyType(type, tierShift);
-        schedule.push({ atMs: delay, type: promoted });
-        delay += GAME_CONFIG.ENEMY_SPAWN_DELAY * mapSpawnMult;
-      }
-    }
-
-    waveScheduleRef.current = schedule;
-    waveSpawnCursorRef.current = 0;
-    waveElapsedMsRef.current = 0;
-    spawningCompleteRef.current = false;
-    waveKeyRef.current = waveId;
-  }, [waveInProgress, currentWave, isPlaying, dailyChallenge, selectedMap]);
+  const eliteNoticeMountedRef = useRef(true);
+  useEffect(() => {
+    eliteNoticeMountedRef.current = true;
+    return () => {
+      eliteNoticeMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (!waveInProgress || currentWave <= 0) return;
+    if (isGameOver || !waveInProgress || currentWave <= 0) {
+      setEliteWaveNotice(null);
+      return;
+    }
     const waveConfig = getWaveConfig(currentWave);
     const enemyTypes = waveConfig.enemies.map((e) => e.type);
     if (enemyTypes.includes('boss')) {
@@ -1692,9 +1758,11 @@ export default function GameScreen() {
       setEliteWaveNotice(null);
       return;
     }
-    const t = setTimeout(() => setEliteWaveNotice(null), 2200);
+    const t = setTimeout(() => {
+      if (eliteNoticeMountedRef.current) setEliteWaveNotice(null);
+    }, 2200);
     return () => clearTimeout(t);
-  }, [waveInProgress, currentWave]);
+  }, [waveInProgress, currentWave, isGameOver]);
 
   // Auto-save between waves (in-game coins NOT synced to gems - separate systems)
   const handleSaveCoins = async (_currentCoins: number) => {
@@ -1810,7 +1878,17 @@ export default function GameScreen() {
   const handleGameEnd = useCallback(async () => {
     if (gameEndHandledRef.current) return;
     gameEndHandledRef.current = true;
-    if (!playerStore.playerId) return;
+
+    const runMapId = useGameStore.getState().currentMapId ?? playerStore.currentMapId;
+    if (__DEV__) {
+      console.log('[mapProgress] handleGameEnd — persist best wave + unlocks first', {
+        runMapId,
+        currentWave,
+        playerStoreMapId: playerStore.currentMapId,
+        playerId: playerStore.playerId,
+      });
+    }
+    playerStore.recordMapBestWave(runMapId, currentWave);
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
     // Slower progression: modest wave XP + small kill XP + light round completion XP.
@@ -1837,7 +1915,6 @@ export default function GameScreen() {
       }
       const runGemsTotal = totalGemReward + comboResult.bonusGems;
       playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
-      playerStore.recordMapBestWave(playerStore.currentMapId, currentWave);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
       return;
@@ -1871,11 +1948,16 @@ export default function GameScreen() {
       const runGemsTotal =
         (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
       playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
-      playerStore.recordMapBestWave(playerStore.currentMapId, currentWave);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
     } catch (error) {
       console.error('Error saving game:', error);
+      if (__DEV__) {
+        console.warn('[mapProgress] handleGameEnd API failed; best wave already saved locally', {
+          runMapId,
+          currentWave,
+        });
+      }
     }
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 

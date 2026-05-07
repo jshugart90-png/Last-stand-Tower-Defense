@@ -1,10 +1,15 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
-import { GAME_MAPS, getDifficultyColor, type MapDefinition } from '../src/constants/maps';
+import {
+  GAME_MAPS,
+  describeWaveUnlockRequirement,
+  getDifficultyColor,
+  type MapDefinition,
+} from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 
 const MapCard = ({
@@ -35,13 +40,16 @@ const MapCard = ({
       </View>
       <Text style={styles.cardDesc}>{map.description}</Text>
       <Text style={styles.cardMeta}>Route nodes: {map.pathWaypoints.length}</Text>
-      {map.unlock ? (
-        <Text style={styles.unlockMeta}>
-          Unlock: {map.unlock.gemCost} gems OR Wave {map.unlock.previousMapWave}+ on previous map
-        </Text>
-      ) : (
-        <Text style={styles.unlockMeta}>Starter map · standard route and pacing</Text>
-      )}
+      {map.unlock && !unlocked ? (
+        <>
+          <Text style={styles.unlockWaveHint}>{describeWaveUnlockRequirement(map)}.</Text>
+          <Text style={styles.unlockMeta}>
+            Or unlock now with {map.unlock.gemCost} gems (optional shortcut).
+          </Text>
+        </>
+      ) : !map.unlock ? (
+        <Text style={styles.unlockMeta}>Starter map · no wave requirement · always available</Text>
+      ) : null}
       <View style={styles.cardActions}>
         {unlocked ? (
           <TouchableOpacity style={[styles.cardBtn, styles.cardBtnPrimary]} onPress={onSelect}>
@@ -65,26 +73,27 @@ export default function MapSelectionScreen() {
     mapBestWaves,
     setCurrentMapId,
     unlockMapWithGems,
-    unlockMapByProgress,
+    syncMapUnlocksFromWaveProgress,
   } = usePlayerStore();
 
   const unlockedMapIds = usePlayerStore((s) => s.unlockedMapIds);
 
-  const progressUnlockIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const m of GAME_MAPS) {
-      if (!m.unlock) continue;
-      const prevBest = mapBestWaves[m.unlock.previousMapId] ?? 0;
-      if (prevBest >= m.unlock.previousMapWave) ids.push(m.id);
-    }
-    return ids;
-  }, [mapBestWaves]);
+  /** Reconcile wave gates whenever this screen gains focus (after a run finishes, etc.). */
+  useFocusEffect(
+    useCallback(() => {
+      syncMapUnlocksFromWaveProgress();
+      if (__DEV__) {
+        console.log('[mapProgress] MapSelection focused — synced wave unlocks', {
+          unlockedMapIds: usePlayerStore.getState().unlockedMapIds,
+          mapBestWaves: usePlayerStore.getState().mapBestWaves,
+        });
+      }
+    }, [syncMapUnlocksFromWaveProgress])
+  );
 
   useEffect(() => {
-    for (const id of progressUnlockIds) {
-      if (!unlockedMapIds.includes(id)) unlockMapByProgress(id);
-    }
-  }, [progressUnlockIds, unlockedMapIds, unlockMapByProgress]);
+    syncMapUnlocksFromWaveProgress();
+  }, [mapBestWaves, syncMapUnlocksFromWaveProgress]);
 
   const resolvedUnlocks = useMemo(() => {
     const unlocked = new Set(unlockedMapIds);
@@ -211,7 +220,13 @@ const styles = StyleSheet.create({
   },
   cardDesc: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 12 },
   cardMeta: { color: TacticalTheme.textSubtle, marginTop: 8, fontSize: 12 },
-  unlockMeta: { color: '#d8a8a8', marginTop: 4, fontSize: 11 },
+  unlockWaveHint: {
+    color: TacticalTheme.accent,
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  unlockMeta: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 11 },
   cardActions: { marginTop: 10, flexDirection: 'row', justifyContent: 'flex-end' },
   cardBtn: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   cardBtnPrimary: { backgroundColor: TacticalTheme.accent },

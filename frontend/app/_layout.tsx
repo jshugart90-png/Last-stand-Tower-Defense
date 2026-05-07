@@ -26,6 +26,9 @@ export default function RootLayout() {
       void (async () => {
         try {
           await initializeAudio();
+          if (__DEV__) {
+            console.log('[audioService] initializeAudio() completed in RootLayout');
+          }
         } catch {
           // audio is optional; never crash launch
         }

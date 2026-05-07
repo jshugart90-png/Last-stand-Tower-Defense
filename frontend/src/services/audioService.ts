@@ -1,6 +1,6 @@
 /**
  * Cinematic SFX: layered procedural WAV + expo-av mixing.
- * — iOS silent switch: playsInSilentModeIOS false (no SFX when ring/silent on).
+ * — iOS silent switch: playsInSilentModeIOS true (SFX still audible in silent mode).
  * — User mute: soundEnabled + sfxVolume in player store.
  */
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
@@ -17,11 +17,21 @@ const pools = new Map<string, { sounds: Audio.Sound[]; i: number }>();
 let audioReady = false;
 let audioInitPromise: Promise<void> | null = null;
 let audioLastError: string | null = null;
+const AUDIO_DEBUG = __DEV__;
+
+function logAudio(...args: unknown[]) {
+  if (AUDIO_DEBUG) console.log('[audioService]', ...args);
+}
+
+function warnAudio(...args: unknown[]) {
+  console.warn('[audioService]', ...args);
+}
 
 export type SfxName = 'mission' | 'combo' | 'chest' | 'record';
 
 function getSfxGain(): number {
   const s = usePlayerStore.getState();
+  logAudio('getSfxGain()', { soundEnabled: s.soundEnabled, sfxVolume: s.sfxVolume });
   if (!s.soundEnabled) return 0;
   return Math.max(0, Math.min(1, s.sfxVolume));
 }
@@ -322,6 +332,7 @@ async function writeAndLoadSound(
   baseVolume: number
 ): Promise<Audio.Sound | null> {
   try {
+    logAudio('writeAndLoadSound() start', { fileKey, baseVolume });
     const uri = `${FileSystem.cacheDirectory}sfx_${fileKey}.wav`;
     await FileSystem.writeAsStringAsync(uri, base64, {
       encoding: FileSystem.EncodingType.Base64,
@@ -330,8 +341,10 @@ async function writeAndLoadSound(
       { uri },
       { shouldPlay: false, volume: baseVolume, isLooping: false }
     );
+    logAudio('writeAndLoadSound() success', { fileKey, uri });
     return sound;
-  } catch {
+  } catch (err) {
+    warnAudio('writeAndLoadSound() failed', { fileKey, err });
     return null;
   }
 }
@@ -341,11 +354,22 @@ async function ensureSoundFromFloat(
   samples: Float32Array,
   baseVolume: number
 ): Promise<Audio.Sound | null> {
+  logAudio('ensureSoundFromFloat()', { key });
   const existing = cache.get(key);
-  if (existing) return existing;
-  const base64 = float32ToWavBase64(samples);
+  if (existing) {
+    logAudio('ensureSoundFromFloat() cache hit', { key });
+    return existing;
+  }
+  let base64 = '';
+  try {
+    base64 = float32ToWavBase64(samples);
+  } catch (err) {
+    warnAudio('ensureSoundFromFloat() wav generation failed', { key, err });
+    return null;
+  }
   const s = await writeAndLoadSound(key, base64, baseVolume);
   if (s) cache.set(key, s);
+  else warnAudio('ensureSoundFromFloat() load failed', { key });
   return s;
 }
 
@@ -355,50 +379,92 @@ async function ensurePoolFromFloat(
   baseVolume: number,
   count: number
 ): Promise<void> {
+  logAudio('ensurePoolFromFloat()', { poolKey, count });
   if (pools.has(poolKey)) return;
-  const base64 = float32ToWavBase64(samples);
-  const uri = `${FileSystem.cacheDirectory}sfx_${poolKey}.wav`;
-  await FileSystem.writeAsStringAsync(uri, base64, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  const sounds: Audio.Sound[] = [];
-  for (let i = 0; i < count; i++) {
-    const { sound } = await Audio.Sound.createAsync(
-      { uri },
-      { shouldPlay: false, volume: baseVolume, isLooping: false }
-    );
-    sounds.push(sound);
-  }
-  pools.set(poolKey, { sounds, i: 0 });
-}
-
-async function playSoundKey(key: string, baseVolume: number): Promise<void> {
-  await ensureAudioReady();
-  if (!shouldPlaySfx()) return;
-  const gain = getSfxGain();
-  const sound = cache.get(key);
-  if (!sound) return;
   try {
-    await sound.setVolumeAsync(baseVolume * gain);
-    await sound.replayAsync();
-  } catch {
-    /* best effort */
+    const base64 = float32ToWavBase64(samples);
+    const uri = `${FileSystem.cacheDirectory}sfx_${poolKey}.wav`;
+    await FileSystem.writeAsStringAsync(uri, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const sounds: Audio.Sound[] = [];
+    for (let i = 0; i < count; i++) {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: false, volume: baseVolume, isLooping: false }
+      );
+      sounds.push(sound);
+    }
+    pools.set(poolKey, { sounds, i: 0 });
+    logAudio('ensurePoolFromFloat() success', { poolKey, count });
+  } catch (err) {
+    warnAudio('ensurePoolFromFloat() failed', { poolKey, err });
   }
 }
 
-async function playPooled(poolKey: string, baseVolume: number): Promise<void> {
-  await ensureAudioReady();
-  if (!shouldPlaySfx()) return;
+async function playSoundKey(key: string, baseVolume: number): Promise<boolean> {
+  logAudio('playSoundKey() start', { key, baseVolume });
+  const ready = await ensureAudioReady();
+  if (!ready) {
+    warnAudio('playSoundKey() skipped: audio not ready', { key });
+    return false;
+  }
+  if (!shouldPlaySfx()) {
+    logAudio('playSoundKey() skipped by shouldPlaySfx()', { key });
+    return false;
+  }
+  const gain = getSfxGain();
+  let sound = cache.get(key);
+  if (!sound && key.startsWith('ui_')) {
+    warnAudio('playSoundKey() cache miss for UI sound, attempting fallback build', { key });
+    const fallback = key.replace('ui_', '') as SfxName;
+    const built = buildUiTone(fallback === 'record' ? 1180 : fallback === 'combo' ? 1040 : fallback === 'chest' ? 620 : 740, fallback === 'chest' ? 160 : fallback === 'combo' ? 140 : fallback === 'record' ? 130 : 120, true);
+    sound = await ensureSoundFromFloat(key, built, 1);
+  }
+  if (!sound) {
+    warnAudio('playSoundKey() failed: no sound in cache', { key });
+    return false;
+  }
+  try {
+    const finalVolume = baseVolume * gain;
+    await sound.setVolumeAsync(finalVolume);
+    await sound.replayAsync();
+    logAudio('playSoundKey() replay success', { key, gain, finalVolume });
+    return true;
+  } catch (err) {
+    warnAudio('playSoundKey() replay failed', { key, err });
+    return false;
+  }
+}
+
+async function playPooled(poolKey: string, baseVolume: number): Promise<boolean> {
+  logAudio('playPooled() start', { poolKey, baseVolume });
+  const ready = await ensureAudioReady();
+  if (!ready) {
+    warnAudio('playPooled() skipped: audio not ready', { poolKey });
+    return false;
+  }
+  if (!shouldPlaySfx()) {
+    logAudio('playPooled() skipped by shouldPlaySfx()', { poolKey });
+    return false;
+  }
   const gain = getSfxGain();
   const p = pools.get(poolKey);
-  if (!p) return;
+  if (!p) {
+    warnAudio('playPooled() missing pool', { poolKey });
+    return false;
+  }
   const snd = p.sounds[p.i % p.sounds.length];
   p.i++;
   try {
-    await snd.setVolumeAsync(baseVolume * gain);
+    const finalVolume = baseVolume * gain;
+    await snd.setVolumeAsync(finalVolume);
     await snd.replayAsync();
-  } catch {
-    /* best effort */
+    logAudio('playPooled() replay success', { poolKey, gain, finalVolume });
+    return true;
+  } catch (err) {
+    warnAudio('playPooled() replay failed', { poolKey, err });
+    return false;
   }
 }
 
@@ -407,6 +473,7 @@ let lastMgFireAt = 0;
 
 /** Weapon discharge — splash/missile only use impact (explosion), not this */
 export async function playWeaponFireSound(towerType: TowerType): Promise<void> {
+  logAudio('playWeaponFireSound()', { towerType });
   if (!shouldPlaySfx()) return;
   if (towerType === 'splash' || towerType === 'missile') return;
 
@@ -440,6 +507,7 @@ export async function playProjectileImpact(proj: {
   isFreeze?: boolean;
   towerType: TowerType;
 }): Promise<void> {
+  logAudio('playProjectileImpact()', proj);
   if (!shouldPlaySfx()) return;
   if (proj.isSplash || proj.towerType === 'missile' || proj.towerType === 'splash') {
     return playPooled('impact_explosion', 0.94);
@@ -456,6 +524,7 @@ export async function playEnemyDeath(): Promise<void> {
 
 /** Staggered stings when many enemies die the same tick (capped) */
 export async function playEnemyDeathBurst(killCount: number): Promise<void> {
+  logAudio('playEnemyDeathBurst()', { killCount });
   if (!shouldPlaySfx() || killCount <= 0) return;
   const n = Math.min(killCount, 6);
   for (let i = 0; i < n; i++) {
@@ -475,14 +544,20 @@ export async function playWaveStartFanfare(): Promise<void> {
 }
 
 export const initializeAudio = async (): Promise<void> => {
+  logAudio('initializeAudio() called', {
+    audioReady,
+    hasInitPromise: !!audioInitPromise,
+    soundEnabled: usePlayerStore.getState().soundEnabled,
+  });
   if (audioReady) return;
   if (audioInitPromise) return audioInitPromise;
   audioInitPromise = (async () => {
   try {
     await Audio.setIsEnabledAsync(true);
+    logAudio('initializeAudio() Audio.setIsEnabledAsync success');
     await Audio.setAudioModeAsync({
-      // Respect silent switch while still allowing ducked mixing on active playback.
-      playsInSilentModeIOS: false,
+      // Force SFX to work even when iOS hardware silent switch is on.
+      playsInSilentModeIOS: true,
       allowsRecordingIOS: false,
       staysActiveInBackground: false,
       interruptionModeIOS: InterruptionModeIOS.DuckOthers,
@@ -490,6 +565,7 @@ export const initializeAudio = async (): Promise<void> => {
       shouldDuckAndroid: true,
       playThroughEarpieceAndroid: false,
     });
+    logAudio('initializeAudio() Audio.setAudioModeAsync success');
 
     await ensureSoundFromFloat('weapon_mg', buildMachineGunBurst(), 1);
     await ensureSoundFromFloat('weapon_sniper', buildSniperCrack(), 1);
@@ -516,9 +592,11 @@ export const initializeAudio = async (): Promise<void> => {
 
     audioReady = true;
     audioLastError = null;
-  } catch {
+    logAudio('initializeAudio() success', { cacheCount: cache.size, poolCount: pools.size });
+  } catch (err) {
     audioReady = false;
-    audioLastError = 'Audio initialization failed';
+    audioLastError = err instanceof Error ? err.message : 'Audio initialization failed';
+    warnAudio('initializeAudio() failed', { err, audioLastError });
   } finally {
     audioInitPromise = null;
   }
@@ -527,16 +605,26 @@ export const initializeAudio = async (): Promise<void> => {
 };
 
 export const ensureAudioReady = async (): Promise<boolean> => {
+  logAudio('ensureAudioReady() start', { audioReady, hasInitPromise: !!audioInitPromise });
+  if (audioInitPromise) {
+    try {
+      await audioInitPromise;
+    } catch (err) {
+      warnAudio('ensureAudioReady() waiting init promise failed', { err });
+    }
+  }
   if (!audioReady) {
     await initializeAudio();
   }
+  logAudio('ensureAudioReady() end', { audioReady, lastError: audioLastError });
   return audioReady;
 };
 
 export const refreshAudioModeOnForeground = async (): Promise<void> => {
   try {
+    logAudio('refreshAudioModeOnForeground() start');
     await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: false,
+      playsInSilentModeIOS: true,
       allowsRecordingIOS: false,
       staysActiveInBackground: false,
       interruptionModeIOS: InterruptionModeIOS.DuckOthers,
@@ -544,7 +632,9 @@ export const refreshAudioModeOnForeground = async (): Promise<void> => {
       shouldDuckAndroid: true,
       playThroughEarpieceAndroid: false,
     });
-  } catch {
+    logAudio('refreshAudioModeOnForeground() success');
+  } catch (err) {
+    warnAudio('refreshAudioModeOnForeground() failed', { err });
     // ignore; next playback attempt will retry full init if needed
   }
 };
@@ -557,6 +647,7 @@ export const getAudioDebugState = () => ({
 });
 
 /** UI / reward stingers — reads soundEnabled + sfxVolume from player store */
-export const playSfx = async (name: SfxName): Promise<void> => {
+export const playSfx = async (name: SfxName): Promise<boolean> => {
+  logAudio('playSfx()', { name });
   return playSoundKey(`ui_${name}`, name === 'record' ? 0.72 : 0.68);
 };

@@ -27,7 +27,7 @@ import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
 } from '../utils/missionReset';
-import { DEFAULT_MAP_ID } from '../constants/maps';
+import { DEFAULT_MAP_ID, mergeWaveProgressUnlocks } from '../constants/maps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
@@ -256,6 +256,7 @@ interface PlayerActions {
   isMapUnlocked: (mapId: string) => boolean;
   unlockMapWithGems: (mapId: string, cost: number) => boolean;
   unlockMapByProgress: (mapId: string) => void;
+  syncMapUnlocksFromWaveProgress: () => void;
   recordMapBestWave: (mapId: string, wave: number) => void;
   getMapBestWave: (mapId: string) => number;
   purchaseLogo: (logoId: string, price: number) => boolean;
@@ -952,6 +953,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         gems: s.gems - Math.max(0, cost),
         unlockedMapIds: [...s.unlockedMapIds, mapId],
       });
+      get().syncMapUnlocksFromWaveProgress();
       return true;
     },
     unlockMapByProgress: (mapId) => {
@@ -959,14 +961,51 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       if (s.unlockedMapIds.includes(mapId)) return;
       set({ unlockedMapIds: [...s.unlockedMapIds, mapId] });
     },
+
+    /** Merge wave gates + existing gem unlocks (call after best-wave updates or on rehydrate). */
+    syncMapUnlocksFromWaveProgress: () => {
+      set((s) => {
+        const unlockedMapIds = mergeWaveProgressUnlocks(s.unlockedMapIds, s.mapBestWaves);
+        if (unlockedMapIds.length === s.unlockedMapIds.length) {
+          const a = [...s.unlockedMapIds].sort().join(',');
+          const b = [...unlockedMapIds].sort().join(',');
+          if (a === b) return s;
+        }
+        if (__DEV__) {
+          console.log('[mapProgress] syncMapUnlocksFromWaveProgress', {
+            mapBestWaves: s.mapBestWaves,
+            before: s.unlockedMapIds,
+            after: unlockedMapIds,
+          });
+        }
+        return { unlockedMapIds };
+      });
+    },
+
     recordMapBestWave: (mapId, wave) => {
       if (!mapId || !Number.isFinite(wave)) return;
+      if (__DEV__) {
+        console.log('[mapProgress] recordMapBestWave', { mapId, wave });
+      }
       set((s) => {
         const prev = s.mapBestWaves[mapId] ?? 0;
-        if (wave <= prev) return s;
-        return {
-          mapBestWaves: { ...s.mapBestWaves, [mapId]: wave },
-        };
+        const nextBest = wave > prev ? { ...s.mapBestWaves, [mapId]: wave } : { ...s.mapBestWaves };
+        const unlockedMapIds = mergeWaveProgressUnlocks(s.unlockedMapIds, nextBest);
+        if (wave <= prev && unlockedMapIds.length === s.unlockedMapIds.length) {
+          const same =
+            [...unlockedMapIds].sort().join(',') === [...s.unlockedMapIds].sort().join(',');
+          if (same) return s;
+        }
+        if (__DEV__) {
+          console.log('[mapProgress] recordMapBestWave → persist', {
+            mapId,
+            wave,
+            prevBest: prev,
+            nextBest,
+            unlockedMapIds,
+          });
+        }
+        return { mapBestWaves: nextBest, unlockedMapIds };
       });
     },
     getMapBestWave: (mapId) => get().mapBestWaves[mapId] ?? 0,
@@ -1094,6 +1133,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         startingCoinUpgradeLevel: p?.startingCoinUpgradeLevel ?? 0,
         sfxVolume:
           typeof p?.sfxVolume === 'number' ? Math.max(0, Math.min(1, p.sfxVolume)) : 0.9,
+        soundEnabled: typeof p?.soundEnabled === 'boolean' ? p.soundEnabled : true,
         musicVolume:
           typeof p?.musicVolume === 'number' ? Math.max(0, Math.min(1, p.musicVolume)) : 0.65,
         coinIncomeUpgradeLevel:
@@ -1154,7 +1194,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       const dailyPatch = maybeResetDailyMissions(merged);
       const afterDaily: PlayerState = { ...merged, ...dailyPatch };
       const weeklyPatch = maybeResetWeeklyMissions(afterDaily);
-      return { ...afterDaily, ...weeklyPatch };
+      const rehydrated: PlayerState = { ...afterDaily, ...weeklyPatch };
+      const reconciledUnlocks = mergeWaveProgressUnlocks(
+        rehydrated.unlockedMapIds,
+        rehydrated.mapBestWaves
+      );
+      return {
+        ...rehydrated,
+        unlockedMapIds: reconciledUnlocks,
+      };
     },
   }
   )

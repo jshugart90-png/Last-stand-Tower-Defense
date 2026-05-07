@@ -102,14 +102,23 @@ export default function SettingsScreen() {
       const dbg = getAudioDebugState();
       Alert.alert(
         'Audio unavailable',
-        `Could not initialize audio engine.\n${dbg.lastError ?? 'No extra details.'}`
+        `Could not initialize audio engine.\nready=${String(dbg.ready)} cache=${dbg.cacheCount} pools=${dbg.poolCount}\n${dbg.lastError ?? 'No extra details.'}`
       );
       return;
     }
-    await playSfx('combo');
+    const firstPlayed = await playSfx('combo');
     setTimeout(() => {
       void playSfx('chest');
     }, 120);
+    if (firstPlayed) {
+      Alert.alert('Audio test', 'SFX playback succeeded.');
+    } else {
+      const dbg = getAudioDebugState();
+      Alert.alert(
+        'Audio test failed',
+        `Audio engine is ready but no sound played.\nready=${String(dbg.ready)} cache=${dbg.cacheCount} pools=${dbg.poolCount}\n${dbg.lastError ?? 'No error recorded.'}`
+      );
+    }
   };
 
   const handleResetProgress = () => {
@@ -198,7 +207,7 @@ export default function SettingsScreen() {
             />
           </View>
           <Text style={styles.settingHint}>
-            When enabled, SFX follow your volume slider and still respect the iPhone silent switch (no audio in silent mode).
+            When enabled, SFX follow your volume slider and will still play if the iPhone silent switch is on.
           </Text>
 
           <View style={styles.volumeBlock}>
