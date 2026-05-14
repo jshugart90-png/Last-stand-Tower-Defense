@@ -134,16 +134,33 @@ export default function LeaderboardScreen() {
 
     setError(null);
     try {
-      const [leaderboardRes, dailyRes] = await Promise.all([
-        leaderboardApi.getGlobal(100),
-        leaderboardApi.getDailyChallenge(getDailySeed(), 100, 0).catch(() => ({ data: [] })),
-      ]);
-
-      const rawList = Array.isArray(leaderboardRes.data) ? leaderboardRes.data : [];
+      const globalResult = await leaderboardApi.getGlobal(100);
+      const rawList = Array.isArray(globalResult.data) ? globalResult.data : [];
       setEntries(rawList.map((row: Record<string, unknown>) => normalizeRemoteRow(row)));
 
-      const dailyRaw = Array.isArray(dailyRes.data) ? dailyRes.data : [];
-      setDailyEntries(dailyRaw.map((row: Record<string, unknown>) => normalizeRemoteRow(row)));
+      try {
+        const dailyRes = await leaderboardApi.getDailyChallenge(getDailySeed(), 100, 0);
+        const dailyRaw = Array.isArray(dailyRes.data) ? dailyRes.data : [];
+        setDailyEntries(dailyRaw.map((row: Record<string, unknown>) => normalizeRemoteRow(row)));
+      } catch (dailyErr: unknown) {
+        console.warn('[leaderboard] GET /leaderboard/daily failed (global list still shown)', {
+          message: isAxiosError(dailyErr)
+            ? dailyErr.message
+            : dailyErr instanceof Error
+              ? dailyErr.message
+              : String(dailyErr),
+          status: isAxiosError(dailyErr) ? dailyErr.response?.status : undefined,
+          data: isAxiosError(dailyErr) ? dailyErr.response?.data : undefined,
+        });
+        setDailyEntries([]);
+      }
+
+      if (__DEV__) {
+        console.log('[leaderboard] GET OK', {
+          globalCount: rawList.length,
+          seed: getDailySeed(),
+        });
+      }
     } catch (err: unknown) {
       const msg = isAxiosError(err)
         ? (typeof err.response?.data === 'object' &&
@@ -154,6 +171,11 @@ export default function LeaderboardScreen() {
         : err instanceof Error
           ? err.message
           : 'Could not load leaderboard';
+      console.warn('[leaderboard] GET /leaderboard failed', {
+        message: msg,
+        status: isAxiosError(err) ? err.response?.status : undefined,
+        data: isAxiosError(err) ? err.response?.data : undefined,
+      });
       setError(msg);
       setEntries([]);
       setDailyEntries([]);
@@ -163,13 +185,12 @@ export default function LeaderboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadLeaderboard();
-  }, [loadLeaderboard]);
-
   useFocusEffect(
     useCallback(() => {
-      if (!isBackendConfigured()) return;
+      if (!isBackendConfigured()) {
+        setLoading(false);
+        return;
+      }
       void loadLeaderboard();
     }, [loadLeaderboard])
   );

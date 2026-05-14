@@ -10,14 +10,45 @@ export const TARGETING_MODES: { id: TargetingMode; label: string; description: s
   { id: 'closest', label: 'Close', description: 'Target nearest enemy to tower' },
 ];
 
-// Speed unlock prices (coins) - 1x is free
-export type GameSpeed = 1 | 2 | 3 | 5 | 10;
+// Speed unlock prices (gems) — 1x is free; max simulation speed is 5x (no 10x).
+export type GameSpeed = 1 | 2 | 3 | 5;
+
+export const MAX_GAME_SPEED: GameSpeed = 5;
+
+export const ALLOWED_GAME_SPEEDS: readonly GameSpeed[] = [1, 2, 3, 5];
+
+export function isGameSpeed(n: number): n is GameSpeed {
+  return (ALLOWED_GAME_SPEEDS as readonly number[]).includes(n);
+}
+
+/** Map legacy saves / bad values onto allowed speeds (10 → 5). */
+export function clampGameSpeed(n: number): GameSpeed {
+  if (isGameSpeed(n)) return n;
+  if (n === 10 || n > 5) return 5;
+  if (n < 1) return 1;
+  const list: GameSpeed[] = [1, 2, 3, 5];
+  return list.reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a));
+}
+
+export function normalizeUnlockedSpeeds(input: unknown): GameSpeed[] {
+  const out = new Set<GameSpeed>([1]);
+  if (!Array.isArray(input)) return [1];
+  for (const raw of input) {
+    const n = Number(raw);
+    if (n === 10) {
+      out.add(5);
+      continue;
+    }
+    if (isGameSpeed(n)) out.add(n);
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
 export const SPEED_UNLOCK_PRICES: Record<GameSpeed, number> = {
   1: 0,      // Free
   2: 30,     // 30 gems for 2x speed
   3: 80,     // 80 gems for 3x speed
   5: 150,    // 150 gems for 5x speed
-  10: 300,   // 300 gems for 10x speed
 };
 
 // Tower unlock prices (gems) - purchased in shop
@@ -329,6 +360,12 @@ export const getWaveConfig = (waveNumber: number) => {
     healthMultiplier,
     speedMultiplier,
   };
+};
+
+/** Total enemies scheduled to spawn this wave (matches one spawn queue entry per unit). */
+export const getWavePlannedEnemyCount = (waveNumber: number): number => {
+  const cfg = getWaveConfig(waveNumber);
+  return cfg.enemies.reduce((sum, g) => sum + g.count, 0);
 };
 
 // Spawn point and base positions (fixed)

@@ -39,7 +39,6 @@ const MapCard = ({
         <Text style={styles.bestWaveText}>Best Wave {bestWave}</Text>
       </View>
       <Text style={styles.cardDesc}>{map.description}</Text>
-      <Text style={styles.cardMeta}>Route nodes: {map.pathWaypoints.length}</Text>
       {map.unlock && !unlocked ? (
         <>
           <Text style={styles.unlockWaveHint}>{describeWaveUnlockRequirement(map)}.</Text>
@@ -218,16 +217,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
-  cardDesc: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 12 },
-  cardMeta: { color: TacticalTheme.textSubtle, marginTop: 8, fontSize: 12 },
+  cardDesc: { color: TacticalTheme.textMuted, marginTop: 6, fontSize: 13, lineHeight: 18 },
   unlockWaveHint: {
     color: TacticalTheme.accent,
     marginTop: 6,
     fontSize: 12,
     fontWeight: '700',
   },
-  unlockMeta: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 11 },
-  cardActions: { marginTop: 10, flexDirection: 'row', justifyContent: 'flex-end' },
+  unlockMeta: { color: TacticalTheme.textMuted, marginTop: 4, fontSize: 12, lineHeight: 16 },
+  cardActions: { marginTop: 12, flexDirection: 'row', justifyContent: 'flex-end' },
   cardBtn: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   cardBtnPrimary: { backgroundColor: TacticalTheme.accent },
   cardBtnDanger: { backgroundColor: TacticalTheme.accentSoft },

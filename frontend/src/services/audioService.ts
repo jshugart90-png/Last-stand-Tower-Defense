@@ -19,6 +19,11 @@ let audioInitPromise: Promise<void> | null = null;
 let audioLastError: string | null = null;
 const AUDIO_DEBUG = __DEV__;
 
+/** When false, combat SFX (weapons, impacts, deaths, base, wave horn) do not start. */
+let gameplaySfxArmed = false;
+/** Incremented to cancel pending `playEnemyDeathBurst` timeouts. */
+let deathBurstGeneration = 0;
+
 function logAudio(...args: unknown[]) {
   if (AUDIO_DEBUG) console.log('[audioService]', ...args);
 }
@@ -34,6 +39,51 @@ function getSfxGain(): number {
   logAudio('getSfxGain()', { soundEnabled: s.soundEnabled, sfxVolume: s.sfxVolume });
   if (!s.soundEnabled) return 0;
   return Math.max(0, Math.min(1, s.sfxVolume));
+}
+
+function isGameplaySoundKey(key: string): boolean {
+  return !key.startsWith('ui_');
+}
+
+async function silenceAllLoadedSounds(): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
+  for (const sound of cache.values()) {
+    tasks.push(
+      sound.stopAsync().catch((err) => {
+        logAudio('silenceAllLoadedSounds cache stopAsync', err);
+      })
+    );
+  }
+  for (const pool of pools.values()) {
+    for (const sound of pool.sounds) {
+      tasks.push(
+        sound.stopAsync().catch((err) => {
+          logAudio('silenceAllLoadedSounds pool stopAsync', err);
+        })
+      );
+    }
+  }
+  await Promise.all(tasks);
+}
+
+/** Stops every loaded SFX instance, invalidates staggered death timers, and disarms gameplay audio. */
+export async function stopAllSounds(): Promise<void> {
+  deathBurstGeneration++;
+  gameplaySfxArmed = false;
+  await silenceAllLoadedSounds();
+}
+
+/** Enable/disable combat SFX. Setting false stops playback and pending death-burst schedules. */
+export function setGameplaySfxArmed(armed: boolean): void {
+  gameplaySfxArmed = armed;
+  if (!armed) {
+    deathBurstGeneration++;
+    void silenceAllLoadedSounds();
+  }
+}
+
+export function isGameplaySfxArmed(): boolean {
+  return gameplaySfxArmed;
 }
 
 function shouldPlaySfx(): boolean {
@@ -409,6 +459,10 @@ async function playSoundKey(key: string, baseVolume: number): Promise<boolean> {
     warnAudio('playSoundKey() skipped: audio not ready', { key });
     return false;
   }
+  if (!gameplaySfxArmed && isGameplaySoundKey(key)) {
+    logAudio('playSoundKey() skipped after init: gameplay disarmed', { key });
+    return false;
+  }
   if (!shouldPlaySfx()) {
     logAudio('playSoundKey() skipped by shouldPlaySfx()', { key });
     return false;
@@ -423,6 +477,10 @@ async function playSoundKey(key: string, baseVolume: number): Promise<boolean> {
   }
   if (!sound) {
     warnAudio('playSoundKey() failed: no sound in cache', { key });
+    return false;
+  }
+  if (!gameplaySfxArmed && isGameplaySoundKey(key)) {
+    logAudio('playSoundKey() skipped before replay: gameplay disarmed', { key });
     return false;
   }
   try {
@@ -448,6 +506,10 @@ async function playPooled(poolKey: string, baseVolume: number): Promise<boolean>
     logAudio('playPooled() skipped by shouldPlaySfx()', { poolKey });
     return false;
   }
+  if (!gameplaySfxArmed) {
+    logAudio('playPooled() skipped: gameplay disarmed', { poolKey });
+    return false;
+  }
   const gain = getSfxGain();
   const p = pools.get(poolKey);
   if (!p) {
@@ -456,6 +518,10 @@ async function playPooled(poolKey: string, baseVolume: number): Promise<boolean>
   }
   const snd = p.sounds[p.i % p.sounds.length];
   p.i++;
+  if (!gameplaySfxArmed) {
+    logAudio('playPooled() skipped before replay: gameplay disarmed', { poolKey });
+    return false;
+  }
   try {
     const finalVolume = baseVolume * gain;
     await snd.setVolumeAsync(finalVolume);
@@ -474,6 +540,7 @@ let lastMgFireAt = 0;
 /** Weapon discharge — splash/missile only use impact (explosion), not this */
 export async function playWeaponFireSound(towerType: TowerType): Promise<void> {
   logAudio('playWeaponFireSound()', { towerType });
+  if (!gameplaySfxArmed) return;
   if (!shouldPlaySfx()) return;
   if (towerType === 'splash' || towerType === 'missile') return;
 
@@ -508,6 +575,7 @@ export async function playProjectileImpact(proj: {
   towerType: TowerType;
 }): Promise<void> {
   logAudio('playProjectileImpact()', proj);
+  if (!gameplaySfxArmed) return;
   if (!shouldPlaySfx()) return;
   if (proj.isSplash || proj.towerType === 'missile' || proj.towerType === 'splash') {
     return playPooled('impact_explosion', 0.94);
@@ -519,27 +587,33 @@ export async function playProjectileImpact(proj: {
 }
 
 export async function playEnemyDeath(): Promise<void> {
+  if (!gameplaySfxArmed) return;
   return playPooled('enemy_death', 0.78);
 }
 
 /** Staggered stings when many enemies die the same tick (capped) */
 export async function playEnemyDeathBurst(killCount: number): Promise<void> {
   logAudio('playEnemyDeathBurst()', { killCount });
-  if (!shouldPlaySfx() || killCount <= 0) return;
+  if (!gameplaySfxArmed || !shouldPlaySfx() || killCount <= 0) return;
   const n = Math.min(killCount, 6);
+  const gen = deathBurstGeneration;
   for (let i = 0; i < n; i++) {
     const delay = i * 34;
     setTimeout(() => {
+      if (gen !== deathBurstGeneration) return;
+      if (!gameplaySfxArmed) return;
       void playEnemyDeath();
     }, delay);
   }
 }
 
 export async function playBaseDamageSound(): Promise<void> {
+  if (!gameplaySfxArmed) return;
   return playPooled('base_hit', 0.85);
 }
 
 export async function playWaveStartFanfare(): Promise<void> {
+  if (!gameplaySfxArmed) return;
   return playSoundKey('wave_horn', 0.82);
 }
 

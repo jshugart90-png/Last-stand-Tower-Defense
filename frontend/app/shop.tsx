@@ -19,6 +19,7 @@ import {
   TOWER_UNLOCK_PRICES,
   SPEED_UNLOCK_PRICES,
   GameSpeed,
+  ALLOWED_GAME_SPEEDS,
   COSMETIC_SKINS,
   SKIN_COLORS,
   STARTING_COINS_UPGRADE_MAX,
@@ -971,7 +972,7 @@ export default function ShopScreen() {
               Unlocks are purchased with gems only (earned in-game or from the Gems tab)
             </Text>
             
-            {([1, 2, 3, 5, 10] as GameSpeed[]).map(renderSpeedCard)}
+            {ALLOWED_GAME_SPEEDS.map(renderSpeedCard)}
           </View>
         )}
 

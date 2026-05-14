@@ -49,16 +49,31 @@ export const gameApi = {
   }) => api.post('/games/end', data),
 };
 
+/** Avoid stale cached GET responses from intermediaries. */
+const leaderboardFreshHeaders = {
+  'Cache-Control': 'no-cache, no-store',
+  Pragma: 'no-cache',
+} as const;
+
 // Leaderboard APIs
 export const leaderboardApi = {
   getGlobal: (limit = 100, skip = 0) =>
-    api.get(`/leaderboard?limit=${limit}&skip=${skip}`),
-  
+    api.get(`/leaderboard`, {
+      headers: leaderboardFreshHeaders,
+      params: { limit, skip, _: Date.now() },
+    }),
+
   getPlayerRank: (playerId: string) =>
-    api.get(`/leaderboard/player/${playerId}`),
+    api.get(`/leaderboard/player/${encodeURIComponent(playerId)}`, {
+      headers: leaderboardFreshHeaders,
+      params: { _: Date.now() },
+    }),
 
   getDailyChallenge: (seed: string, limit = 100, skip = 0) =>
-    api.get(`/leaderboard/daily?seed=${encodeURIComponent(seed)}&limit=${limit}&skip=${skip}`),
+    api.get(`/leaderboard/daily`, {
+      headers: leaderboardFreshHeaders,
+      params: { seed, limit, skip, _: Date.now() },
+    }),
 };
 
 // Reward APIs

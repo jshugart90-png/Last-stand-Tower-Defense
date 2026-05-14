@@ -446,6 +446,14 @@ async def end_game(game_result: GameResult):
             },
             upsert=True,
         )
+
+        logger.info(
+            "leaderboard row upserted after games/end player=%s score=%s wave=%s kills_run=%s",
+            game_result.player_id,
+            lb_score,
+            game_result.wave_reached,
+            game_result.enemies_killed,
+        )
         
         newly_unlocked = [t for t in current_towers if t not in player.get("unlocked_towers", [])]
         

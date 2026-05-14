@@ -26,7 +26,7 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   useGameStore,
   PlacedTower,
@@ -37,12 +37,17 @@ import { usePlayerStore, SavedGameState } from '../src/stores/playerStore';
 import { 
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, 
   TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
-  GameSpeed, SPEED_UNLOCK_PRICES, getRunCoinIncomeMultiplier,
+  GameSpeed,
+  SPEED_UNLOCK_PRICES,
+  getRunCoinIncomeMultiplier,
+  ALLOWED_GAME_SPEEDS,
+  normalizeUnlockedSpeeds,
   scaledTotalPerformanceGems,
   endGamePerformanceRemainder,
   COMBO_BONUS_GEMS,
   type EnemyType,
 } from '../src/constants/game';
+import { isAxiosError } from 'axios';
 import { gameApi, analyticsApi, rewardApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath } from '../src/utils/pathfinding';
 import { 
@@ -50,7 +55,7 @@ import {
   showInterstitialAd, isInterstitialAdReady
 } from '../src/services/adService';
 import { getDailyChallenge } from '../src/constants/challenges';
-import { playSfx } from '../src/services/audioService';
+import { playSfx, stopAllSounds, setGameplaySfxArmed } from '../src/services/audioService';
 import { getArenaMap, CLASSIC_MAP_ID } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
@@ -82,13 +87,23 @@ class GestureAreaErrorBoundary extends Component<
     console.warn('[GameBoard gestures]', err?.message, info?.componentStack);
   }
 
+  reset = () => {
+    this.setState({ err: null });
+  };
+
   render() {
     if (this.state.err) {
       return (
         <View style={[{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }, this.props.style]}>
-          <Text style={{ color: TacticalTheme.accent, textAlign: 'center' }}>
-            Map gestures paused. Leave and re-enter the game to continue.
+          <Text style={{ color: TacticalTheme.accent, textAlign: 'center', marginBottom: 12 }}>
+            Map gestures paused after an error. You can retry or leave the game and return.
           </Text>
+          <TouchableOpacity
+            onPress={this.reset}
+            style={{ backgroundColor: TacticalTheme.accent, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Retry map</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -277,7 +292,7 @@ const SpeedControls = ({
   onPurchaseSpeed: (speed: GameSpeed) => void;
   gems: number;
 }) => {
-  const speeds: GameSpeed[] = [1, 2, 3, 5, 10];
+  const speeds = [...ALLOWED_GAME_SPEEDS];
 
   return (
     <View style={styles.speedControls}>
@@ -440,6 +455,7 @@ const GameMapCell = React.memo(
     isBase,
     canPlace,
     hasTower,
+    isPlacementPreview,
     onCellPress,
     mapTheme,
   }: {
@@ -451,6 +467,7 @@ const GameMapCell = React.memo(
     isBase: boolean;
     canPlace: boolean;
     hasTower: boolean;
+    isPlacementPreview?: boolean;
     onCellPress: (x: number, y: number) => void;
     mapTheme?: { floor: string; path: string; pathAccent: string } | null;
   }) {
@@ -471,10 +488,11 @@ const GameMapCell = React.memo(
         ],
         canPlace && onPath && styles.canPlaceOnPath,
         canPlace && !onPath && styles.canPlaceCell,
+        isPlacementPreview && styles.canPlaceCellPreview,
         isSpawn && styles.spawnCell,
         isBase && styles.baseCell,
       ],
-      [scaledCellSize, col, row, onPath, canPlace, isSpawn, isBase, mapTheme]
+      [scaledCellSize, col, row, onPath, canPlace, isPlacementPreview, isSpawn, isBase, mapTheme]
     );
 
     if (hasTower) {
@@ -753,14 +771,43 @@ const GameBoard = React.memo(({
   const pinchMultSV = useSharedValue(1);
   const startZoomSV = useSharedValue(zoomLevel);
   const committedZoomSV = useSharedValue(zoomLevel);
-  const [isPinching, setIsPinching] = useState(false);
+  /** Ref only — never flip React state during pinch (avoids gesture object churn / native crashes). */
+  const pinchActiveRef = useRef(false);
+  const setPinchActive = useCallback((v: boolean) => {
+    pinchActiveRef.current = v;
+  }, []);
+
+  const [placementPreview, setPlacementPreview] = useState<{ col: number; row: number } | null>(
+    null
+  );
+  const previewEmitAtRef = useRef(0);
+
+  const emitPlacementPreview = useCallback((col: number | null, row: number | null) => {
+    if (col === null || row === null) {
+      previewEmitAtRef.current = 0;
+      setPlacementPreview((p) => (p === null ? p : null));
+      return;
+    }
+    const now = Date.now();
+    if (now - previewEmitAtRef.current < 40) return;
+    previewEmitAtRef.current = now;
+    setPlacementPreview((prev) => {
+      if (prev?.col === col && prev?.row === row) return prev;
+      return { col, row };
+    });
+  }, []);
 
   useEffect(() => {
     committedZoomSV.value = zoomLevel;
   }, [zoomLevel, committedZoomSV]);
 
   const commitZoom = useCallback((z: number) => {
-    useGameStore.getState().setZoomLevel(clampZoom(z));
+    try {
+      const nz = clampZoom(typeof z === 'number' && Number.isFinite(z) ? z : ZOOM_MIN);
+      useGameStore.getState().setZoomLevel(nz);
+    } catch (err) {
+      console.warn('[GameBoard] commitZoom failed', err);
+    }
   }, []);
 
   const pinchGesture = useMemo(
@@ -770,32 +817,39 @@ const GameBoard = React.memo(({
           'worklet';
           startZoomSV.value = committedZoomSV.value;
           pinchMultSV.value = 1;
-          runOnJS(setIsPinching)(true);
+          runOnJS(setPinchActive)(true);
         })
         .onUpdate((e) => {
           'worklet';
-          const raw = e.scale;
+          const raw = e?.scale;
           const factor =
             typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
-          const abs = Math.max(0.8, Math.min(2.5, startZoomSV.value * factor));
-          pinchMultSV.value = abs / startZoomSV.value;
+          const base = startZoomSV.value;
+          if (!Number.isFinite(base) || base <= 0) return;
+          const abs = Math.max(0.8, Math.min(2.5, base * factor));
+          const ratio = abs / base;
+          pinchMultSV.value = Math.min(3, Math.max(0.35, Number.isFinite(ratio) ? ratio : 1));
         })
         .onEnd((e) => {
           'worklet';
-          const raw = e.scale;
+          const raw = e?.scale;
           const factor =
             typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
-          const abs = Math.max(0.8, Math.min(2.5, startZoomSV.value * factor));
+          const base = startZoomSV.value;
+          const abs =
+            Number.isFinite(base) && base > 0
+              ? Math.max(0.8, Math.min(2.5, base * factor))
+              : committedZoomSV.value;
           pinchMultSV.value = 1;
           runOnJS(commitZoom)(abs);
-          runOnJS(setIsPinching)(false);
+          runOnJS(setPinchActive)(false);
         })
         .onFinalize(() => {
           'worklet';
           pinchMultSV.value = 1;
-          runOnJS(setIsPinching)(false);
+          runOnJS(setPinchActive)(false);
         }),
-    [commitZoom, committedZoomSV, pinchMultSV, startZoomSV]
+    [commitZoom, committedZoomSV, pinchMultSV, setPinchActive, startZoomSV]
   );
 
   const pinchAnimatedStyle = useAnimatedStyle(() => ({
@@ -806,20 +860,55 @@ const GameBoard = React.memo(({
   const scaledCellSize = cellSize * finalScale;
   const boardWidth = gridCols * scaledCellSize;
   const boardHeight = gridRows * scaledCellSize;
+  const scrollLocked = !!selectedTowerType && !selectedPlacedTower;
+
+  const applyPlacementFromPan = useCallback(
+    (absX: number, absY: number, cell: number, cols: number, rows: number) => {
+      if (pinchActiveRef.current) return;
+      if (!Number.isFinite(cell) || cell <= 0.5) return;
+      if (!Number.isFinite(absX) || !Number.isFinite(absY)) return;
+      const col = Math.floor(absX / cell);
+      const row = Math.floor(absY / cell);
+      if (col < 0 || col >= cols || row < 0 || row >= rows) return;
+      try {
+        const st = useGameStore.getState();
+        const type = st.selectedTowerType;
+        if (!type || st.selectedPlacedTower) return;
+        if (!st.canPlaceTower({ x: col, y: row })) return;
+        st.placeTower({ x: col, y: row });
+      } catch (err) {
+        console.warn('[GameBoard] placeTower failed', err);
+      }
+    },
+    []
+  );
 
   const placePanGesture = useMemo(() => {
-    const canPlaceDrag = !!selectedTowerType && !selectedPlacedTower && !isPinching;
+    if (!selectedTowerType || selectedPlacedTower) {
+      return Gesture.Pan().enabled(false);
+    }
     return Gesture.Pan()
-      .enabled(canPlaceDrag)
-      .minDistance(6)
+      .maxPointers(1)
+      .minPointers(1)
+      .minDistance(4)
+      .shouldCancelWhenOutside(false)
+      .onUpdate((e) => {
+        const cell = scaledCellSize;
+        if (!Number.isFinite(cell) || cell <= 0.5) return;
+        const col = Math.floor(e.x / cell);
+        const row = Math.floor(e.y / cell);
+        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) {
+          emitPlacementPreview(null, null);
+          return;
+        }
+        emitPlacementPreview(col, row);
+      })
       .onEnd((e) => {
-        const col = Math.floor(e.x / scaledCellSize);
-        const row = Math.floor(e.y / scaledCellSize);
-        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return;
-        const { placeTower, canPlaceTower: canPlace, selectedTowerType: type } =
-          useGameStore.getState();
-        if (!type || !canPlace({ x: col, y: row })) return;
-        placeTower({ x: col, y: row });
+        emitPlacementPreview(null, null);
+        applyPlacementFromPan(e.x, e.y, scaledCellSize, gridCols, gridRows);
+      })
+      .onFinalize(() => {
+        emitPlacementPreview(null, null);
       });
   }, [
     selectedTowerType,
@@ -827,13 +916,27 @@ const GameBoard = React.memo(({
     scaledCellSize,
     gridCols,
     gridRows,
-    isPinching,
+    applyPlacementFromPan,
+    emitPlacementPreview,
   ]);
 
-  const boardGestures = useMemo(
-    () => Gesture.Simultaneous(pinchGesture, placePanGesture),
-    [pinchGesture, placePanGesture]
-  );
+  const boardGestures = useMemo(() => {
+    try {
+      if (selectedTowerType && !selectedPlacedTower) {
+        return Gesture.Simultaneous(pinchGesture, placePanGesture);
+      }
+      return pinchGesture;
+    } catch (err) {
+      console.warn('[GameBoard] gesture compose failed', err);
+      return pinchGesture;
+    }
+  }, [pinchGesture, placePanGesture, selectedTowerType, selectedPlacedTower]);
+
+  useEffect(() => {
+    if (!selectedTowerType || selectedPlacedTower) {
+      setPlacementPreview(null);
+    }
+  }, [selectedTowerType, selectedPlacedTower]);
 
   const blockedCells = useMemo(
     () => new Set(towers.map(t => `${t.position.x},${t.position.y}`)),
@@ -884,14 +987,16 @@ const GameBoard = React.memo(({
       style={styles.boardScrollContainer}
       contentContainerStyle={styles.boardScrollContent}
       horizontal
+      scrollEnabled={!scrollLocked}
       removeClippedSubviews
       showsHorizontalScrollIndicator={false}
       showsVerticalScrollIndicator={false}
     >
       <ScrollView
+        scrollEnabled={!scrollLocked}
         removeClippedSubviews
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ alignItems: 'center', justifyContent: 'center' }}
+        contentContainerStyle={styles.boardInnerScrollContent}
       >
         <GestureAreaErrorBoundary>
           <GestureDetector gesture={boardGestures}>
@@ -914,6 +1019,11 @@ const GameBoard = React.memo(({
                 const hasTowerHere = blockedCells.has(`${col},${row}`);
                 const onPathCorridor = isPath && !isSpawn && !isBase;
 
+                const isPreview =
+                  placementPreview !== null &&
+                  placementPreview.col === col &&
+                  placementPreview.row === row;
+
                 return (
                   <GameMapCell
                     key={`${col}-${row}`}
@@ -926,6 +1036,7 @@ const GameBoard = React.memo(({
                     isBase={isBase}
                     canPlace={canPlace}
                     hasTower={hasTowerHere}
+                    isPlacementPreview={isPreview && canPlace}
                     onCellPress={onCellPress}
                   />
                 );
@@ -1040,7 +1151,6 @@ const GameOverFlowModal = ({
   enemiesKilled,
   towersPlaced,
   bestWaveRecord,
-  sessionCarnageTotal,
   slaughterQualified,
   slaughterThreshold,
   triumphCount,
@@ -1061,7 +1171,6 @@ const GameOverFlowModal = ({
   enemiesKilled: number;
   towersPlaced: number;
   bestWaveRecord: number;
-  sessionCarnageTotal: number;
   slaughterQualified: boolean;
   slaughterThreshold: number;
   triumphCount: number;
@@ -1095,20 +1204,16 @@ const GameOverFlowModal = ({
               <View style={styles.slaughterEarnedBadge}>
                 <MaterialCommunityIcons name="skull" size={20} color="#1a0f0a" />
                 <Text style={styles.slaughterEarnedText}>
-                  Slaughter earned — {slaughterThreshold}+ kills
+                  Slaughter earned — {slaughterThreshold}+ enemies destroyed
                 </Text>
               </View>
             ) : (
               <Text style={styles.gameOverSlaughterHint}>
-                Reach {slaughterThreshold}+ kills in one run to earn a slaughter star toward your bounty.
+                Reach {slaughterThreshold}+ enemies destroyed in one run to earn a slaughter star toward your bounty.
               </Text>
             )}
-            <Text style={styles.gameOverSessionLine}>
-              Session carnage:{' '}
-              <Text style={styles.gameOverSessionEm}>{sessionCarnageTotal}</Text> total kills
-            </Text>
             <Text style={styles.gameOverTriumphLine}>
-              Slaughter stars this session: {triumphCount}/{triumphsNeeded}
+              Slaughter stars (bounty): {triumphCount}/{triumphsNeeded}
             </Text>
             <Text style={styles.gameOverWave}>Wave {wave} • Score {score}</Text>
             {canRevive && (
@@ -1150,17 +1255,13 @@ const GameOverFlowModal = ({
               {slaughterQualified && (
                 <View style={styles.resultsHeroRibbon}>
                   <Text style={styles.resultsHeroRibbonText}>
-                    Slaughter milestone ({slaughterThreshold}+ kills)
+                    Slaughter milestone ({slaughterThreshold}+ enemies)
                   </Text>
                 </View>
               )}
             </View>
 
             <View style={styles.resultsStatGrid}>
-              <View style={[styles.resultsStat, styles.resultsStatWide]}>
-                <Text style={styles.resultsStatLabel}>Session carnage (total kills)</Text>
-                <Text style={styles.resultsStatValue}>{sessionCarnageTotal}</Text>
-              </View>
               <View style={styles.resultsStat}>
                 <Text style={styles.resultsStatLabel}>Slaughter stars</Text>
                 <Text style={styles.resultsStatValue}>
@@ -1337,6 +1438,9 @@ export default function GameScreen() {
     enemiesKilled,
     towersPlaced,
     towersCount,
+    enemyCount,
+    waveSpawnSlotsTotal,
+    waveSpawnSlotsReleased,
     unlockedTowers,
     unlockedSpeeds,
     towerUpgradeLevels,
@@ -1386,6 +1490,9 @@ export default function GameScreen() {
       enemiesKilled: s.enemiesKilled,
       towersPlaced: s.towersPlaced,
       towersCount: s.towers.length,
+      enemyCount: s.enemies.length,
+      waveSpawnSlotsTotal: s.waveSpawnSlotsTotal,
+      waveSpawnSlotsReleased: s.waveSpawnSlotsReleased,
       unlockedTowers: s.unlockedTowers,
       unlockedSpeeds: s.unlockedSpeeds,
       towerUpgradeLevels: s.towerUpgradeLevels,
@@ -1425,6 +1532,36 @@ export default function GameScreen() {
     }))
   );
 
+  const applyGameSpeed = useCallback(
+    (speed: GameSpeed) => {
+      frameAccumRef.current = 0;
+      lastUpdateRef.current = Date.now();
+      setGameSpeed(speed);
+    },
+    [setGameSpeed]
+  );
+
+  const prevGameSpeedRef = useRef(gameSpeed);
+  useEffect(() => {
+    if (prevGameSpeedRef.current !== gameSpeed) {
+      prevGameSpeedRef.current = gameSpeed;
+      frameAccumRef.current = 0;
+      lastUpdateRef.current = Date.now();
+    }
+  }, [gameSpeed]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const s = useGameStore.getState();
+      if (s.isPlaying && !s.isGameOver) {
+        setGameplaySfxArmed(true);
+      }
+      return () => {
+        void stopAllSounds();
+      };
+    }, [])
+  );
+
   useEffect(() => {
     if (isPlaying && currentWave <= 1) {
       runStartBestWaveRef.current = playerStore.bestWave;
@@ -1437,11 +1574,19 @@ export default function GameScreen() {
     return getArenaMap(currentMapId)?.name ?? 'Arena';
   }, [currentMapId]);
 
-  const sessionEnemiesKilledTotal = usePlayerStore((s) => s.sessionEnemiesKilledTotal);
   const sessionSlaughterTriumphs = usePlayerStore((s) => s.sessionSlaughterTriumphs);
 
-  const sessionCarnageDisplay =
-    sessionEnemiesKilledTotal + (isGameOver ? 0 : enemiesKilled);
+  const waveEnemiesRemaining = useMemo(() => {
+    if (!waveInProgress || currentWave <= 0) return null;
+    const queued = Math.max(0, waveSpawnSlotsTotal - waveSpawnSlotsReleased);
+    return enemyCount + queued;
+  }, [
+    waveInProgress,
+    currentWave,
+    enemyCount,
+    waveSpawnSlotsTotal,
+    waveSpawnSlotsReleased,
+  ]);
 
   const sessionRunRecordedRef = useRef(false);
   useLayoutEffect(() => {
@@ -1547,6 +1692,7 @@ export default function GameScreen() {
       waveElapsedMsRef.current = 0;
       spawningCompleteRef.current = false;
       frameAccumRef.current = 0;
+      void stopAllSounds();
     };
   }, [playerStore, startGame, registerRunStarted]);
 
@@ -1631,15 +1777,25 @@ export default function GameScreen() {
           MAX_SUBSTEPS_CAP,
           BASE_MAX_SUBSTEPS_PER_FRAME + Math.floor(live.gameSpeed / 2)
         );
+        const maxAccumCatchupMs = LOOP_STEP_MS * Math.max(12, maxSubsteps * 3);
+        frameAccumRef.current = Math.min(frameAccumRef.current, maxAccumCatchupMs);
 
         let substeps = 0;
         while (frameAccumRef.current >= LOOP_STEP_MS && substeps < maxSubsteps) {
           frameAccumRef.current -= LOOP_STEP_MS;
           substeps += 1;
+          let state = useGameStore.getState();
+          if (!state.isPlaying || state.isPaused) break;
+          const tickSpeed = state.gameSpeed;
+
           try {
-            let state = useGameStore.getState();
-            if (!state.isPlaying || state.isPaused) break;
             state.gameTick(LOOP_STEP_MS);
+          } catch (tickErr) {
+            console.error(`[game loop] gameTick failed (${tickSpeed}x)`, tickErr);
+            continue;
+          }
+
+          try {
             state = useGameStore.getState();
 
             if (state.waveInProgress) {
@@ -1698,8 +1854,8 @@ export default function GameScreen() {
                 console.error('[game loop] endWave failed', e);
               }
             }
-          } catch (e) {
-            console.error('[game loop] substep failed', e);
+          } catch (subErr) {
+            console.error(`[game loop] wave/spawn substep failed (${tickSpeed}x)`, subErr);
           }
         }
       } catch (e) {
@@ -1783,12 +1939,14 @@ export default function GameScreen() {
       pauseGame();
       setShowExitWarning(true);
     } else {
+      void stopAllSounds();
       router.replace('/');
     }
   }, [isPlaying, isGameOver, currentWave, pauseGame, router]);
 
   // Save and go to shop
   const handleGoToShop = useCallback(() => {
+    void stopAllSounds();
     // Save game state before navigating to shop
     saveGameState();
     setShowExitWarning(false);
@@ -1797,6 +1955,7 @@ export default function GameScreen() {
 
   const handleConfirmExit = useCallback(async () => {
     setShowExitWarning(false);
+    void stopAllSounds();
     // Save game state for resume
     saveGameState();
     await handleSaveCoins(getCurrentCoins());
@@ -1814,12 +1973,12 @@ export default function GameScreen() {
       if (success) {
         const unlocked = usePlayerStore.getState().unlockedSpeeds;
         useGameStore.setState({
-          unlockedSpeeds: [...unlocked].sort((a, b) => a - b) as GameSpeed[],
+          unlockedSpeeds: normalizeUnlockedSpeeds(unlocked),
         });
-        setGameSpeed(speed);
+        applyGameSpeed(speed);
       }
     },
-    [setGameSpeed]
+    [applyGameSpeed]
   );
 
   const handleStartWave = useCallback(() => {
@@ -1904,7 +2063,7 @@ export default function GameScreen() {
     const totalXpReward = baseXpReward + challengeXpReward;
     const totalGemReward = remainderPerf + challengeGemReward;
 
-    if (!isServerBackedPlayerId(playerStore.playerId)) {
+    const settleRunLocally = () => {
       playerStore.addXp(totalXpReward);
       const comboResult = playerStore.recordDailyChallengeRun();
       if (comboResult.bonusGems > 0) {
@@ -1917,48 +2076,102 @@ export default function GameScreen() {
       playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
       playerStore.incrementGamesPlayedSinceAd();
       playerStore.clearCurrentGameProgress();
+    };
+
+    if (!isServerBackedPlayerId(playerStore.playerId)) {
+      settleRunLocally();
+      if (__DEV__) {
+        console.log('[leaderboard] run settled locally (no server player id)', {
+          currentWave,
+          enemiesKilled,
+          towersPlaced,
+        });
+      }
       return;
     }
 
-    try {
-      const response = await gameApi.endGame({
-        player_id: playerStore.playerId,
-        wave_reached: currentWave,
-        enemies_killed: enemiesKilled,
-        towers_placed: towersPlaced,
-        duration_seconds: duration,
-        run_bonus_gems: challengeGemReward,
-      });
+    const endPayload = {
+      player_id: playerStore.playerId,
+      wave_reached: currentWave,
+      enemies_killed: enemiesKilled,
+      towers_placed: towersPlaced,
+      duration_seconds: duration,
+      run_bonus_gems: challengeGemReward,
+    };
 
-      let comboResult = { bonusGems: 0 };
-      if (response.data) {
-        playerStore.addXp(response.data.xp_earned + challengeXpReward);
-        if (response.data.new_gem_balance !== undefined) {
-          playerStore.setGems(response.data.new_gem_balance);
-        }
-        comboResult = playerStore.recordDailyChallengeRun();
-        if (comboResult.bonusGems > 0) {
-          playSfx('combo');
-        }
-        if (challengeGemReward > 0) {
-          playerStore.addGems(challengeGemReward);
-        }
+    const logEndGameFailure = (err: unknown, attempt: number, maxAttempts: number) => {
+      if (isAxiosError(err)) {
+        console.warn(
+          `[leaderboard] POST /games/end FAILED (attempt ${attempt}/${maxAttempts})`,
+          {
+            status: err.response?.status,
+            data: err.response?.data,
+            message: err.message,
+            payload: endPayload,
+          }
+        );
+      } else {
+        console.warn(
+          `[leaderboard] POST /games/end FAILED (attempt ${attempt}/${maxAttempts})`,
+          err instanceof Error ? err.message : String(err),
+          { payload: endPayload }
+        );
       }
+    };
 
-      const runGemsTotal =
-        (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
-      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
-      playerStore.incrementGamesPlayedSinceAd();
-      playerStore.clearCurrentGameProgress();
-    } catch (error) {
-      console.error('Error saving game:', error);
-      if (__DEV__) {
-        console.warn('[mapProgress] handleGameEnd API failed; best wave already saved locally', {
-          runMapId,
-          currentWave,
+    const maxAttempts = 3;
+    let response: Awaited<ReturnType<typeof gameApi.endGame>> | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        response = await gameApi.endGame(endPayload);
+        console.log('[leaderboard] POST /games/end OK — server updated player + leaderboard', {
+          player_id: endPayload.player_id,
+          wave_reached: endPayload.wave_reached,
+          enemies_killed: endPayload.enemies_killed,
+          towers_placed: endPayload.towers_placed,
+          duration_seconds: endPayload.duration_seconds,
+          run_bonus_gems: endPayload.run_bonus_gems,
+          xp_earned: response.data?.xp_earned,
+          gems_earned: response.data?.gems_earned,
+          new_gem_balance: response.data?.new_gem_balance,
         });
+        break;
+      } catch (err) {
+        logEndGameFailure(err, attempt, maxAttempts);
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 450 * attempt));
+        }
       }
     }
+
+    if (!response) {
+      console.warn(
+        '[leaderboard] POST /games/end exhausted retries — settling run locally only; global leaderboard will NOT show this run until a successful sync'
+      );
+      settleRunLocally();
+      return;
+    }
+
+    let comboResult = { bonusGems: 0 };
+    if (response.data) {
+      playerStore.addXp(response.data.xp_earned + challengeXpReward);
+      if (response.data.new_gem_balance !== undefined) {
+        playerStore.setGems(response.data.new_gem_balance);
+      }
+      comboResult = playerStore.recordDailyChallengeRun();
+      if (comboResult.bonusGems > 0) {
+        playSfx('combo');
+      }
+      if (challengeGemReward > 0) {
+        playerStore.addGems(challengeGemReward);
+      }
+    }
+
+    const runGemsTotal =
+      (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
+    playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+    playerStore.incrementGamesPlayedSinceAd();
+    playerStore.clearCurrentGameProgress();
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
@@ -1975,10 +2188,12 @@ export default function GameScreen() {
   useEffect(() => {
     const completed = dailyMissions.filter((m) => m.completed).length;
     if (completed > lastMissionCompletedCountRef.current) {
-      playSfx('mission');
+      if (isPlaying && !isGameOver) {
+        playSfx('mission');
+      }
     }
     lastMissionCompletedCountRef.current = completed;
-  }, [dailyMissions]);
+  }, [dailyMissions, isPlaying, isGameOver]);
 
   useEffect(() => {
     if (!playerStore.autoStartWaves) return;
@@ -2091,7 +2306,12 @@ export default function GameScreen() {
   }, [dailyMissions]);
 
   return (
-    <GameRuntimeErrorBoundary onRecover={() => router.replace('/')}>
+    <GameRuntimeErrorBoundary
+      onRecover={() => {
+        void stopAllSounds();
+        router.replace('/');
+      }}
+    >
       <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -2144,20 +2364,25 @@ export default function GameScreen() {
       {!isGameOver && isPlaying && (
         <View style={styles.carnageBar}>
           <View style={styles.carnageBarLeft}>
-            <MaterialCommunityIcons name="skull-outline" size={16} color="#FF6B4A" />
-            <Text style={styles.carnageBarStrong}>{enemiesKilled}</Text>
-            <Text style={styles.carnageBarLabel}>this run</Text>
-          </View>
-          <View style={styles.carnageBarMid}>
-            <Text style={styles.carnageBarMuted}>Session</Text>
-            <Text style={styles.carnageBarSession}>{sessionCarnageDisplay}</Text>
+            <Text style={styles.enemiesRemainingLabel}>Enemies remaining</Text>
+            <View style={styles.enemiesRemainingRow}>
+              <MaterialCommunityIcons name="target" size={20} color="#FF6B4A" />
+              <Text style={styles.enemiesRemainingValue}>
+                {waveEnemiesRemaining === null ? '—' : waveEnemiesRemaining}
+              </Text>
+            </View>
+            <Text style={styles.enemiesRemainingHint}>
+              {waveInProgress && currentWave > 0
+                ? `Wave ${currentWave} · on map + still arriving`
+                : 'Start a wave to see the count'}
+            </Text>
           </View>
           <View style={styles.carnageBarRight}>
             <MaterialCommunityIcons name="star-four-points" size={14} color="#f1c40f" />
             <Text style={styles.carnageBarStars}>
               {sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED}
             </Text>
-            <Text style={styles.carnageBarStarsHint}>slaughters</Text>
+            <Text style={styles.carnageBarStarsHint}>bounty stars</Text>
           </View>
         </View>
       )}
@@ -2165,37 +2390,11 @@ export default function GameScreen() {
       {/* Speed Controls */}
       <SpeedControls
         currentSpeed={gameSpeed}
-        onSpeedChange={setGameSpeed}
+        onSpeedChange={applyGameSpeed}
         unlockedSpeeds={unlockedSpeeds}
         onPurchaseSpeed={handlePurchaseSpeed}
         gems={playerStore.gems}
       />
-
-      {/* Wave info bar */}
-      {!waveInProgress && !isGameOver && isPlaying && (
-        <View style={styles.waveInfoBar}>
-          <View>
-            <Text style={styles.waveInfoText}>
-              {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
-            </Text>
-            <Text style={styles.mapInfoText}>Arena: {arenaLabel}</Text>
-            <Text style={styles.challengeInfoText}>
-              Daily Challenge: {dailyChallenge.name}
-            </Text>
-            {showBonusPopup && lastWaveBonus > 0 && (
-              <Text style={styles.bonusText}>+{lastWaveBonus} bonus coins!</Text>
-            )}
-            {missionNudge && (
-              <Text style={styles.missionNudgeText}>{missionNudge.text}</Text>
-            )}
-          </View>
-          <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
-            <Text style={styles.startWaveText}>
-              Start Wave {currentWave + 1} {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       {/* Bonus popup notification */}
       {showBonusPopup && lastWaveBonus > 0 && waveInProgress === false && (
@@ -2220,6 +2419,34 @@ export default function GameScreen() {
           performanceMode={playerStore.performanceMode}
           vfxQuality={vfxQuality}
         />
+        {/* Overlay so inter-wave UI does not shrink the board viewport (avoids scroll re-center / map jump). */}
+        {!waveInProgress && !isGameOver && isPlaying && (
+          <View style={styles.waveInfoBarOverlay} pointerEvents="box-none">
+            <View style={styles.waveInfoBar} pointerEvents="auto">
+              <View>
+                <Text style={styles.waveInfoText}>
+                  {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
+                </Text>
+                <Text style={styles.mapInfoText}>Arena: {arenaLabel}</Text>
+                <Text style={styles.challengeInfoText}>
+                  Daily Challenge: {dailyChallenge.name}
+                </Text>
+                {showBonusPopup && lastWaveBonus > 0 && (
+                  <Text style={styles.bonusText}>+{lastWaveBonus} bonus coins!</Text>
+                )}
+                {missionNudge && (
+                  <Text style={styles.missionNudgeText}>{missionNudge.text}</Text>
+                )}
+              </View>
+              <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
+                <Text style={styles.startWaveText}>
+                  Start Wave {currentWave + 1}{' '}
+                  {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Tower options panel */}
@@ -2265,7 +2492,6 @@ export default function GameScreen() {
         enemiesKilled={enemiesKilled}
         towersPlaced={towersPlaced}
         bestWaveRecord={Math.max(playerStore.bestWave, currentWave)}
-        sessionCarnageTotal={sessionEnemiesKilledTotal}
         slaughterQualified={enemiesKilled >= SESSION_SLAUGHTER_WIN_KILLS}
         slaughterThreshold={SESSION_SLAUGHTER_WIN_KILLS}
         triumphCount={sessionSlaughterTriumphs}
@@ -2305,7 +2531,12 @@ export default function GameScreen() {
         <View style={styles.pauseOverlay}>
           <Text style={styles.pauseText}>PAUSED</Text>
           <Text style={styles.pauseSubtext}>
-            Wave {currentWave} • {enemiesKilled} kills • {coins} coins
+            Wave {currentWave}
+            {waveInProgress && waveEnemiesRemaining !== null
+              ? ` · ${waveEnemiesRemaining} enemies left`
+              : ''}
+            {' · '}
+            {enemiesKilled} destroyed this run · {coins} coins
           </Text>
           
           <TouchableOpacity style={styles.pauseResumeButton} onPress={resumeGame}>
@@ -2418,46 +2649,45 @@ const styles = StyleSheet.create({
   },
   carnageBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: TacticalTheme.bgElevated,
     borderBottomWidth: 1,
     borderBottomColor: TacticalTheme.border,
   },
   carnageBarLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    flex: 1,
+    marginRight: 12,
   },
-  carnageBarStrong: {
-    color: TacticalTheme.accent,
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  carnageBarLabel: {
+  enemiesRemainingLabel: {
     color: TacticalTheme.textMuted,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
-  carnageBarMid: {
+  enemiesRemainingRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
   },
-  carnageBarMuted: {
-    color: TacticalTheme.textSubtle,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  carnageBarSession: {
+  enemiesRemainingValue: {
     color: TacticalTheme.accent,
-    fontSize: 16,
+    fontSize: 28,
     fontWeight: '800',
+  },
+  enemiesRemainingHint: {
+    color: TacticalTheme.textSubtle,
+    fontSize: 11,
+    marginTop: 4,
   },
   carnageBarRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingTop: 2,
   },
   carnageBarStars: {
     color: TacticalTheme.accent,
@@ -2514,9 +2744,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
+    marginHorizontal: 8,
+    marginBottom: 6,
     backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    borderRadius: 8,
   },
   waveInfoText: {
     color: '#fff',
@@ -2618,6 +2851,7 @@ const styles = StyleSheet.create({
   },
   boardContainer: {
     flex: 1,
+    position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2626,8 +2860,18 @@ const styles = StyleSheet.create({
   },
   boardScrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
+  },
+  /** No flex centering — centering recenters when ScrollView viewport height changes (wave UI, etc.). */
+  boardInnerScrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
+  },
+  waveInfoBarOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 30,
   },
   gameBoard: {
     backgroundColor: '#0f0f23',
@@ -2659,6 +2903,15 @@ const styles = StyleSheet.create({
     backgroundColor: TacticalTheme.accentRgba28,
     borderColor: TacticalTheme.selectionGlowStrong,
     borderWidth: 2,
+  },
+  canPlaceCellPreview: {
+    borderWidth: 3,
+    borderColor: '#7CFFB2',
+    shadowColor: '#7CFFB2',
+    shadowOpacity: 0.55,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
   },
   spawnCell: {
     backgroundColor: 'rgba(231, 76, 60, 0.3)',
@@ -2988,15 +3241,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     flex: 1,
-  },
-  gameOverSessionLine: {
-    color: TacticalTheme.text,
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  gameOverSessionEm: {
-    color: TacticalTheme.accent,
-    fontWeight: '800',
   },
   gameOverTriumphLine: {
     color: TacticalTheme.textMuted,

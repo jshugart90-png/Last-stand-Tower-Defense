@@ -6,6 +6,8 @@ import {
   GameSpeed,
   TOWER_UNLOCK_PRICES,
   SPEED_UNLOCK_PRICES,
+  normalizeUnlockedSpeeds,
+  isGameSpeed,
   getShopUpgradeCost,
   TargetingMode,
   TOWERS,
@@ -890,13 +892,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     
     // Speed unlocks (gems)
     purchaseSpeed: (speed) => {
+      if (!isGameSpeed(speed)) return false;
       const state = get();
       if (state.unlockedSpeeds.includes(speed)) return false;
       const price = SPEED_UNLOCK_PRICES[speed];
       if (state.gems < price) return false;
       set({
         gems: state.gems - price,
-        unlockedSpeeds: [...state.unlockedSpeeds, speed].sort((a, b) => a - b) as GameSpeed[],
+        unlockedSpeeds: normalizeUnlockedSpeeds([...state.unlockedSpeeds, speed]),
       });
       return true;
     },
@@ -1086,7 +1089,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         ...data,
         hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
-        unlockedSpeeds: (data.unlockedSpeeds as GameSpeed[]) || state.unlockedSpeeds,
+        unlockedSpeeds: normalizeUnlockedSpeeds(data.unlockedSpeeds ?? state.unlockedSpeeds),
         unlockedLogos:
           Array.isArray(data.unlockedLogos) && data.unlockedLogos.length > 0
             ? data.unlockedLogos
@@ -1202,7 +1205,8 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       return {
         ...rehydrated,
         unlockedMapIds: reconciledUnlocks,
-      };
+        unlockedSpeeds: normalizeUnlockedSpeeds(rehydrated.unlockedSpeeds),
+      } as typeof current;
     },
   }
   )

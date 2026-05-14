@@ -86,7 +86,7 @@ export default function RunResultsScreen() {
         </View>
         <View style={styles.card}>
           <Ionicons name="skull-outline" size={20} color="#E74C3C" />
-          <Text style={styles.label}>Kills</Text>
+          <Text style={styles.label}>Enemies defeated</Text>
           <Text style={styles.value}>{kills}</Text>
         </View>
         <View style={styles.card}>

@@ -12,7 +12,10 @@ import {
   getInfiniteUpgradeCost,
   TargetingMode,
   GameSpeed,
+  clampGameSpeed,
+  normalizeUnlockedSpeeds,
   getWaveCompletionBonus,
+  getWavePlannedEnemyCount,
   STARTING_COINS_BONUS_PER_LEVEL,
   getRunCoinIncomeMultiplier,
   targetWavePerformanceGems,
@@ -32,6 +35,8 @@ import {
   playEnemyDeathBurst,
   playBaseDamageSound,
   playWaveStartFanfare,
+  stopAllSounds,
+  setGameplaySfxArmed,
 } from '../services/audioService';
 import { usePlayerStore } from './playerStore';
 
@@ -117,7 +122,11 @@ export interface GameState {
   isGameOver: boolean;
   currentWave: number;
   waveInProgress: boolean;
-  
+  /** Planned wave spawns from `getWavePlannedEnemyCount` when the wave starts. */
+  waveSpawnSlotsTotal: number;
+  /** How many scheduled wave spawns have entered the map (via `spawnEnemy`). */
+  waveSpawnSlotsReleased: number;
+
   // Player stats
   coins: number;
   baseHealth: number;
@@ -309,6 +318,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   isGameOver: false,
   currentWave: 0,
   waveInProgress: false,
+  waveSpawnSlotsTotal: 0,
+  waveSpawnSlotsReleased: 0,
   coins: GAME_CONFIG.STARTING_COINS,
   baseHealth: GAME_CONFIG.BASE_HEALTH,
   score: 0,
@@ -377,6 +388,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         isGameOver: false,
         currentWave: 0,
         waveInProgress: false,
+        waveSpawnSlotsTotal: 0,
+        waveSpawnSlotsReleased: 0,
         coins: GAME_CONFIG.STARTING_COINS + coinBonus,
         baseHealth: GAME_CONFIG.BASE_HEALTH,
         score: 0,
@@ -392,7 +405,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         spawnPoint: { ...def.spawnPoint },
         basePosition: { ...def.basePosition },
         unlockedTowers,
-        unlockedSpeeds,
+        unlockedSpeeds: normalizeUnlockedSpeeds(unlockedSpeeds),
         towerUpgradeLevels,
         equippedSkins,
         arenaExpansions,
@@ -419,6 +432,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         arenaRoute,
         mapTheme: def.theme,
       });
+      setGameplaySfxArmed(true);
       return;
     }
 
@@ -439,6 +453,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       isGameOver: false,
       currentWave: 0,
       waveInProgress: false,
+      waveSpawnSlotsTotal: 0,
+      waveSpawnSlotsReleased: 0,
       coins: GAME_CONFIG.STARTING_COINS + coinBonus,
       baseHealth: GAME_CONFIG.BASE_HEALTH,
       score: 0,
@@ -454,7 +470,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       spawnPoint,
       basePosition,
       unlockedTowers,
-      unlockedSpeeds,
+      unlockedSpeeds: normalizeUnlockedSpeeds(unlockedSpeeds),
       towerUpgradeLevels,
       equippedSkins,
       arenaExpansions,
@@ -481,16 +497,25 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       arenaRoute: [],
       mapTheme: null,
     });
+    setGameplaySfxArmed(true);
   },
 
-  pauseGame: () => set({ isPaused: true }),
-  resumeGame: () => set({ isPaused: false }),
+  pauseGame: () => {
+    void stopAllSounds();
+    set({ isPaused: true });
+  },
+  resumeGame: () => {
+    setGameplaySfxArmed(true);
+    set({ isPaused: false });
+  },
   endGame: () => {
     clearBonusPopupDismissTimer();
+    void stopAllSounds();
     set({ isPlaying: false, isGameOver: true });
   },
   
   restartGame: () => {
+    void stopAllSounds();
     const {
       unlockedTowers,
       unlockedSpeeds,
@@ -511,21 +536,27 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   setGameSpeed: (speed) => {
     const state = get();
-    if (state.unlockedSpeeds.includes(speed)) {
-      set({ gameSpeed: speed });
-    }
+    const target = clampGameSpeed(Number(speed));
+    if (!state.unlockedSpeeds.includes(target)) return;
+    if (state.gameSpeed === target) return;
+    set({ gameSpeed: target });
   },
 
   // Wave management
   startWave: () => {
     clearBonusPopupDismissTimer();
     void playWaveStartFanfare();
-    set(state => ({
-      currentWave: state.currentWave + 1,
-      waveInProgress: true,
-      autoWaveTimer: 0,
-      showBonusPopup: false,
-    }));
+    set((state) => {
+      const nextWave = state.currentWave + 1;
+      return {
+        currentWave: nextWave,
+        waveInProgress: true,
+        autoWaveTimer: 0,
+        showBonusPopup: false,
+        waveSpawnSlotsTotal: getWavePlannedEnemyCount(nextWave),
+        waveSpawnSlotsReleased: 0,
+      };
+    });
   },
 
   endWave: () => {
@@ -547,8 +578,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       }
     }
 
-    set({ 
+    set({
       waveInProgress: false,
+      waveSpawnSlotsTotal: 0,
+      waveSpawnSlotsReleased: 0,
       waveEndTime: Date.now(),
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
       coins: state.coins + bonus,
@@ -749,7 +782,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       splitInto: (enemyDef as any).splitInto,
     };
 
-    set(s => ({ enemies: [...s.enemies, enemy] }));
+    set((s) => ({
+      enemies: [...s.enemies, enemy],
+      waveSpawnSlotsReleased:
+        s.waveInProgress && s.waveSpawnSlotsTotal > 0
+          ? Math.min(s.waveSpawnSlotsTotal, s.waveSpawnSlotsReleased + 1)
+          : s.waveSpawnSlotsReleased,
+    }));
   },
 
   // Main game tick - NO COMBO SYSTEM
@@ -1134,11 +1173,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
     const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
 
-    if (baseDamage > 0) {
-      void playBaseDamageSound();
-    }
-    if (enemiesKilledThisTick > 0) {
-      void playEnemyDeathBurst(enemiesKilledThisTick);
+    if (isGameOver) {
+      void stopAllSounds();
+    } else {
+      if (baseDamage > 0) {
+        void playBaseDamageSound();
+      }
+      if (enemiesKilledThisTick > 0) {
+        void playEnemyDeathBurst(enemiesKilledThisTick);
+      }
     }
 
     const sel = state.selectedPlacedTower;
@@ -1165,9 +1208,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   // Base damage
   damageBase: (damage) => {
-    set(s => {
+    set((s) => {
       const newHealth = s.baseHealth - damage;
       if (newHealth <= 0 && !s.hasRevive) {
+        void stopAllSounds();
         return { baseHealth: 0, isGameOver: true, isPlaying: false };
       }
       return { baseHealth: Math.max(0, newHealth) };
@@ -1204,6 +1248,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       waveInProgress: true,
       autoWaveTimer: 0,
     });
+    setGameplaySfxArmed(true);
     return true;
   },
 
@@ -1355,6 +1400,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         isGameOver: false,
         currentWave: savedGame.currentWave,
         waveInProgress: false,
+        waveSpawnSlotsTotal: 0,
+        waveSpawnSlotsReleased: 0,
         coins: savedGame.coins,
         baseHealth: savedGame.baseHealth,
         score: savedGame.score,
@@ -1370,7 +1417,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         spawnPoint: { ...def.spawnPoint },
         basePosition: { ...def.basePosition },
         unlockedTowers: playerData.unlockedTowers,
-        unlockedSpeeds: playerData.unlockedSpeeds,
+        unlockedSpeeds: normalizeUnlockedSpeeds(playerData.unlockedSpeeds),
         towerUpgradeLevels: playerData.towerUpgradeLevels,
         equippedSkins: playerData.equippedSkins,
         arenaExpansions: savedGame.arenaExpansions,
@@ -1390,6 +1437,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         arenaRoute,
         mapTheme: def.theme,
       });
+      setGameplaySfxArmed(true);
       return;
     }
 
@@ -1408,6 +1456,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       isGameOver: false,
       currentWave: savedGame.currentWave,
       waveInProgress: false,
+      waveSpawnSlotsTotal: 0,
+      waveSpawnSlotsReleased: 0,
       coins: savedGame.coins,
       baseHealth: savedGame.baseHealth,
       score: savedGame.score,
@@ -1423,7 +1473,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       spawnPoint,
       basePosition,
       unlockedTowers: playerData.unlockedTowers,
-      unlockedSpeeds: playerData.unlockedSpeeds,
+      unlockedSpeeds: normalizeUnlockedSpeeds(playerData.unlockedSpeeds),
       towerUpgradeLevels: playerData.towerUpgradeLevels,
       equippedSkins: playerData.equippedSkins,
       arenaExpansions: savedGame.arenaExpansions,
@@ -1443,5 +1493,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       arenaRoute: [],
       mapTheme: null,
     });
+    setGameplaySfxArmed(true);
   },
 }));
