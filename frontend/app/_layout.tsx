@@ -32,6 +32,16 @@ export default function RootLayout() {
         } catch {
           // audio is optional; never crash launch
         }
+        try {
+          const { initializeAds, loadInterstitialAd, loadRewardedAd } = await import('../src/services/adService');
+          const adsOk = await initializeAds();
+          if (adsOk) {
+            void loadInterstitialAd().catch(() => {});
+            void loadRewardedAd().catch(() => {});
+          }
+        } catch {
+          // ads optional; never crash launch
+        }
         if (!isBackendConfigured()) return;
         try {
           const { initializeIAP } = await import('../src/services/iapService');

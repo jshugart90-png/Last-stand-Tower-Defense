@@ -345,7 +345,7 @@ export default function ShopScreen() {
 
   // Handle Remove Ads purchase (IAP)
   const handlePurchaseRemoveAds = async () => {
-    if (playerStore.premium) {
+    if (playerStore.hasAdFree || playerStore.premium) {
       Alert.alert('Already Purchased', 'You already have ad-free access!');
       return;
     }
@@ -363,7 +363,7 @@ export default function ShopScreen() {
               try {
                 const result = await requestPurchase(IAP_PRODUCTS.REMOVE_ADS);
                 if (result.success) {
-                  playerStore.syncFromServer({ premium: true });
+                  playerStore.syncFromServer({ premium: true, hasAdFree: true });
                   if (playerStore.playerId) {
                     try {
                       await purchaseApi.process({
@@ -392,7 +392,7 @@ export default function ShopScreen() {
                   {
                     text: 'Simulate',
                     onPress: () => {
-                      playerStore.syncFromServer({ premium: true });
+                      playerStore.syncFromServer({ premium: true, hasAdFree: true });
                       Alert.alert('Success!', 'Ads removed! (Simulated)');
                     }
                   },
@@ -416,7 +416,7 @@ export default function ShopScreen() {
 
         for (const purchase of purchases) {
           if (purchase.productId === IAP_PRODUCTS.REMOVE_ADS) {
-            playerStore.syncFromServer({ premium: true });
+            playerStore.syncFromServer({ premium: true, hasAdFree: true });
             restoredSomething = true;
           }
           if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
@@ -533,7 +533,7 @@ export default function ShopScreen() {
     } else if (nativeAdsReady && !isRewardedAdReady()) {
       // Ad not loaded yet - try to load
       setAdLoading(true);
-      Alert.alert('Loading Ad', 'Please wait while we load an ad...');
+      Alert.alert('Ad loading…', 'Please wait while we load an ad…');
       const loaded = await loadRewardedAd();
       setAdLoading(false);
       if (loaded) {
@@ -1020,9 +1020,9 @@ export default function ShopScreen() {
               <TouchableOpacity 
                 style={styles.premiumButton}
                 onPress={handlePurchaseRemoveAds}
-                disabled={purchaseLoading || playerStore.premium}
+                disabled={purchaseLoading || playerStore.hasAdFree || playerStore.premium}
               >
-                {playerStore.premium ? (
+                {playerStore.hasAdFree || playerStore.premium ? (
                   <Text style={styles.premiumPriceText}>Owned ✓</Text>
                 ) : purchaseLoading ? (
                   <ActivityIndicator size="small" color="#1a1a2e" />
@@ -1102,7 +1102,7 @@ export default function ShopScreen() {
               <Ionicons name="videocam" size={24} color="#fff" />
             )}
             <Text style={styles.watchAdText}>
-              {adLoading ? 'Loading Ad...' : 'Watch Ad for 10 Gems'}
+              {adLoading ? 'Ad loading…' : 'Watch Ad for 10 Gems'}
             </Text>
           </TouchableOpacity>
         </View>

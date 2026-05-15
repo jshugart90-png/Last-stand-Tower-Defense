@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -26,11 +26,6 @@ export default function SettingsScreen() {
   const playerStore = usePlayerStore();
   const [changeNameOpen, setChangeNameOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
-  const [adminWaveDraft, setAdminWaveDraft] = useState(String(playerStore.adminStartWave || 1));
-
-  useEffect(() => {
-    setAdminWaveDraft(String(playerStore.adminStartWave || 1));
-  }, [playerStore.adminStartWave]);
 
   const openChangeName = () => {
     setNameDraft(playerStore.nickname || '');
@@ -73,6 +68,30 @@ export default function SettingsScreen() {
           onPress: () => {
             // Simulate restore
             Alert.alert('Restored', 'Your purchases have been restored.');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRemoveAdsPreview = () => {
+    if (playerStore.hasAdFree) {
+      Alert.alert('Already ad-free', 'Remove Ads is already active on this device.');
+      return;
+    }
+    Alert.alert(
+      'Remove Ads',
+      'One-time purchase will remove automatic ads after game over. Rewarded ads for bonus gems and revives stay available.\n\nPreview: enable ad-free on this device now. In-app purchase (e.g. RevenueCat) will connect here later.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Enable ad-free (preview)',
+          onPress: () => {
+            playerStore.setHasAdFree(true);
+            Alert.alert(
+              'Ad-free enabled',
+              'Automatic interstitials after game over are off. You can still watch rewarded ads for gems and revives.'
+            );
           },
         },
       ]
@@ -137,12 +156,6 @@ export default function SettingsScreen() {
         },
       ]
     );
-  };
-
-  const saveAdminWaveOverride = () => {
-    const next = Math.max(1, Math.min(200, Math.floor(Number(adminWaveDraft) || 1)));
-    playerStore.setAdminStartWave(next);
-    setAdminWaveDraft(String(next));
   };
 
   return (
@@ -372,6 +385,13 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Ad-free</Text>
+            <Text style={[styles.infoValue, playerStore.hasAdFree && styles.premiumText]}>
+              {playerStore.hasAdFree ? 'Yes' : 'No'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Arena Expansions</Text>
             <Text style={styles.infoValue}>{playerStore.arenaExpansions}</Text>
           </View>
@@ -410,6 +430,19 @@ export default function SettingsScreen() {
         {/* Purchases Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Purchases</Text>
+
+          <TouchableOpacity style={styles.removeAdsCard} onPress={handleRemoveAdsPreview} activeOpacity={0.85}>
+            <Ionicons name="eye-off-outline" size={22} color={TacticalTheme.accent} />
+            <View style={styles.removeAdsCardText}>
+              <Text style={styles.removeAdsTitle}>Remove Ads</Text>
+              <Text style={styles.removeAdsSubtitle}>
+                {playerStore.hasAdFree
+                  ? 'Active — no forced ads after game over. Rewarded ads still available.'
+                  : 'One-time purchase (preview: tap to enable on this device).'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={TacticalTheme.textSubtle} />
+          </TouchableOpacity>
           
           <TouchableOpacity style={styles.actionButton} onPress={handleRestorePurchases}>
             <Ionicons name="refresh" size={24} color={TacticalTheme.accent} />
@@ -447,51 +480,6 @@ export default function SettingsScreen() {
             <Text style={[styles.actionButtonText, styles.dangerText]}>Reset Progress</Text>
             <Ionicons name="chevron-forward" size={20} color="#E74C3C" />
           </TouchableOpacity>
-        </View>
-
-        {/* Admin / Testing Tools */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Admin / Testing Tools</Text>
-          <Text style={styles.settingHint}>
-            Testing only. Use this to start runs from higher waves on the selected map.
-          </Text>
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Ionicons name="flask-outline" size={24} color="#ff6b5d" />
-              <Text style={styles.settingLabel}>Enable Admin Mode</Text>
-            </View>
-            <Switch
-              value={playerStore.adminModeEnabled}
-              onValueChange={playerStore.setAdminModeEnabled}
-              trackColor={{ false: '#333', true: '#ff6b5d' }}
-              thumbColor={playerStore.adminModeEnabled ? '#fff' : '#666'}
-            />
-          </View>
-
-          {playerStore.adminModeEnabled && (
-            <View style={styles.adminWaveBlock}>
-              <Text style={styles.adminWaveLabel}>Start wave override (1-200)</Text>
-              <View style={styles.adminWaveRow}>
-                <TextInput
-                  style={styles.adminWaveInput}
-                  keyboardType="number-pad"
-                  value={adminWaveDraft}
-                  onChangeText={setAdminWaveDraft}
-                  onBlur={saveAdminWaveOverride}
-                  maxLength={3}
-                  placeholder="1"
-                  placeholderTextColor="#666"
-                />
-                <TouchableOpacity style={styles.adminWaveApplyBtn} onPress={saveAdminWaveOverride}>
-                  <Text style={styles.adminWaveApplyText}>Apply</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.settingHint}>
-                New runs start from wave {playerStore.adminStartWave}. Turn Admin Mode off to restore normal flow.
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Version */}
@@ -606,48 +594,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
-  adminWaveBlock: {
-    marginTop: 8,
-    backgroundColor: TacticalTheme.panel,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    borderRadius: 10,
-    padding: 10,
-  },
-  adminWaveLabel: {
-    color: TacticalTheme.text,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  adminWaveRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 6,
-  },
-  adminWaveInput: {
-    flex: 1,
-    backgroundColor: TacticalTheme.bgElevated,
-    color: TacticalTheme.text,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  adminWaveApplyBtn: {
-    backgroundColor: TacticalTheme.accent,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  adminWaveApplyText: {
-    color: TacticalTheme.white,
-    fontWeight: '800',
-  },
   vfxSegment: {
     flexDirection: 'row',
     backgroundColor: TacticalTheme.bgElevated,
@@ -760,6 +706,32 @@ const styles = StyleSheet.create({
   },
   premiumText: {
     color: '#FFD700',
+  },
+  removeAdsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    borderRadius: 12,
+    backgroundColor: TacticalTheme.panel,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+  },
+  removeAdsCardText: {
+    flex: 1,
+    gap: 4,
+  },
+  removeAdsTitle: {
+    color: TacticalTheme.text,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  removeAdsSubtitle: {
+    color: TacticalTheme.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
   },
   actionButton: {
     flexDirection: 'row',

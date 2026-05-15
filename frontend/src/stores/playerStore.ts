@@ -141,6 +141,8 @@ interface PlayerState {
   
   // Purchases
   premium: boolean;
+  /** Local + persisted: skip automatic interstitials; rewarded ads still allowed. */
+  hasAdFree: boolean;
   arenaExpansions: number;
   
   // Settings
@@ -189,10 +191,6 @@ interface PlayerState {
   mapBestWaves: Record<string, number>;
   unlockedLogos: string[];
   selectedLogoId: string;
-  /** Testing-only: unlocks wave override controls in Settings. */
-  adminModeEnabled: boolean;
-  /** Testing-only: first wave to start from (1 = normal start). */
-  adminStartWave: number;
 }
 
 interface PlayerActions {
@@ -264,10 +262,9 @@ interface PlayerActions {
   purchaseLogo: (logoId: string, price: number) => boolean;
   equipLogo: (logoId: string) => void;
   isLogoUnlocked: (logoId: string) => boolean;
-  setAdminModeEnabled: (enabled: boolean) => void;
-  setAdminStartWave: (wave: number) => void;
   
   // Settings
+  setHasAdFree: (value: boolean) => void;
   toggleSound: () => void;
   toggleMusic: () => void;
   toggleHaptic: () => void;
@@ -367,6 +364,7 @@ const initialState: PlayerState = {
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
+  hasAdFree: false,
   arenaExpansions: 0,
   soundEnabled: true,
   sfxVolume: 0.9,
@@ -397,8 +395,6 @@ const initialState: PlayerState = {
   mapBestWaves: {},
   unlockedLogos: ['shadow_operative', 'tower_sentinel', 'drone_commander', 'fortification_expert', 'wave_breaker'],
   selectedLogoId: DEFAULT_PLAYER_LOGO_ID,
-  adminModeEnabled: false,
-  adminStartWave: 1,
 };
 
 const playerPersistKeys = [
@@ -425,6 +421,7 @@ const playerPersistKeys = [
   'unlockedSkins',
   'equippedSkins',
   'premium',
+  'hasAdFree',
   'arenaExpansions',
   'soundEnabled',
   'sfxVolume',
@@ -455,8 +452,6 @@ const playerPersistKeys = [
   'mapBestWaves',
   'unlockedLogos',
   'selectedLogoId',
-  'adminModeEnabled',
-  'adminStartWave',
 ] as const;
 
 const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
@@ -1028,13 +1023,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       set({ selectedLogoId: logoId });
     },
     isLogoUnlocked: (logoId) => get().unlockedLogos.includes(logoId),
-    setAdminModeEnabled: (enabled) => set({ adminModeEnabled: enabled }),
-    setAdminStartWave: (wave) =>
-      set({
-        adminStartWave: Math.max(1, Math.min(200, Math.floor(wave) || 1)),
-      }),
 
     // Settings
+    setHasAdFree: (value) => set({ hasAdFree: value }),
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
     toggleMusic: () => set(state => ({ musicEnabled: !state.musicEnabled })),
     toggleHaptic: () => set(state => ({ hapticEnabled: !state.hapticEnabled })),
@@ -1053,7 +1044,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     resetGamesPlayedSinceAd: () => set({ gamesPlayedSinceAd: 0 }),
     shouldShowInterstitialAd: () => {
       const state = get();
-      if (state.premium) return false;
+      if (state.premium || state.hasAdFree) return false;
       return state.gamesPlayedSinceAd >= 2;
     },
 
@@ -1087,6 +1078,12 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       set((state) => ({
         ...state,
         ...data,
+        hasAdFree:
+          typeof data.hasAdFree === 'boolean'
+            ? data.hasAdFree
+            : data.premium === true
+              ? true
+              : state.hasAdFree,
         hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
         unlockedSpeeds: normalizeUnlockedSpeeds(data.unlockedSpeeds ?? state.unlockedSpeeds),
@@ -1167,11 +1164,12 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           typeof p?.selectedLogoId === 'string' && p.selectedLogoId.trim().length > 0
             ? p.selectedLogoId
             : DEFAULT_PLAYER_LOGO_ID,
-        adminModeEnabled: Boolean(p?.adminModeEnabled),
-        adminStartWave:
-          typeof p?.adminStartWave === 'number'
-            ? Math.max(1, Math.min(200, Math.floor(p.adminStartWave)))
-            : 1,
+        hasAdFree:
+          typeof p?.hasAdFree === 'boolean'
+            ? p.hasAdFree
+            : p?.premium === true
+              ? true
+              : current.hasAdFree,
         sessionEnemiesKilledTotal:
           typeof p?.sessionEnemiesKilledTotal === 'number'
             ? Math.max(0, p.sessionEnemiesKilledTotal)
