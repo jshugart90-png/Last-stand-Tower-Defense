@@ -75,11 +75,23 @@ export const findPath = (
   };
 
   openList.push(startNode);
+  /** O(1) lookup for nodes still in the open list (avoids linear `.find` per neighbor). */
+  const openByKey = new Map<string, Node>();
+  openByKey.set(`${start.x},${start.y}`, startNode);
 
   while (openList.length > 0) {
-    // Find node with lowest f cost
-    openList.sort((a, b) => a.f - b.f);
-    const current = openList.shift()!;
+    // Pop lowest f without sorting the whole open list every iteration (was a major hotspot
+    // when many `wouldBlockPath` / `findPath` calls run per frame, e.g. placement grid checks).
+    let minIdx = 0;
+    for (let i = 1; i < openList.length; i++) {
+      const a = openList[i];
+      const b = openList[minIdx];
+      if (a.f < b.f || (a.f === b.f && a.g > b.g)) {
+        minIdx = i;
+      }
+    }
+    const current = openList.splice(minIdx, 1)[0]!;
+    openByKey.delete(`${current.x},${current.y}`);
     const currentKey = `${current.x},${current.y}`;
 
     // Check if we reached the end
@@ -109,10 +121,7 @@ export const findPath = (
       const h = heuristic(neighbor, end);
       const f = g + h;
 
-      // Check if neighbor is already in open list with better score
-      const existingNode = openList.find(
-        (n) => n.x === neighbor.x && n.y === neighbor.y
-      );
+      const existingNode = openByKey.get(neighborKey);
 
       if (existingNode) {
         if (g < existingNode.g) {
@@ -121,14 +130,16 @@ export const findPath = (
           existingNode.parent = current;
         }
       } else {
-        openList.push({
+        const nextNode: Node = {
           x: neighbor.x,
           y: neighbor.y,
           g,
           h,
           f,
           parent: current,
-        });
+        };
+        openList.push(nextNode);
+        openByKey.set(neighborKey, nextNode);
       }
     }
   }

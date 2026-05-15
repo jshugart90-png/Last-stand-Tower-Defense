@@ -596,8 +596,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       bonusPopupDismissTimer = null;
       try {
         useGameStore.setState({ showBonusPopup: false });
-      } catch (e) {
-        console.error('[endWave] bonus popup dismiss failed', e);
+      } catch {
+        /* ignore dismiss failure */
       }
     }, 2000);
   },
@@ -756,7 +756,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           blockedCells
         ) ?? null;
       if (!computed || computed.length < 2) {
-        console.error('No valid path for enemy!');
         return;
       }
       path = computed;
@@ -808,8 +807,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       if (newTimer <= 0) {
         try {
           get().startWave();
-        } catch (e) {
-          console.error('[gameTick] auto startWave failed', e);
+        } catch {
+          /* keep timer state consistent */
         }
         return;
       }
@@ -1054,13 +1053,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
         if (proj.isSplash && proj.splashRadius) {
           const splashRadiusSq = proj.splashRadius * proj.splashRadius;
-          updatedEnemies.forEach(e => {
+          for (const e of enemiesForTowers) {
             const edx = e.position.x - target.position.x;
             const edy = e.position.y - target.position.y;
             if (edx * edx + edy * edy <= splashRadiusSq) {
               enemyDamage.push({ id: e.id, damage: proj.damage });
             }
-          });
+          }
         } else {
           enemyDamage.push({ 
             id: target.id, 
@@ -1201,8 +1200,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
       selectedPlacedTower: nextSelected,
     });
-    } catch (err) {
-      console.error('[gameTick] uncaught error — tick aborted for this step', err);
+    } catch {
+      /* abort this tick only */
     }
   },
 

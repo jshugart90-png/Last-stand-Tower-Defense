@@ -37,10 +37,8 @@ export const initializeIAP = async (): Promise<boolean> => {
   try {
     await ExpoIAP.initConnection();
     iapInitialized = true;
-    console.log('IAP connection initialized');
     return true;
-  } catch (error) {
-    console.error('Failed to initialize IAP:', error);
+  } catch {
     return false;
   }
 };
@@ -52,8 +50,7 @@ export const getProducts = async (): Promise<any[]> => {
     const skus = Object.values(IAP_PRODUCTS);
     const products = await (ExpoIAP as any).getProducts({ skus });
     return products;
-  } catch (error) {
-    console.error('Failed to get products:', error);
+  } catch {
     return [];
   }
 };
@@ -86,8 +83,7 @@ export const restorePurchases = async (): Promise<any[]> => {
   try {
     const purchases = await ExpoIAP.getAvailablePurchases();
     return purchases || [];
-  } catch (error) {
-    console.error('Failed to restore purchases:', error);
+  } catch {
     return [];
   }
 };
@@ -97,8 +93,8 @@ export const endIAPConnection = async (): Promise<void> => {
   try {
     await ExpoIAP.endConnection();
     iapInitialized = false;
-  } catch (error) {
-    console.error('Failed to end IAP connection:', error);
+  } catch {
+    /* ignore */
   }
 };
 

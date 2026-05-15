@@ -47,9 +47,8 @@ import {
   COMBO_BONUS_GEMS,
   type EnemyType,
 } from '../src/constants/game';
-import { isAxiosError } from 'axios';
 import { gameApi, analyticsApi, rewardApi, isServerBackedPlayerId } from '../src/hooks/useApi';
-import { findPath } from '../src/utils/pathfinding';
+import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { 
   isNativeAdsAvailable, isAdsInitialized,
   showInterstitialAd, isInterstitialAdReady, loadInterstitialAd,
@@ -57,7 +56,7 @@ import {
 } from '../src/services/adService';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx, stopAllSounds, setGameplaySfxArmed } from '../src/services/audioService';
-import { getArenaMap, CLASSIC_MAP_ID } from '../src/constants/arenaMaps';
+import { getArenaMap, CLASSIC_MAP_ID, isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
@@ -90,16 +89,8 @@ class GestureAreaErrorBoundary extends Component<
     return { err };
   }
 
-  componentDidCatch(err: Error, info: ErrorInfo) {
-    const t = this.props.gestureTraceRef?.current;
-    console.warn(
-      '[GameBoard gestures]',
-      err?.message,
-      '| trace:',
-      t?.active ?? '?',
-      t?.phase ?? '?',
-      info?.componentStack
-    );
+  componentDidCatch(_err: Error, _info: ErrorInfo) {
+    /* production: no console — gesture layer recovers via UI */
   }
 
   reset = () => {
@@ -136,8 +127,8 @@ class GameRuntimeErrorBoundary extends Component<
     return { err };
   }
 
-  componentDidCatch(err: Error, info: ErrorInfo) {
-    console.error('[Game runtime error]', err?.message, info?.componentStack);
+  componentDidCatch(_err: Error, _info: ErrorInfo) {
+    /* production: no console */
   }
 
   render() {
@@ -860,6 +851,308 @@ const GameSpawnBaseMarkers = React.memo(function GameSpawnBaseMarkers({
   );
 });
 
+/** Grid + path only — avoids re-rendering hundreds of cells every simulation tick when enemy positions update. */
+const GameBoardStaticCells = React.memo(function GameBoardStaticCells({
+  onCellPress,
+  scaledCellSize,
+  effectivePreview,
+}: {
+  onCellPress: (x: number, y: number) => void;
+  scaledCellSize: number;
+  effectivePreview: { col: number; row: number } | null;
+}) {
+  const {
+    towers,
+    gridCols,
+    gridRows,
+    spawnPoint,
+    basePosition,
+    selectedTowerType,
+    selectedPlacedTower,
+    arenaRoute,
+    mapTheme,
+  } = useGameStore(
+    useShallow((s) => ({
+      towers: s.towers,
+      gridCols: s.gridCols,
+      gridRows: s.gridRows,
+      spawnPoint: s.spawnPoint,
+      basePosition: s.basePosition,
+      selectedTowerType: s.selectedTowerType,
+      selectedPlacedTower: s.selectedPlacedTower,
+      arenaRoute: s.arenaRoute,
+      mapTheme: s.mapTheme,
+    }))
+  );
+
+  const blockedCells = useMemo(
+    () => new Set(towers.map((t) => `${t.position.x},${t.position.y}`)),
+    [towers]
+  );
+
+  const pathSet = useMemo(() => {
+    if (arenaRoute.length >= 2) {
+      return new Set(arenaRoute.map((p) => `${p.x},${p.y}`));
+    }
+    const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
+    return new Set((currentPath || []).map((p) => `${p.x},${p.y}`));
+  }, [arenaRoute, spawnPoint, basePosition, gridCols, gridRows, blockedCells]);
+
+  const placeableCellKeys = useMemo(() => {
+    if (!selectedTowerType || selectedPlacedTower) return null as Set<string> | null;
+    try {
+      const keys = new Set<string>();
+      const towerPositions = towers.map((t) => ({
+        x: Math.floor(t.position.x),
+        y: Math.floor(t.position.y),
+      }));
+      for (let row = 0; row < gridRows; row++) {
+        for (let col = 0; col < gridCols; col++) {
+          const k = `${col},${row}`;
+          if (col === spawnPoint.x && row === spawnPoint.y) continue;
+          if (col === basePosition.x && row === basePosition.y) continue;
+          if (blockedCells.has(k)) continue;
+          if (arenaRoute.length >= 2) {
+            if (isCellOnArenaRoute({ x: col, y: row }, arenaRoute)) continue;
+            keys.add(k);
+            continue;
+          }
+          if (
+            wouldBlockPath(
+              { x: col, y: row },
+              spawnPoint,
+              basePosition,
+              gridCols,
+              gridRows,
+              towerPositions
+            )
+          ) {
+            continue;
+          }
+          keys.add(k);
+        }
+      }
+      return keys;
+    } catch {
+      return new Set<string>();
+    }
+  }, [
+    selectedTowerType,
+    selectedPlacedTower,
+    towers,
+    gridCols,
+    gridRows,
+    spawnPoint,
+    basePosition,
+    arenaRoute,
+    blockedCells,
+  ]);
+
+  const gridCells = useMemo(
+    () =>
+      Array.from({ length: gridRows * gridCols }, (_, index) => ({
+        row: Math.floor(index / gridCols),
+        col: index % gridCols,
+      })),
+    [gridRows, gridCols]
+  );
+
+  return (
+    <>
+      {gridCells.map(({ row, col }) => {
+        const isPath = pathSet.has(`${col},${row}`);
+        const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
+        const isBase = col === basePosition.x && row === basePosition.y;
+        const canPlace =
+          !!placeableCellKeys &&
+          !!selectedTowerType &&
+          !selectedPlacedTower &&
+          placeableCellKeys.has(`${col},${row}`);
+        const hasTowerHere = blockedCells.has(`${col},${row}`);
+        const onPathCorridor = isPath && !isSpawn && !isBase;
+
+        const isPreview =
+          effectivePreview !== null &&
+          effectivePreview.col === col &&
+          effectivePreview.row === row;
+
+        return (
+          <GameMapCell
+            key={`${col}-${row}`}
+            mapTheme={mapTheme ?? undefined}
+            col={col}
+            row={row}
+            scaledCellSize={scaledCellSize}
+            onPath={onPathCorridor}
+            isSpawn={isSpawn}
+            isBase={isBase}
+            canPlace={canPlace}
+            hasTower={hasTowerHere}
+            isPlacementPreview={isPreview && canPlace}
+            onCellPress={onCellPress}
+          />
+        );
+      })}
+    </>
+  );
+});
+GameBoardStaticCells.displayName = 'GameBoardStaticCells';
+
+/** Lasers, enemies, projectiles, towers — isolated from the static grid so cell highlights are not recomputed on every tick. */
+const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
+  onCellPress,
+  scaledCellSize,
+  finalScale,
+  performanceMode,
+  vfxQuality,
+}: {
+  onCellPress: (x: number, y: number) => void;
+  scaledCellSize: number;
+  finalScale: number;
+  performanceMode: boolean;
+  vfxQuality: 0 | 1 | 2;
+}) {
+  const {
+    towers,
+    enemies,
+    projectiles,
+    laserBeams,
+    towerUpgradeLevels,
+    getTowerColor,
+    selectedPlacedTower,
+  } = useGameStore(
+    useShallow((s) => ({
+      towers: s.towers,
+      enemies: s.enemies,
+      projectiles: s.projectiles,
+      laserBeams: s.laserBeams,
+      towerUpgradeLevels: s.towerUpgradeLevels,
+      getTowerColor: s.getTowerColor,
+      selectedPlacedTower: s.selectedPlacedTower,
+    }))
+  );
+
+  const visibleLaserBeams = useMemo(() => {
+    if (vfxQuality >= 2 && !performanceMode) return laserBeams;
+    const maxBeams = vfxQuality === 0 || performanceMode ? 48 : 80;
+    if (laserBeams.length <= maxBeams) return laserBeams;
+    const step = Math.max(1, Math.ceil(laserBeams.length / maxBeams));
+    return laserBeams.filter((_, idx) => idx % step === 0);
+  }, [laserBeams, performanceMode, vfxQuality]);
+
+  const visibleProjectiles = useMemo(() => {
+    const maxProjectiles =
+      vfxQuality === 0 || performanceMode ? 80 : vfxQuality === 1 ? 130 : 200;
+    if (projectiles.length <= maxProjectiles) return projectiles;
+    const step = Math.max(1, Math.ceil(projectiles.length / maxProjectiles));
+    return projectiles.filter((_, idx) => idx % step === 0);
+  }, [projectiles, performanceMode, vfxQuality]);
+
+  const towerById = useMemo(() => {
+    const map = new Map<string, PlacedTower>();
+    for (const t of towers) map.set(t.id, t);
+    return map;
+  }, [towers]);
+
+  const enemyById = useMemo(() => {
+    const map = new Map<string, (typeof enemies)[number]>();
+    for (const e of enemies) map.set(e.id, e);
+    return map;
+  }, [enemies]);
+
+  const nowTs = Date.now();
+
+  return (
+    <>
+      {visibleLaserBeams.map((beam, idx) => {
+        const tower = towerById.get(beam.towerId);
+        const enemy = enemyById.get(beam.targetId);
+        if (!tower || !enemy) return null;
+
+        const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
+        const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
+        const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
+        const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
+
+        const dx = endX - startX;
+        const dy = endY - startY;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
+
+        return (
+          <GameLaserBeam
+            key={`laser-${idx}`}
+            startX={startX}
+            startY={startY}
+            length={length}
+            angleDeg={angleDeg}
+          />
+        );
+      })}
+
+      {enemies.map((enemy) => (
+        <GameEnemySprite
+          key={enemy.id}
+          enemy={enemy}
+          scaledCellSize={scaledCellSize}
+          finalScale={finalScale}
+          nowTs={nowTs}
+        />
+      ))}
+
+      {visibleProjectiles.map((proj) => {
+        const target = enemyById.get(proj.targetId);
+        let px = proj.position.x;
+        let py = proj.position.y;
+        if (target) {
+          const dx = target.position.x - proj.position.x;
+          const dy = target.position.y - proj.position.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 0.001) {
+            const renderLead = proj.speed * 0.016 * (performanceMode ? 0.2 : 0.35);
+            const lead = Math.min(renderLead, dist * 0.6);
+            px += (dx / dist) * lead;
+            py += (dy / dist) * lead;
+          }
+        }
+        const bg = proj.isFreeze ? TacticalTheme.freezeTint : proj.isSplash ? '#FF6B35' : '#FFD700';
+        return (
+          <GameProjectileSprite
+            key={proj.id}
+            left={px * scaledCellSize + scaledCellSize / 2 - 4}
+            top={py * scaledCellSize + scaledCellSize / 2 - 4}
+            backgroundColor={bg}
+          />
+        );
+      })}
+
+      {towers.map((tower) => {
+        const towerDef = TOWERS[tower.type];
+        const shopBonus = towerUpgradeLevels[tower.type] || 0;
+        let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+        if (shopBonus > 0) {
+          stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
+        }
+        const rangeRadius = stats.range * scaledCellSize;
+        const isSelected = selectedPlacedTower?.id === tower.id;
+
+        return (
+          <GameTowerSprite
+            key={tower.id}
+            tower={tower}
+            scaledCellSize={scaledCellSize}
+            rangeRadius={rangeRadius}
+            isSelected={isSelected}
+            getTowerColor={getTowerColor}
+            onCellPress={onCellPress}
+          />
+        );
+      })}
+    </>
+  );
+});
+GameBoardCombatEntities.displayName = 'GameBoardCombatEntities';
+
 // Game board: pinch zoom runs on UI thread; store zoom commits once per pinch (no React churn while zooming)
 const GameBoard = React.memo(
   ({
@@ -882,43 +1175,19 @@ const GameBoard = React.memo(
     onRegisterBoardHitTest?: (hit: BoardHitTestFn | null) => void;
     gestureTraceRef?: React.MutableRefObject<{ active: string; phase: string }>;
   }) => {
-    const {
-      towers,
-      enemies,
-      projectiles,
-      laserBeams,
-      gridCols,
-      gridRows,
-      cellSize,
-      getTowerColor,
-      selectedTowerType,
-      canPlaceTower,
-      spawnPoint,
-      basePosition,
-      selectedPlacedTower,
-      towerUpgradeLevels,
-      arenaRoute,
-      mapTheme,
-    } = useGameStore(
-      useShallow((s) => ({
-        towers: s.towers,
-        enemies: s.enemies,
-        projectiles: s.projectiles,
-        laserBeams: s.laserBeams,
-        gridCols: s.gridCols,
-        gridRows: s.gridRows,
-        cellSize: s.cellSize,
-        getTowerColor: s.getTowerColor,
-        selectedTowerType: s.selectedTowerType,
-        canPlaceTower: s.canPlaceTower,
-        spawnPoint: s.spawnPoint,
-        basePosition: s.basePosition,
-        selectedPlacedTower: s.selectedPlacedTower,
-        towerUpgradeLevels: s.towerUpgradeLevels,
-        arenaRoute: s.arenaRoute,
-        mapTheme: s.mapTheme,
-      }))
-    );
+    const { gridCols, gridRows, cellSize, selectedTowerType, selectedPlacedTower, mapTheme, spawnPoint, basePosition } =
+      useGameStore(
+        useShallow((s) => ({
+          gridCols: s.gridCols,
+          gridRows: s.gridRows,
+          cellSize: s.cellSize,
+          selectedTowerType: s.selectedTowerType,
+          selectedPlacedTower: s.selectedPlacedTower,
+          mapTheme: s.mapTheme,
+          spawnPoint: s.spawnPoint,
+          basePosition: s.basePosition,
+        }))
+      );
 
     const pinchMultSV = useSharedValue(1);
     const startZoomSV = useSharedValue(zoomLevel);
@@ -945,7 +1214,15 @@ const GameBoard = React.memo(
         return;
       }
       const now = Date.now();
-      if (now - previewEmitAtRef.current < 40) return;
+      let minGap = 40;
+      try {
+        const ec = useGameStore.getState().enemies.length;
+        if (ec > 55) minGap = 72;
+        else if (ec > 28) minGap = 56;
+      } catch {
+        /* ignore */
+      }
+      if (now - previewEmitAtRef.current < minGap) return;
       previewEmitAtRef.current = now;
       setPlacementPreview((prev) => {
         if (prev?.col === col && prev?.row === row) return prev;
@@ -992,8 +1269,8 @@ const GameBoard = React.memo(
       try {
         const nz = clampZoom(typeof z === 'number' && Number.isFinite(z) ? z : ZOOM_MIN);
         useGameStore.getState().setZoomLevel(nz);
-      } catch (err) {
-        console.warn('[GameBoard] commitZoom failed', err);
+      } catch {
+        /* ignore */
       }
     }, []);
 
@@ -1005,19 +1282,16 @@ const GameBoard = React.memo(
     );
 
     const pinchOnBeginJS = useCallback(() => {
-      if (__DEV__) console.log('[gesture] pinch begin');
       setPinchActive(true);
       traceGesture('pinch', 'begin');
     }, [setPinchActive, traceGesture]);
 
     const pinchOnEndJS = useCallback(() => {
-      if (__DEV__) console.log('[gesture] pinch end');
       setPinchActive(false);
       traceGesture('pinch', 'end');
     }, [setPinchActive, traceGesture]);
 
     const pinchOnFinalizeJS = useCallback(() => {
-      if (__DEV__) console.log('[gesture] pinch finalize');
       setPinchActive(false);
       traceGesture('pinch', 'finalize');
     }, [setPinchActive, traceGesture]);
@@ -1121,10 +1395,9 @@ const GameBoard = React.memo(
           const type = st.selectedTowerType;
           if (!type || st.selectedPlacedTower) return;
           if (!st.canPlaceTower({ x: col, y: row })) return;
-          if (__DEV__) console.log('[gesture] placement-pan drop', { col, row, type });
           st.placeTower({ x: col, y: row });
-        } catch (err) {
-          console.warn('[GameBoard] placeTower failed', err);
+        } catch {
+          /* ignore */
         }
       },
       []
@@ -1203,8 +1476,7 @@ const GameBoard = React.memo(
           return Gesture.Simultaneous(pinchGesture, placePanGesture);
         }
         return pinchGesture;
-      } catch (err) {
-        console.warn('[GameBoard] gesture compose failed', err);
+      } catch {
         return pinchGesture;
       }
     }, [pinchGesture, placePanGesture, selectedPlacedTower, selectedTowerType]);
@@ -1217,51 +1489,7 @@ const GameBoard = React.memo(
       }
     }, [selectedPlacedTower, selectedTowerType]);
 
-  const blockedCells = useMemo(
-    () => new Set(towers.map(t => `${t.position.x},${t.position.y}`)),
-    [towers]
-  );
-  const pathSet = useMemo(() => {
-    if (arenaRoute.length >= 2) {
-      return new Set(arenaRoute.map((p) => `${p.x},${p.y}`));
-    }
-    const currentPath = findPath(spawnPoint, basePosition, gridCols, gridRows, blockedCells);
-    return new Set((currentPath || []).map((p) => `${p.x},${p.y}`));
-  }, [arenaRoute, spawnPoint, basePosition, gridCols, gridRows, blockedCells]);
-  const gridCells = useMemo(
-    () => Array.from({ length: gridRows * gridCols }, (_, index) => ({
-      row: Math.floor(index / gridCols),
-      col: index % gridCols,
-    })),
-    [gridRows, gridCols]
-  );
-  const visibleLaserBeams = useMemo(() => {
-    if (vfxQuality >= 2 && !performanceMode) return laserBeams;
-    const maxBeams = vfxQuality === 0 || performanceMode ? 48 : 80;
-    if (laserBeams.length <= maxBeams) return laserBeams;
-    const step = Math.max(1, Math.ceil(laserBeams.length / maxBeams));
-    return laserBeams.filter((_, idx) => idx % step === 0);
-  }, [laserBeams, performanceMode, vfxQuality]);
-  const visibleProjectiles = useMemo(() => {
-    const maxProjectiles =
-      vfxQuality === 0 || performanceMode ? 80 : vfxQuality === 1 ? 130 : 200;
-    if (projectiles.length <= maxProjectiles) return projectiles;
-    const step = Math.max(1, Math.ceil(projectiles.length / maxProjectiles));
-    return projectiles.filter((_, idx) => idx % step === 0);
-  }, [projectiles, performanceMode, vfxQuality]);
-  const towerById = useMemo(() => {
-    const map = new Map<string, PlacedTower>();
-    for (const t of towers) map.set(t.id, t);
-    return map;
-  }, [towers]);
-  const enemyById = useMemo(() => {
-    const map = new Map<string, (typeof enemies)[number]>();
-    for (const e of enemies) map.set(e.id, e);
-    return map;
-  }, [enemies]);
-  const nowTs = Date.now();
-
-  return (
+    return (
     <ScrollView
       style={styles.boardScrollContainer}
       contentContainerStyle={styles.boardScrollContent}
@@ -1299,121 +1527,18 @@ const GameBoard = React.memo(
                 pinchAnimatedStyle,
               ]}
             >
-              {gridCells.map(({ row, col }) => {
-                const isPath = pathSet.has(`${col},${row}`);
-                const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
-                const isBase = col === basePosition.x && row === basePosition.y;
-                const canPlace = selectedTowerType ? canPlaceTower({ x: col, y: row }) : false;
-                const hasTowerHere = blockedCells.has(`${col},${row}`);
-                const onPathCorridor = isPath && !isSpawn && !isBase;
-
-                const isPreview =
-                  effectivePreview !== null &&
-                  effectivePreview.col === col &&
-                  effectivePreview.row === row;
-
-                return (
-                  <GameMapCell
-                    key={`${col}-${row}`}
-                    mapTheme={mapTheme ?? undefined}
-                    col={col}
-                    row={row}
-                    scaledCellSize={scaledCellSize}
-                    onPath={onPathCorridor}
-                    isSpawn={isSpawn}
-                    isBase={isBase}
-                    canPlace={canPlace}
-                    hasTower={hasTowerHere}
-                    isPlacementPreview={isPreview && canPlace}
-                    onCellPress={onCellPress}
-                  />
-                );
-              })}
-
-              {visibleLaserBeams.map((beam, idx) => {
-                const tower = towerById.get(beam.towerId);
-                const enemy = enemyById.get(beam.targetId);
-                if (!tower || !enemy) return null;
-
-                const startX = tower.position.x * scaledCellSize + scaledCellSize / 2;
-                const startY = tower.position.y * scaledCellSize + scaledCellSize / 2;
-                const endX = enemy.position.x * scaledCellSize + scaledCellSize / 2;
-                const endY = enemy.position.y * scaledCellSize + scaledCellSize / 2;
-
-                const dx = endX - startX;
-                const dy = endY - startY;
-                const length = Math.sqrt(dx * dx + dy * dy);
-                const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
-
-                return (
-                  <GameLaserBeam
-                    key={`laser-${idx}`}
-                    startX={startX}
-                    startY={startY}
-                    length={length}
-                    angleDeg={angleDeg}
-                  />
-                );
-              })}
-
-              {enemies.map((enemy) => (
-                <GameEnemySprite
-                  key={enemy.id}
-                  enemy={enemy}
-                  scaledCellSize={scaledCellSize}
-                  finalScale={finalScale}
-                  nowTs={nowTs}
-                />
-              ))}
-
-              {visibleProjectiles.map((proj) => {
-                const target = enemyById.get(proj.targetId);
-                let px = proj.position.x;
-                let py = proj.position.y;
-                if (target) {
-                  const dx = target.position.x - proj.position.x;
-                  const dy = target.position.y - proj.position.y;
-                  const dist = Math.sqrt(dx * dx + dy * dy);
-                  if (dist > 0.001) {
-                    const renderLead = proj.speed * 0.016 * (performanceMode ? 0.2 : 0.35);
-                    const lead = Math.min(renderLead, dist * 0.6);
-                    px += (dx / dist) * lead;
-                    py += (dy / dist) * lead;
-                  }
-                }
-                const bg = proj.isFreeze ? TacticalTheme.freezeTint : proj.isSplash ? '#FF6B35' : '#FFD700';
-                return (
-                  <GameProjectileSprite
-                    key={proj.id}
-                    left={px * scaledCellSize + scaledCellSize / 2 - 4}
-                    top={py * scaledCellSize + scaledCellSize / 2 - 4}
-                    backgroundColor={bg}
-                  />
-                );
-              })}
-
-              {towers.map((tower) => {
-                const towerDef = TOWERS[tower.type];
-                const shopBonus = towerUpgradeLevels[tower.type] || 0;
-                let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-                if (shopBonus > 0) {
-                  stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
-                }
-                const rangeRadius = stats.range * scaledCellSize;
-                const isSelected = selectedPlacedTower?.id === tower.id;
-
-                return (
-                  <GameTowerSprite
-                    key={tower.id}
-                    tower={tower}
-                    scaledCellSize={scaledCellSize}
-                    rangeRadius={rangeRadius}
-                    isSelected={isSelected}
-                    getTowerColor={getTowerColor}
-                    onCellPress={onCellPress}
-                  />
-                );
-              })}
+              <GameBoardStaticCells
+                onCellPress={onCellPress}
+                scaledCellSize={scaledCellSize}
+                effectivePreview={effectivePreview}
+              />
+              <GameBoardCombatEntities
+                onCellPress={onCellPress}
+                scaledCellSize={scaledCellSize}
+                finalScale={finalScale}
+                performanceMode={performanceMode}
+                vfxQuality={vfxQuality}
+              />
 
               <GameSpawnBaseMarkers
                 spawnPoint={spawnPoint}
@@ -2082,12 +2207,10 @@ export default function GameScreen() {
           substeps += 1;
           let state = useGameStore.getState();
           if (!state.isPlaying || state.isPaused) break;
-          const tickSpeed = state.gameSpeed;
 
           try {
             state.gameTick(LOOP_STEP_MS);
-          } catch (tickErr) {
-            console.error(`[game loop] gameTick failed (${tickSpeed}x)`, tickErr);
+          } catch {
             continue;
           }
 
@@ -2122,8 +2245,8 @@ export default function GameScreen() {
                     waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult,
                     waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult
                   );
-                } catch (e) {
-                  console.error('[game loop] spawnEnemy failed', e);
+                } catch {
+                  /* skip spawn slot on failure */
                 }
                 waveSpawnCursorRef.current += 1;
               }
@@ -2144,19 +2267,19 @@ export default function GameScreen() {
                 if (completedWave > 0 && completedWave % 10 === 0 && !skipForcedAds) {
                   const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
                   if (nativeAdsReady && isInterstitialAdReady()) {
-                    void showInterstitialAd().catch(console.error);
+                    void showInterstitialAd().catch(() => {});
                   }
                 }
-              } catch (e) {
-                console.error('[game loop] endWave failed', e);
+              } catch {
+                /* keep run alive; wave end can retry next tick */
               }
             }
-          } catch (subErr) {
-            console.error(`[game loop] wave/spawn substep failed (${tickSpeed}x)`, subErr);
+          } catch {
+            /* isolate spawn/wave failures from the RAF driver */
           }
         }
-      } catch (e) {
-        console.error('[game loop] frame tick failed', e);
+      } catch {
+        /* outer tick guard */
       }
 
       if (!cancelled) {
@@ -2322,7 +2445,6 @@ export default function GameScreen() {
 
   const handleTowerDragStart = useCallback(
     (type: TowerType, winX: number, winY: number) => {
-      if (__DEV__) console.log('[gesture] panel-drag start', type, { winX, winY });
       panelDragTypeRef.current = type;
       setTowerPanelScrollEnabled(false);
       selectTower(type);
@@ -2336,16 +2458,20 @@ export default function GameScreen() {
   );
 
   const handleTowerDragMove = useCallback((winX: number, winY: number) => {
-    setPanelDrag((d) => (d ? { ...d, x: winX, y: winY } : d));
     const hit = boardHitTestRef.current?.(winX, winY) ?? null;
-    setPanelHoverCell(hit);
+    setPanelHoverCell((prev) =>
+      prev?.col === hit?.col && prev?.row === hit?.row ? prev : hit
+    );
+    setPanelDrag((d) => {
+      if (!d) return d;
+      if (Math.abs(d.x - winX) < 2.5 && Math.abs(d.y - winY) < 2.5) return d;
+      return { ...d, x: winX, y: winY };
+    });
   }, []);
 
   const handleTowerDragEnd = useCallback(
     (winX: number, winY: number) => {
       const type = panelDragTypeRef.current;
-      if (__DEV__) console.log('[gesture] panel-drag end', { winX, winY, type });
-
       const hit = boardHitTestRef.current?.(winX, winY) ?? null;
       setPanelDrag(null);
       setPanelHoverCell(null);
@@ -2372,19 +2498,16 @@ export default function GameScreen() {
 
       const st = useGameStore.getState();
       if (!st.canPlaceTower({ x: hit.col, y: hit.row })) {
-        if (__DEV__) console.log('[gesture] panel-drag reject cell', hit);
         failInvalid();
         return;
       }
 
       const placed = st.placeTower({ x: hit.col, y: hit.row });
       if (!placed) {
-        if (__DEV__) console.log('[gesture] panel-drag placeTower returned false', hit);
         failInvalid();
         return;
       }
 
-      if (__DEV__) console.log('[gesture] panel-drag placed', hit);
       if (playerStore.hapticEnabled) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -2428,14 +2551,6 @@ export default function GameScreen() {
     gameEndHandledRef.current = true;
 
     const runMapId = useGameStore.getState().currentMapId ?? playerStore.currentMapId;
-    if (__DEV__) {
-      console.log('[mapProgress] handleGameEnd — persist best wave + unlocks first', {
-        runMapId,
-        currentWave,
-        playerStoreMapId: playerStore.currentMapId,
-        playerId: playerStore.playerId,
-      });
-    }
     playerStore.recordMapBestWave(runMapId, currentWave);
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
@@ -2469,13 +2584,6 @@ export default function GameScreen() {
 
     if (!isServerBackedPlayerId(playerStore.playerId)) {
       settleRunLocally();
-      if (__DEV__) {
-        console.log('[leaderboard] run settled locally (no server player id)', {
-          currentWave,
-          enemiesKilled,
-          towersPlaced,
-        });
-      }
       return;
     }
 
@@ -2488,45 +2596,13 @@ export default function GameScreen() {
       run_bonus_gems: challengeGemReward,
     };
 
-    const logEndGameFailure = (err: unknown, attempt: number, maxAttempts: number) => {
-      if (isAxiosError(err)) {
-        console.warn(
-          `[leaderboard] POST /games/end FAILED (attempt ${attempt}/${maxAttempts})`,
-          {
-            status: err.response?.status,
-            data: err.response?.data,
-            message: err.message,
-            payload: endPayload,
-          }
-        );
-      } else {
-        console.warn(
-          `[leaderboard] POST /games/end FAILED (attempt ${attempt}/${maxAttempts})`,
-          err instanceof Error ? err.message : String(err),
-          { payload: endPayload }
-        );
-      }
-    };
-
     const maxAttempts = 3;
     let response: Awaited<ReturnType<typeof gameApi.endGame>> | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         response = await gameApi.endGame(endPayload);
-        console.log('[leaderboard] POST /games/end OK — server updated player + leaderboard', {
-          player_id: endPayload.player_id,
-          wave_reached: endPayload.wave_reached,
-          enemies_killed: endPayload.enemies_killed,
-          towers_placed: endPayload.towers_placed,
-          duration_seconds: endPayload.duration_seconds,
-          run_bonus_gems: endPayload.run_bonus_gems,
-          xp_earned: response.data?.xp_earned,
-          gems_earned: response.data?.gems_earned,
-          new_gem_balance: response.data?.new_gem_balance,
-        });
         break;
-      } catch (err) {
-        logEndGameFailure(err, attempt, maxAttempts);
+      } catch {
         if (attempt < maxAttempts) {
           await new Promise((r) => setTimeout(r, 450 * attempt));
         }
@@ -2534,9 +2610,6 @@ export default function GameScreen() {
     }
 
     if (!response) {
-      console.warn(
-        '[leaderboard] POST /games/end exhausted retries — settling run locally only; global leaderboard will NOT show this run until a successful sync'
-      );
       settleRunLocally();
       return;
     }
@@ -2633,8 +2706,8 @@ export default function GameScreen() {
               reward_type: 'revive',
               ad_type: 'rewarded',
             });
-          } catch (e) {
-            console.error('Error claiming revive reward:', e);
+          } catch {
+            /* revive already applied locally */
           }
         }
         return;
@@ -2642,12 +2715,12 @@ export default function GameScreen() {
 
       const simulated = await new Promise<boolean>((resolve) => {
         Alert.alert(
-          'Watch ad to revive',
-          'Rewarded ads need a native build. Simulate a successful ad for testing?',
+          'Revive unavailable here',
+          'Rewarded revives run in the installed app. Apply a one-time preview revive on this device?',
           [
             { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
             {
-              text: 'Simulate',
+              text: 'Preview revive',
               onPress: () => resolve(true),
             },
           ],
@@ -2666,8 +2739,8 @@ export default function GameScreen() {
             reward_type: 'revive',
             ad_type: 'rewarded_simulated',
           });
-        } catch (e) {
-          console.error('Error claiming revive reward:', e);
+        } catch {
+          /* revive already applied locally */
         }
       }
     } finally {

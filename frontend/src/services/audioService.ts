@@ -17,26 +17,20 @@ const pools = new Map<string, { sounds: Audio.Sound[]; i: number }>();
 let audioReady = false;
 let audioInitPromise: Promise<void> | null = null;
 let audioLastError: string | null = null;
-const AUDIO_DEBUG = __DEV__;
+
+function logAudio(..._args: unknown[]) {}
+
+function warnAudio(..._args: unknown[]) {}
 
 /** When false, combat SFX (weapons, impacts, deaths, base, wave horn) do not start. */
 let gameplaySfxArmed = false;
 /** Incremented to cancel pending `playEnemyDeathBurst` timeouts. */
 let deathBurstGeneration = 0;
 
-function logAudio(...args: unknown[]) {
-  if (AUDIO_DEBUG) console.log('[audioService]', ...args);
-}
-
-function warnAudio(...args: unknown[]) {
-  console.warn('[audioService]', ...args);
-}
-
 export type SfxName = 'mission' | 'combo' | 'chest' | 'record';
 
 function getSfxGain(): number {
   const s = usePlayerStore.getState();
-  logAudio('getSfxGain()', { soundEnabled: s.soundEnabled, sfxVolume: s.sfxVolume });
   if (!s.soundEnabled) return 0;
   return Math.max(0, Math.min(1, s.sfxVolume));
 }

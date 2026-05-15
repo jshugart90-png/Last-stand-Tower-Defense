@@ -114,11 +114,9 @@ interface PlayerState {
   bestWave: number;
   lifetimeEnemiesKilled: number;
   lifetimeTowersPlaced: number;
-  /** Gems earned in the last completed run (for leaderboard display). */
+  /** Gems earned in the last completed run (run summary / UI). */
   lastRunGemsEarned: number;
   lastRunEnemiesKilled: number;
-  /** Bumps when a run finishes with leaderboard stats so screens can refresh. */
-  lastLeaderboardUpdateAt: number;
   
   // Tower unlocks (purchased in shop with gems)
   unlockedTowers: TowerType[];
@@ -348,7 +346,6 @@ const initialState: PlayerState = {
   lifetimeTowersPlaced: 0,
   lastRunGemsEarned: 0,
   lastRunEnemiesKilled: 0,
-  lastLeaderboardUpdateAt: 0,
   unlockedTowers: ['machine_gun'],
   towerUpgradeLevels: {
     machine_gun: 0,
@@ -412,7 +409,6 @@ const playerPersistKeys = [
   'lifetimeTowersPlaced',
   'lastRunGemsEarned',
   'lastRunEnemiesKilled',
-  'lastLeaderboardUpdateAt',
   'unlockedTowers',
   'towerUpgradeLevels',
   'startingCoinUpgradeLevel',
@@ -706,12 +702,11 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           gemsFromAchievements += unlock.gemsEarned;
         }
 
-        const lbPatch =
+        const runSummaryPatch =
           gemsEarnedThisRun !== undefined
             ? {
                 lastRunGemsEarned: gemsEarnedThisRun,
                 lastRunEnemiesKilled: enemiesKilled,
-                lastLeaderboardUpdateAt: Date.now(),
               }
             : {};
 
@@ -726,7 +721,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           weeklyMissions,
           gems: state.gems + gemsFromMissions + gemsFromAchievements,
           achievements,
-          ...lbPatch,
+          ...runSummaryPatch,
         };
       });
     },
@@ -969,22 +964,12 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           const b = [...unlockedMapIds].sort().join(',');
           if (a === b) return s;
         }
-        if (__DEV__) {
-          console.log('[mapProgress] syncMapUnlocksFromWaveProgress', {
-            mapBestWaves: s.mapBestWaves,
-            before: s.unlockedMapIds,
-            after: unlockedMapIds,
-          });
-        }
         return { unlockedMapIds };
       });
     },
 
     recordMapBestWave: (mapId, wave) => {
       if (!mapId || !Number.isFinite(wave)) return;
-      if (__DEV__) {
-        console.log('[mapProgress] recordMapBestWave', { mapId, wave });
-      }
       set((s) => {
         const prev = s.mapBestWaves[mapId] ?? 0;
         const nextBest = wave > prev ? { ...s.mapBestWaves, [mapId]: wave } : { ...s.mapBestWaves };
@@ -993,15 +978,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           const same =
             [...unlockedMapIds].sort().join(',') === [...s.unlockedMapIds].sort().join(',');
           if (same) return s;
-        }
-        if (__DEV__) {
-          console.log('[mapProgress] recordMapBestWave → persist', {
-            mapId,
-            wave,
-            prevBest: prev,
-            nextBest,
-            unlockedMapIds,
-          });
         }
         return { mapBestWaves: nextBest, unlockedMapIds };
       });
@@ -1181,8 +1157,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         lastRunGemsEarned: typeof p?.lastRunGemsEarned === 'number' ? p.lastRunGemsEarned : 0,
         lastRunEnemiesKilled:
           typeof p?.lastRunEnemiesKilled === 'number' ? p.lastRunEnemiesKilled : 0,
-        lastLeaderboardUpdateAt:
-          typeof p?.lastLeaderboardUpdateAt === 'number' ? p.lastLeaderboardUpdateAt : 0,
       } as PlayerState;
 
       if (!p?.lastDailyMissionDayKey) {

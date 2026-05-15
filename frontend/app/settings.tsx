@@ -13,13 +13,18 @@ import {
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS } from '../src/constants/game';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
-import { ensureAudioReady, getAudioDebugState, playSfx } from '../src/services/audioService';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
+
+const appVersionLabel =
+  Constants.expoConfig?.version != null && String(Constants.expoConfig.version).length > 0
+    ? `Last Stand Defense v${Constants.expoConfig.version}`
+    : 'Last Stand Defense';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -66,8 +71,10 @@ export default function SettingsScreen() {
         {
           text: 'Restore',
           onPress: () => {
-            // Simulate restore
-            Alert.alert('Restored', 'Your purchases have been restored.');
+            Alert.alert(
+              'Restore purchases',
+              'Use the Shop screen while signed in to your account to restore in-app purchases through the App Store.'
+            );
           },
         },
       ]
@@ -81,11 +88,11 @@ export default function SettingsScreen() {
     }
     Alert.alert(
       'Remove Ads',
-      'One-time purchase will remove automatic ads after game over. Rewarded ads for bonus gems and revives stay available.\n\nPreview: enable ad-free on this device now. In-app purchase (e.g. RevenueCat) will connect here later.',
+      'One-time purchase will remove automatic ads after game over. Rewarded ads for bonus gems and revives stay available.\n\nFor now, this enables ad-free on this device only. Store purchase will connect here in a future update.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Enable ad-free (preview)',
+          text: 'Enable ad-free',
           onPress: () => {
             playerStore.setHasAdFree(true);
             Alert.alert(
@@ -99,10 +106,9 @@ export default function SettingsScreen() {
   };
 
   const handlePrivacyPolicy = () => {
-    // Placeholder - would link to actual privacy policy
     Alert.alert(
       'Privacy Policy',
-      'Last Stand Defense respects your privacy. We collect minimal data required for gameplay and leaderboards. For full details, visit our website.',
+      'Last Stand Defense collects only the data needed for gameplay and accounts. For the full policy, visit our website from a browser.',
       [{ text: 'OK' }]
     );
   };
@@ -113,31 +119,6 @@ export default function SettingsScreen() {
       'By playing Last Stand Defense, you agree to our terms of service. Play responsibly and have fun!',
       [{ text: 'OK' }]
     );
-  };
-
-  const handleTestAudio = async () => {
-    const ok = await ensureAudioReady();
-    if (!ok) {
-      const dbg = getAudioDebugState();
-      Alert.alert(
-        'Audio unavailable',
-        `Could not initialize audio engine.\nready=${String(dbg.ready)} cache=${dbg.cacheCount} pools=${dbg.poolCount}\n${dbg.lastError ?? 'No extra details.'}`
-      );
-      return;
-    }
-    const firstPlayed = await playSfx('combo');
-    setTimeout(() => {
-      void playSfx('chest');
-    }, 120);
-    if (firstPlayed) {
-      Alert.alert('Audio test', 'SFX playback succeeded.');
-    } else {
-      const dbg = getAudioDebugState();
-      Alert.alert(
-        'Audio test failed',
-        `Audio engine is ready but no sound played.\nready=${String(dbg.ready)} cache=${dbg.cacheCount} pools=${dbg.poolCount}\n${dbg.lastError ?? 'No error recorded.'}`
-      );
-    }
   };
 
   const handleResetProgress = () => {
@@ -271,11 +252,6 @@ export default function SettingsScreen() {
               disabled={!playerStore.musicEnabled}
             />
           </View>
-
-          <TouchableOpacity style={styles.audioTestButton} onPress={() => void handleTestAudio()}>
-            <Ionicons name="play-circle-outline" size={20} color="#fff" />
-            <Text style={styles.audioTestButtonText}>Test Sound</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Feedback Section */}
@@ -438,7 +414,7 @@ export default function SettingsScreen() {
               <Text style={styles.removeAdsSubtitle}>
                 {playerStore.hasAdFree
                   ? 'Active — no forced ads after game over. Rewarded ads still available.'
-                  : 'One-time purchase (preview: tap to enable on this device).'}
+                  : 'One-time purchase removes automatic ads after game over (purchase flow coming soon).'}
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={TacticalTheme.textSubtle} />
@@ -484,7 +460,7 @@ export default function SettingsScreen() {
 
         {/* Version */}
         <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>Last Stand Defense v1.0.0</Text>
+          <Text style={styles.versionText}>{appVersionLabel}</Text>
           <Text style={styles.copyrightText}>Last Stand Defense</Text>
         </View>
       </ScrollView>
@@ -578,21 +554,6 @@ const styles = StyleSheet.create({
   slider: {
     width: '100%',
     height: 36,
-  },
-  audioTestButton: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: TacticalTheme.panelAlt,
-    borderRadius: 8,
-    paddingVertical: 10,
-  },
-  audioTestButtonText: {
-    color: TacticalTheme.text,
-    fontWeight: '700',
-    fontSize: 13,
   },
   vfxSegment: {
     flexDirection: 'row',

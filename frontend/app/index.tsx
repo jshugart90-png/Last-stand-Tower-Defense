@@ -328,7 +328,6 @@ export default function HomeScreen() {
             return;
           }
         } catch {
-          console.log('Stored player not found, checking by device ID...');
         }
       }
 
@@ -362,12 +361,10 @@ export default function HomeScreen() {
           return;
         }
       } catch {
-        console.log('Player not found by device ID, showing nickname modal');
       }
 
       setLoading(false);
-    } catch (error) {
-      console.error('Error initializing player:', error);
+    } catch {
       setLoading(false);
     }
   }, []);
@@ -436,8 +433,7 @@ export default function HomeScreen() {
         } else {
           await registerLocalPlayer(nickname);
         }
-      } catch (error) {
-        console.error('Error creating player:', error);
+      } catch {
         await registerLocalPlayer(nickname);
         Alert.alert(
           'Offline mode',
@@ -450,8 +446,7 @@ export default function HomeScreen() {
       if (!usePlayerStore.getState().tutorialCompleted) {
         setShowTutorial(true);
       }
-    } catch (error) {
-      console.error('Error registering player:', error);
+    } catch {
       Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
@@ -475,13 +470,6 @@ export default function HomeScreen() {
       router.push('/map-selection');
     }
   }, [router, playerStore.hapticEnabled, playerStore.tutorialCompleted]);
-
-  const handleLeaderboardPress = useCallback(() => {
-    if (playerStore.hapticEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    router.push({ pathname: '/leaderboard' });
-  }, [router, playerStore.hapticEnabled]);
 
   const handleShopPress = useCallback(() => {
     if (playerStore.hapticEnabled) {
@@ -638,20 +626,16 @@ export default function HomeScreen() {
 
         {/* Quick actions */}
         <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleLeaderboardPress} activeOpacity={0.85}>
-            <Ionicons name="trophy-outline" size={20} color="#ff6b5d" />
-            <Text style={styles.quickActionText}>Leaderboard</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={styles.quickActionBtn} onPress={handleShopPress} activeOpacity={0.85}>
-            <Ionicons name="cart-outline" size={20} color="#ff6b5d" />
+            <Ionicons name="cart-outline" size={20} color={TacticalTheme.accent} />
             <Text style={styles.quickActionText}>Shop</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickActionBtn} onPress={handleSettingsPress} activeOpacity={0.85}>
-            <Ionicons name="settings-outline" size={20} color="#ff6b5d" />
+            <Ionicons name="settings-outline" size={20} color={TacticalTheme.accent} />
             <Text style={styles.quickActionText}>Settings</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickActionBtn} onPress={handleProgressPress} activeOpacity={0.85}>
-            <Ionicons name="stats-chart-outline" size={20} color="#ff6b5d" />
+            <Ionicons name="stats-chart-outline" size={20} color={TacticalTheme.accent} />
             <Text style={styles.quickActionText}>Progress</Text>
           </TouchableOpacity>
         </View>

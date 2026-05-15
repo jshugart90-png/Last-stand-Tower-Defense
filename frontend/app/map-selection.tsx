@@ -47,7 +47,7 @@ const MapCard = ({
           </Text>
         </>
       ) : !map.unlock ? (
-        <Text style={styles.unlockMeta}>Starter map · no wave requirement · always available</Text>
+        <Text style={styles.unlockMeta}>Starter map — always available.</Text>
       ) : null}
       <View style={styles.cardActions}>
         {unlocked ? (
@@ -81,12 +81,6 @@ export default function MapSelectionScreen() {
   useFocusEffect(
     useCallback(() => {
       syncMapUnlocksFromWaveProgress();
-      if (__DEV__) {
-        console.log('[mapProgress] MapSelection focused — synced wave unlocks', {
-          unlockedMapIds: usePlayerStore.getState().unlockedMapIds,
-          mapBestWaves: usePlayerStore.getState().mapBestWaves,
-        });
-      }
     }, [syncMapUnlocksFromWaveProgress])
   );
 
@@ -148,7 +142,7 @@ export default function MapSelectionScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
           <Ionicons name="arrow-back" size={22} color={TacticalTheme.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Map Selection</Text>
+        <Text style={styles.title}>Maps</Text>
         <View style={styles.gemWrap}>
           <MaterialCommunityIcons name="diamond-stone" size={14} color={TacticalTheme.accent} />
           <Text style={styles.gemText}>{gems}</Text>
@@ -165,7 +159,7 @@ export default function MapSelectionScreen() {
       <View style={styles.footer}>
         <TouchableOpacity style={styles.startBtn} onPress={startSelectedMap}>
           <Ionicons name="play" size={20} color={TacticalTheme.white} />
-          <Text style={styles.startBtnText}>Start Selected Map</Text>
+          <Text style={styles.startBtnText}>Play</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -186,7 +180,7 @@ const styles = StyleSheet.create({
   headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   title: { color: TacticalTheme.text, fontSize: 20, fontWeight: '800' },
   gemWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  gemText: { color: TacticalTheme.text, fontWeight: '700' },
+  gemText: { color: TacticalTheme.gem, fontWeight: '700' },
   listContent: { padding: 14, gap: 10, paddingBottom: 120 },
   card: {
     backgroundColor: TacticalTheme.panel,
@@ -238,8 +232,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderTopWidth: 1,
     borderTopColor: TacticalTheme.border,
-    backgroundColor: TacticalTheme.bgElevated,
-    padding: 12,
+    backgroundColor: TacticalTheme.panel,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
   },
   startBtn: {
     backgroundColor: TacticalTheme.accent,

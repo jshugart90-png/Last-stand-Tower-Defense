@@ -69,8 +69,8 @@ const defs: MapDefinition[] = MAP_ORDER.map((id, idx) => ({
   difficulty: difficultyByIndex(idx),
   description:
     id === CLASSIC_MAP_ID
-      ? 'Standard defense mode. Spawn and base are locked to opposite map corners.'
-      : getArenaMap(id)?.description ?? 'Progressively tougher tactical route.',
+      ? 'Classic tower defense: enemies march from their entry toward your base.'
+      : getArenaMap(id)?.description ?? 'A tougher route with more pressure each wave.',
   pathWaypoints: getPathWaypoints(id),
   unlock:
     idx === 0

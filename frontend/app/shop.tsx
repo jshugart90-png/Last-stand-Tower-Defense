@@ -306,8 +306,8 @@ export default function ShopScreen() {
                         item_type: 'arena_expansion',
                         item_id: IAP_PRODUCTS.ARENA_EXPANSION,
                       });
-                    } catch (error) {
-                      console.error('Backend purchase report failed:', error);
+                    } catch {
+                      /* non-fatal: purchase already applied locally */
                     }
                   }
                   Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
@@ -320,13 +320,12 @@ export default function ShopScreen() {
                 setPurchaseLoading(false);
               }
             } else {
-              // Simulated purchase for development/testing
               Alert.alert(
-                'Development Mode',
-                'IAP requires a native build. For testing, the expansion will be granted.',
+                'Preview purchase',
+                'Real purchases run in the App Store or Google Play build of this app. You can apply this expansion on this device only for preview.',
                 [
                   {
-                    text: 'Simulate Purchase',
+                    text: 'Apply on device',
                     onPress: () => {
                       playerStore.addArenaExpansion();
                       Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
@@ -371,8 +370,8 @@ export default function ShopScreen() {
                         item_type: 'premium',
                         item_id: IAP_PRODUCTS.REMOVE_ADS,
                       });
-                    } catch (error) {
-                      console.error('Backend purchase report failed:', error);
+                    } catch {
+                      /* non-fatal: purchase already applied locally */
                     }
                   }
                   Alert.alert('Success!', 'All ads have been removed. Thank you!');
@@ -386,14 +385,14 @@ export default function ShopScreen() {
               }
             } else {
               Alert.alert(
-                'Development Mode',
-                'IAP requires a native build. Simulate ad removal?',
+                'Preview purchase',
+                'Real purchases run in the store build of this app. You can enable ad-free on this device only for preview.',
                 [
                   {
-                    text: 'Simulate',
+                    text: 'Apply on device',
                     onPress: () => {
                       playerStore.syncFromServer({ premium: true, hasAdFree: true });
-                      Alert.alert('Success!', 'Ads removed! (Simulated)');
+                      Alert.alert('Success!', 'Ad-free is now active on this device.');
                     }
                   },
                   { text: 'Cancel', style: 'cancel' }
@@ -436,7 +435,7 @@ export default function ShopScreen() {
         setPurchaseLoading(false);
       }
     } else {
-      Alert.alert('Not Available', 'Purchase restoration requires a native build.');
+      Alert.alert('Not available here', 'Restore purchases from the installed app, signed in with the same store account used for the original purchase.');
     }
   };
 
@@ -462,8 +461,8 @@ export default function ShopScreen() {
                 item_type: 'gems',
                 item_id: productId,
               });
-            } catch (error) {
-              console.error('Backend purchase report failed:', error);
+            } catch {
+              /* non-fatal: purchase already applied locally */
             }
           }
           Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems have been added to your balance!`);
@@ -476,17 +475,16 @@ export default function ShopScreen() {
         setPurchaseLoading(false);
       }
     } else {
-      // Simulated purchase for development/testing
       Alert.alert(
         `Buy ${gemAmount.toLocaleString()} Gems`,
-        `Purchase ${gemAmount.toLocaleString()} gems for ${price}?\n\n(IAP requires a native build - simulating for testing)`,
+        `Purchase ${gemAmount.toLocaleString()} gems for ${price} in the installed app from the App Store or Google Play.\n\nYou can add these gems on this device only for preview.`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'Simulate Purchase',
+            text: 'Add on device',
             onPress: () => {
               playerStore.addGems(gemAmount);
-              Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems added! (Simulated)`);
+              Alert.alert('Gems added', `${gemAmount.toLocaleString()} gems were added to your balance on this device.`);
             }
           },
         ]
@@ -515,8 +513,8 @@ export default function ShopScreen() {
                 reward_type: 'gems',
                 ad_type: 'rewarded',
               });
-            } catch (e) {
-              console.error('Error claiming reward:', e);
+            } catch {
+              /* reward already granted locally */
             }
           }
           // Pre-load next ad
@@ -524,8 +522,7 @@ export default function ShopScreen() {
         } else {
           Alert.alert('No Reward', 'You need to watch the full ad to earn gems.');
         }
-      } catch (e) {
-        console.error('Error showing ad:', e);
+      } catch {
         Alert.alert('Error', 'Failed to show ad. Please try again.');
       } finally {
         setAdLoading(false);
@@ -543,17 +540,16 @@ export default function ShopScreen() {
         Alert.alert('Ad Unavailable', 'No ads available right now. Please try again later.');
       }
     } else {
-      // Non-native environment (web/Expo Go) - simulate for testing
       Alert.alert(
-        'Watch Ad',
-        'Rewarded ads require a native build.\n\nSimulate watching ad for 10 gems?',
+        'Reward unavailable here',
+        'Rewarded video ads run in the installed app. You can claim 10 gems on this device only as a one-time preview.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: 'Simulate',
+            text: 'Claim preview',
             onPress: async () => {
               playerStore.addGems(10);
-              Alert.alert('Reward!', 'You earned 10 gems! (Simulated)');
+              Alert.alert('Reward!', 'You earned 10 gems on this device.');
               
               if (playerStore.playerId) {
                 try {
@@ -562,8 +558,8 @@ export default function ShopScreen() {
                     reward_type: 'gems',
                     ad_type: 'rewarded',
                   });
-                } catch (e) {
-                  console.error('Error claiming reward:', e);
+                } catch {
+                  /* reward already granted locally */
                 }
               }
             },

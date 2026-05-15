@@ -26,9 +26,6 @@ export default function RootLayout() {
       void (async () => {
         try {
           await initializeAudio();
-          if (__DEV__) {
-            console.log('[audioService] initializeAudio() completed in RootLayout');
-          }
         } catch {
           // audio is optional; never crash launch
         }
@@ -46,8 +43,8 @@ export default function RootLayout() {
         try {
           const { initializeIAP } = await import('../src/services/iapService');
           await initializeIAP();
-        } catch (e) {
-          console.log('IAP init skipped:', e);
+        } catch {
+          // IAP optional; never crash launch
         }
       })();
     });
@@ -78,7 +75,6 @@ export default function RootLayout() {
               <Stack.Screen name="index" />
               <Stack.Screen name="map-selection" />
               <Stack.Screen name="game" options={{ gestureEnabled: false }} />
-              <Stack.Screen name="leaderboard" />
               <Stack.Screen name="shop" />
               <Stack.Screen name="settings" />
               <Stack.Screen name="progression" />

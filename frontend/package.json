@@ -1,14 +1,16 @@
 {
   "name": "frontend",
   "main": "index.js",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "eas:ios": "eas build --platform ios --profile production",
+    "eas:submit:ios": "eas submit --platform ios --profile production --latest"
   },
   "dependencies": {
     "@babel/runtime": "^7.20.6",

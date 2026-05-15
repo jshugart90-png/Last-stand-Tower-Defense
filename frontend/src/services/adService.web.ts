@@ -9,7 +9,6 @@ export const AD_UNIT_IDS = {
 export const isNativeAdsAvailable = (): boolean => false;
 
 export const initializeAds = async (): Promise<boolean> => {
-  console.log('AdMob not available on web');
   return false;
 };
 

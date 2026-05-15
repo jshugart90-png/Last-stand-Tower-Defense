@@ -30,7 +30,6 @@ export const GEM_PACK_AMOUNTS: Record<string, number> = {
 export const isIAPAvailable = (): boolean => false;
 
 export const initializeIAP = async (): Promise<boolean> => {
-  console.log('IAP not available on web');
   return false;
 };
 

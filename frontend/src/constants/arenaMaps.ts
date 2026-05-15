@@ -163,7 +163,7 @@ const ARENAS: ArenaMapDefinition[] = [
   {
     id: 'obsidian_spiral',
     name: 'Obsidian Spiral',
-    description: 'Spirals inward, then cuts outward — long path, greedy tower shots.',
+    description: 'Spirals inward, then cuts outward — a long path that rewards smart coverage.',
     gridCols: 18,
     gridRows: 18,
     cellSize: 28,
@@ -300,7 +300,7 @@ const ARENAS: ArenaMapDefinition[] = [
   {
     id: 'void_switchback',
     name: 'Void Switchback',
-    description: 'Hairpin stacks — distance is high; placement zones cluster at turns.',
+    description: 'Tight hairpin turns on a long route — choke points at every reversal.',
     gridCols: 15,
     gridRows: 23,
     cellSize: 29,
@@ -353,7 +353,7 @@ const ARENAS: ArenaMapDefinition[] = [
   {
     id: 'dusk_causeway',
     name: 'Dusk Causeway',
-    description: 'Sky-bridge feel: straight runs and elevation shifts along the grid.',
+    description: 'Long straight runs and sharp turns across a raised causeway.',
     gridCols: 16,
     gridRows: 21,
     cellSize: 30,
