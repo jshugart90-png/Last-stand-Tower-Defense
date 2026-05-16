@@ -49,15 +49,6 @@ export const gameApi = {
   }) => api.post('/games/end', data),
 };
 
-// Reward APIs
-export const rewardApi = {
-  claim: (data: {
-    player_id: string;
-    reward_type: string;
-    ad_type: string;
-  }) => api.post('/rewards/claim', data),
-};
-
 // Purchase APIs
 export const purchaseApi = {
   process: (data: {

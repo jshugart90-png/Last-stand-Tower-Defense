@@ -245,6 +245,7 @@ export default function HomeScreen() {
   const claimDailyBonus = usePlayerStore((s) => s.claimDailyBonus);
   const canClaimSessionQuest = usePlayerStore((s) => s.canClaimSessionQuest);
   const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
+  const claimDailyMission = usePlayerStore((s) => s.claimDailyMission);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
@@ -666,7 +667,8 @@ export default function HomeScreen() {
         visible={showDailyMissionsModal}
         missions={playerStore.dailyMissions}
         onClose={() => setShowDailyMissionsModal(false)}
-        onClaim={() => {
+        onClaim={(id) => {
+          claimDailyMission(id);
           if (canPlayUiSfx()) playSfx('chest');
         }}
       />

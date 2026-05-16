@@ -8,6 +8,8 @@ export interface DailyMission {
   progress: number;
   rewardGems: number;
   completed: boolean;
+  /** True after reward gems were claimed (manual claim in UI). */
+  claimed: boolean;
 }
 
 export interface Achievement {
@@ -40,6 +42,7 @@ export const createDefaultDailyMissions = (): DailyMission[] => [
     progress: 0,
     rewardGems: 15,
     completed: false,
+    claimed: false,
   },
   {
     id: 'kill_enemies',
@@ -48,6 +51,7 @@ export const createDefaultDailyMissions = (): DailyMission[] => [
     progress: 0,
     rewardGems: 25,
     completed: false,
+    claimed: false,
   },
   {
     id: 'survive_waves',
@@ -56,6 +60,7 @@ export const createDefaultDailyMissions = (): DailyMission[] => [
     progress: 0,
     rewardGems: 20,
     completed: false,
+    claimed: false,
   },
 ];
 

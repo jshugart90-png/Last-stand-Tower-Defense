@@ -112,6 +112,7 @@ export default function ProgressionScreen() {
         visible={showDailyMissions}
         missions={playerStore.dailyMissions}
         onClose={() => setShowDailyMissions(false)}
+        onClaim={(id) => playerStore.claimDailyMission(id)}
       />
     </SafeAreaView>
   );

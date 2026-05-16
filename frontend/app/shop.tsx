@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
-import { rewardApi, purchaseApi } from '../src/hooks/useApi';
+import { purchaseApi } from '../src/hooks/useApi';
 import {
   TOWERS,
   TowerType,
@@ -32,14 +32,14 @@ import {
   getRunCoinIncomeMultiplier,
 } from '../src/constants/game';
 import { 
-  isRewardedAdReady, showRewardedAd, loadRewardedAd, 
-  isNativeAdsAvailable, isAdsInitialized 
-} from '../src/services/adService';
-import { 
   IAP_PRODUCTS, IAP_PRICES, GEM_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
 import { TacticalTheme } from '../src/theme/colors';
+import {
+  STORE_UNAVAILABLE_BODY,
+  STORE_UNAVAILABLE_TITLE,
+} from '../src/constants/storeMessages';
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 interface Skin {
@@ -76,7 +76,6 @@ export default function ShopScreen() {
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
-  const [adLoading, setAdLoading] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const highlightedTower = useMemo(() => {
     const raw = params.highlightTower;
@@ -91,10 +90,6 @@ export default function ShopScreen() {
     loadSkins();
     if (highlightedTower) {
       setSelectedTab('towers');
-    }
-    // Pre-load rewarded ad when shop opens
-    if (isNativeAdsAvailable() && isAdsInitialized()) {
-      loadRewardedAd();
     }
   }, [highlightedTower]);
 
@@ -150,11 +145,10 @@ export default function ShopScreen() {
     if (playerStore.gems < price) {
       Alert.alert(
         'Not Enough Gems',
-        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games, watching ads, or buying gem packs!`,
+        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games or buying gem packs!`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
-          { text: 'Watch Ad', onPress: handleWatchAdForGems },
         ]
       );
       return;
@@ -183,11 +177,10 @@ export default function ShopScreen() {
     if (playerStore.gems < price) {
       Alert.alert(
         'Not Enough Gems',
-        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games, watching ads, or buying gem packs!`,
+        `You need ${price} gems but only have ${playerStore.gems}.\n\nEarn gems by playing games or buying gem packs!`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
-          { text: 'Watch Ad', onPress: handleWatchAdForGems },
         ]
       );
       return;
@@ -320,20 +313,7 @@ export default function ShopScreen() {
                 setPurchaseLoading(false);
               }
             } else {
-              Alert.alert(
-                'Preview purchase',
-                'Real purchases run in the App Store or Google Play build of this app. You can apply this expansion on this device only for preview.',
-                [
-                  {
-                    text: 'Apply on device',
-                    onPress: () => {
-                      playerStore.addArenaExpansion();
-                      Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
-                    }
-                  },
-                  { text: 'Cancel', style: 'cancel' }
-                ]
-              );
+              Alert.alert(STORE_UNAVAILABLE_TITLE, STORE_UNAVAILABLE_BODY);
             }
           },
         },
@@ -341,69 +321,6 @@ export default function ShopScreen() {
     );
   };
 
-
-  // Handle Remove Ads purchase (IAP)
-  const handlePurchaseRemoveAds = async () => {
-    if (playerStore.hasAdFree || playerStore.premium) {
-      Alert.alert('Already Purchased', 'You already have ad-free access!');
-      return;
-    }
-
-    Alert.alert(
-      'Remove Ads - $2.99',
-      'Remove all banner ads permanently?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Buy $2.99',
-          onPress: async () => {
-            if (isIAPAvailable() && isIAPInitialized()) {
-              setPurchaseLoading(true);
-              try {
-                const result = await requestPurchase(IAP_PRODUCTS.REMOVE_ADS);
-                if (result.success) {
-                  playerStore.syncFromServer({ premium: true, hasAdFree: true });
-                  if (playerStore.playerId) {
-                    try {
-                      await purchaseApi.process({
-                        player_id: playerStore.playerId,
-                        item_type: 'premium',
-                        item_id: IAP_PRODUCTS.REMOVE_ADS,
-                      });
-                    } catch {
-                      /* non-fatal: purchase already applied locally */
-                    }
-                  }
-                  Alert.alert('Success!', 'All ads have been removed. Thank you!');
-                } else if (result.error && result.error !== 'Purchase cancelled') {
-                  Alert.alert('Purchase Failed', result.error);
-                }
-              } catch {
-                Alert.alert('Error', 'Purchase failed. Please try again.');
-              } finally {
-                setPurchaseLoading(false);
-              }
-            } else {
-              Alert.alert(
-                'Preview purchase',
-                'Real purchases run in the store build of this app. You can enable ad-free on this device only for preview.',
-                [
-                  {
-                    text: 'Apply on device',
-                    onPress: () => {
-                      playerStore.syncFromServer({ premium: true, hasAdFree: true });
-                      Alert.alert('Success!', 'Ad-free is now active on this device.');
-                    }
-                  },
-                  { text: 'Cancel', style: 'cancel' }
-                ]
-              );
-            }
-          },
-        },
-      ]
-    );
-  };
 
   // Handle restore purchases
   const handleRestorePurchases = async () => {
@@ -414,10 +331,6 @@ export default function ShopScreen() {
         let restoredSomething = false;
 
         for (const purchase of purchases) {
-          if (purchase.productId === IAP_PRODUCTS.REMOVE_ADS) {
-            playerStore.syncFromServer({ premium: true, hasAdFree: true });
-            restoredSomething = true;
-          }
           if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
             playerStore.addArenaExpansion();
             restoredSomething = true;
@@ -475,97 +388,7 @@ export default function ShopScreen() {
         setPurchaseLoading(false);
       }
     } else {
-      Alert.alert(
-        `Buy ${gemAmount.toLocaleString()} Gems`,
-        `Purchase ${gemAmount.toLocaleString()} gems for ${price} in the installed app from the App Store or Google Play.\n\nYou can add these gems on this device only for preview.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Add on device',
-            onPress: () => {
-              playerStore.addGems(gemAmount);
-              Alert.alert('Gems added', `${gemAmount.toLocaleString()} gems were added to your balance on this device.`);
-            }
-          },
-        ]
-      );
-    }
-  };
-
-  // Handle watch ad for gems (AdMob Rewarded Ad)
-  const handleWatchAdForGems = async () => {
-    const nativeAdsReady = isNativeAdsAvailable() && isAdsInitialized();
-    
-    if (nativeAdsReady && isRewardedAdReady()) {
-      // Show real rewarded ad
-      setAdLoading(true);
-      try {
-        const reward = await showRewardedAd();
-        if (reward) {
-          // Ad watched successfully - grant gems
-          playerStore.addGems(10);
-          Alert.alert('Reward!', 'You earned 10 gems!');
-          
-          if (playerStore.playerId) {
-            try {
-              await rewardApi.claim({
-                player_id: playerStore.playerId,
-                reward_type: 'gems',
-                ad_type: 'rewarded',
-              });
-            } catch {
-              /* reward already granted locally */
-            }
-          }
-          // Pre-load next ad
-          loadRewardedAd();
-        } else {
-          Alert.alert('No Reward', 'You need to watch the full ad to earn gems.');
-        }
-      } catch {
-        Alert.alert('Error', 'Failed to show ad. Please try again.');
-      } finally {
-        setAdLoading(false);
-      }
-    } else if (nativeAdsReady && !isRewardedAdReady()) {
-      // Ad not loaded yet - try to load
-      setAdLoading(true);
-      Alert.alert('Ad loading…', 'Please wait while we load an ad…');
-      const loaded = await loadRewardedAd();
-      setAdLoading(false);
-      if (loaded) {
-        // Retry showing
-        handleWatchAdForGems();
-      } else {
-        Alert.alert('Ad Unavailable', 'No ads available right now. Please try again later.');
-      }
-    } else {
-      Alert.alert(
-        'Reward unavailable here',
-        'Rewarded video ads run in the installed app. You can claim 10 gems on this device only as a one-time preview.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Claim preview',
-            onPress: async () => {
-              playerStore.addGems(10);
-              Alert.alert('Reward!', 'You earned 10 gems on this device.');
-              
-              if (playerStore.playerId) {
-                try {
-                  await rewardApi.claim({
-                    player_id: playerStore.playerId,
-                    reward_type: 'gems',
-                    ad_type: 'rewarded',
-                  });
-                } catch {
-                  /* reward already granted locally */
-                }
-              }
-            },
-          },
-        ]
-      );
+      Alert.alert(STORE_UNAVAILABLE_TITLE, STORE_UNAVAILABLE_BODY);
     }
   };
 
@@ -1006,28 +829,6 @@ export default function ShopScreen() {
               </Text>
             </View>
             
-            {/* Premium upgrade - Remove Ads */}
-            <View style={styles.premiumCard}>
-              <Ionicons name="star" size={32} color="#FFD700" />
-              <View style={styles.premiumInfo}>
-                <Text style={styles.premiumTitle}>Remove Ads</Text>
-                <Text style={styles.premiumDesc}>Remove all banner ads permanently</Text>
-              </View>
-              <TouchableOpacity 
-                style={styles.premiumButton}
-                onPress={handlePurchaseRemoveAds}
-                disabled={purchaseLoading || playerStore.hasAdFree || playerStore.premium}
-              >
-                {playerStore.hasAdFree || playerStore.premium ? (
-                  <Text style={styles.premiumPriceText}>Owned ✓</Text>
-                ) : purchaseLoading ? (
-                  <ActivityIndicator size="small" color="#1a1a2e" />
-                ) : (
-                  <Text style={styles.premiumPriceText}>{IAP_PRICES[IAP_PRODUCTS.REMOVE_ADS]}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
             {/* Restore Purchases */}
             <TouchableOpacity 
               style={styles.restoreButton}
@@ -1084,24 +885,6 @@ export default function ShopScreen() {
         )}
 
         {selectedTab === 'logos' && renderLogoCard()}
-
-        {/* Watch Ad for Coins */}
-        <View style={styles.adSection}>
-          <TouchableOpacity 
-            style={[styles.watchAdButton, adLoading && styles.disabledButton]} 
-            onPress={handleWatchAdForGems}
-            disabled={adLoading}
-          >
-            {adLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="videocam" size={24} color="#fff" />
-            )}
-            <Text style={styles.watchAdText}>
-              {adLoading ? 'Ad loading…' : 'Watch Ad for 10 Gems'}
-            </Text>
-          </TouchableOpacity>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1429,39 +1212,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
-  premiumCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: TacticalTheme.surfaceDeep,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#FFD700',
-  },
-  premiumInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  premiumTitle: {
-    color: '#FFD700',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  premiumDesc: {
-    color: '#888',
-    fontSize: 12,
-  },
-  premiumButton: {
-    backgroundColor: '#FFD700',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  premiumPriceText: {
-    color: '#1a1a2e',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
   // Skins
   loader: {
     marginTop: 32,
@@ -1527,13 +1277,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 'bold',
   },
-  // Ad section
-  adSection: {
-    marginTop: 24,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#2a2a4e',
-  },
   logoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1584,20 +1327,6 @@ const styles = StyleSheet.create({
     color: TacticalTheme.white,
     fontSize: 11,
     fontWeight: '800',
-  },
-  watchAdButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#E67E22',
-    paddingVertical: 14,
-    borderRadius: 8,
-    gap: 8,
-  },
-  watchAdText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   restoreButton: {
     flexDirection: 'row',

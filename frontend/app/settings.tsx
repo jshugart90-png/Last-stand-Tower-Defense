@@ -17,7 +17,11 @@ import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS } from '../src/constants/game';
-import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
+import {
+  isBackendConfigured,
+  isServerBackedPlayerId,
+  playerApi,
+} from '../src/hooks/useApi';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
@@ -74,30 +78,6 @@ export default function SettingsScreen() {
             Alert.alert(
               'Restore purchases',
               'Use the Shop screen while signed in to your account to restore in-app purchases through the App Store.'
-            );
-          },
-        },
-      ]
-    );
-  };
-
-  const handleRemoveAdsPreview = () => {
-    if (playerStore.hasAdFree) {
-      Alert.alert('Already ad-free', 'Remove Ads is already active on this device.');
-      return;
-    }
-    Alert.alert(
-      'Remove Ads',
-      'One-time purchase will remove automatic ads after game over. Rewarded ads for bonus gems and revives stay available.\n\nFor now, this enables ad-free on this device only. Store purchase will connect here in a future update.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Enable ad-free',
-          onPress: () => {
-            playerStore.setHasAdFree(true);
-            Alert.alert(
-              'Ad-free enabled',
-              'Automatic interstitials after game over are off. You can still watch rewarded ads for gems and revives.'
             );
           },
         },
@@ -361,13 +341,6 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Ad-free</Text>
-            <Text style={[styles.infoValue, playerStore.hasAdFree && styles.premiumText]}>
-              {playerStore.hasAdFree ? 'Yes' : 'No'}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Arena Expansions</Text>
             <Text style={styles.infoValue}>{playerStore.arenaExpansions}</Text>
           </View>
@@ -407,19 +380,6 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Purchases</Text>
 
-          <TouchableOpacity style={styles.removeAdsCard} onPress={handleRemoveAdsPreview} activeOpacity={0.85}>
-            <Ionicons name="eye-off-outline" size={22} color={TacticalTheme.accent} />
-            <View style={styles.removeAdsCardText}>
-              <Text style={styles.removeAdsTitle}>Remove Ads</Text>
-              <Text style={styles.removeAdsSubtitle}>
-                {playerStore.hasAdFree
-                  ? 'Active — no forced ads after game over. Rewarded ads still available.'
-                  : 'One-time purchase removes automatic ads after game over (purchase flow coming soon).'}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={TacticalTheme.textSubtle} />
-          </TouchableOpacity>
-          
           <TouchableOpacity style={styles.actionButton} onPress={handleRestorePurchases}>
             <Ionicons name="refresh" size={24} color={TacticalTheme.accent} />
             <Text style={styles.actionButtonText}>Restore Purchases</Text>
@@ -667,32 +627,6 @@ const styles = StyleSheet.create({
   },
   premiumText: {
     color: '#FFD700',
-  },
-  removeAdsCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-    borderRadius: 12,
-    backgroundColor: TacticalTheme.panel,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-  },
-  removeAdsCardText: {
-    flex: 1,
-    gap: 4,
-  },
-  removeAdsTitle: {
-    color: TacticalTheme.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  removeAdsSubtitle: {
-    color: TacticalTheme.textMuted,
-    fontSize: 13,
-    lineHeight: 18,
   },
   actionButton: {
     flexDirection: 'row',

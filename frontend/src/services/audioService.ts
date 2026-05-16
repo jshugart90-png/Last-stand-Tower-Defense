@@ -18,11 +18,6 @@ const cache = new Map<string, Audio.Sound>();
 const pools = new Map<string, { sounds: Audio.Sound[]; i: number }>();
 let audioReady = false;
 let audioInitPromise: Promise<void> | null = null;
-let audioLastError: string | null = null;
-
-function logAudio(..._args: unknown[]) {}
-
-function warnAudio(..._args: unknown[]) {}
 
 /** When false, combat SFX (weapons, impacts, deaths, base, wave horn) do not start. */
 let gameplaySfxArmed = false;
@@ -140,17 +135,13 @@ async function silenceAllLoadedSounds(): Promise<void> {
   const tasks: Promise<unknown>[] = [];
   for (const sound of cache.values()) {
     tasks.push(
-      sound.stopAsync().catch((err) => {
-        logAudio('silenceAllLoadedSounds cache stopAsync', err);
-      })
+      sound.stopAsync().catch(() => {})
     );
   }
   for (const pool of pools.values()) {
     for (const sound of pool.sounds) {
       tasks.push(
-        sound.stopAsync().catch((err) => {
-          logAudio('silenceAllLoadedSounds pool stopAsync', err);
-        })
+        sound.stopAsync().catch(() => {})
       );
     }
   }
@@ -344,7 +335,6 @@ async function writeAndLoadSound(
   baseVolume: number
 ): Promise<Audio.Sound | null> {
   try {
-    logAudio('writeAndLoadSound() start', { fileKey, baseVolume });
     const uri = `${FileSystem.cacheDirectory}sfx_${fileKey}.wav`;
     await FileSystem.writeAsStringAsync(uri, base64, {
       encoding: FileSystem.EncodingType.Base64,
@@ -353,10 +343,8 @@ async function writeAndLoadSound(
       { uri },
       { shouldPlay: false, volume: baseVolume, isLooping: false }
     );
-    logAudio('writeAndLoadSound() success', { fileKey, uri });
     return sound;
-  } catch (err) {
-    warnAudio('writeAndLoadSound() failed', { fileKey, err });
+  } catch {
     return null;
   }
 }
@@ -366,22 +354,18 @@ async function ensureSoundFromFloat(
   samples: Float32Array,
   baseVolume: number
 ): Promise<Audio.Sound | null> {
-  logAudio('ensureSoundFromFloat()', { key });
   const existing = cache.get(key);
   if (existing) {
-    logAudio('ensureSoundFromFloat() cache hit', { key });
     return existing;
   }
   let base64 = '';
   try {
     base64 = float32ToWavBase64(samples);
-  } catch (err) {
-    warnAudio('ensureSoundFromFloat() wav generation failed', { key, err });
+  } catch {
     return null;
   }
   const s = await writeAndLoadSound(key, base64, baseVolume);
   if (s) cache.set(key, s);
-  else warnAudio('ensureSoundFromFloat() load failed', { key });
   return s;
 }
 
@@ -391,7 +375,6 @@ async function ensurePoolFromFloat(
   baseVolume: number,
   count: number
 ): Promise<void> {
-  logAudio('ensurePoolFromFloat()', { poolKey, count });
   if (pools.has(poolKey)) return;
   try {
     const base64 = float32ToWavBase64(samples);
@@ -408,9 +391,8 @@ async function ensurePoolFromFloat(
       sounds.push(sound);
     }
     pools.set(poolKey, { sounds, i: 0 });
-    logAudio('ensurePoolFromFloat() success', { poolKey, count });
-  } catch (err) {
-    warnAudio('ensurePoolFromFloat() failed', { poolKey, err });
+  } catch {
+    /* ignore pool init failure */
   }
 }
 
@@ -634,17 +616,11 @@ export function playWaveStartFanfare(): void {
 }
 
 export const initializeAudio = async (): Promise<void> => {
-  logAudio('initializeAudio() called', {
-    audioReady,
-    hasInitPromise: !!audioInitPromise,
-    soundEnabled: usePlayerStore.getState().soundEnabled,
-  });
   if (audioReady) return;
   if (audioInitPromise) return audioInitPromise;
   audioInitPromise = (async () => {
   try {
     await Audio.setIsEnabledAsync(true);
-    logAudio('initializeAudio() Audio.setIsEnabledAsync success');
     await Audio.setAudioModeAsync({
       // Force SFX to work even when iOS hardware silent switch is on.
       playsInSilentModeIOS: true,
@@ -655,7 +631,6 @@ export const initializeAudio = async (): Promise<void> => {
       shouldDuckAndroid: true,
       playThroughEarpieceAndroid: false,
     });
-    logAudio('initializeAudio() Audio.setAudioModeAsync success');
 
     /** One shared combat WAV + small round-robin pool; rare stingers stay single cached `Sound`s. */
     await ensurePoolFromFloat(COMBAT_POOL_KEY, getCachedCombatImpact(), 1, COMBAT_POOL_SIZE);
@@ -669,12 +644,8 @@ export const initializeAudio = async (): Promise<void> => {
     }
 
     audioReady = true;
-    audioLastError = null;
-    logAudio('initializeAudio() success', { cacheCount: cache.size, poolCount: pools.size });
-  } catch (err) {
+  } catch {
     audioReady = false;
-    audioLastError = err instanceof Error ? err.message : 'Audio initialization failed';
-    warnAudio('initializeAudio() failed', { err, audioLastError });
   } finally {
     audioInitPromise = null;
   }
@@ -684,24 +655,21 @@ export const initializeAudio = async (): Promise<void> => {
 
 export const ensureAudioReady = async (): Promise<boolean> => {
   if (audioReady) return true;
-  logAudio('ensureAudioReady() start', { audioReady, hasInitPromise: !!audioInitPromise });
   if (audioInitPromise) {
     try {
       await audioInitPromise;
-    } catch (err) {
-      warnAudio('ensureAudioReady() waiting init promise failed', { err });
+    } catch {
+      /* ignore */
     }
   }
   if (!audioReady) {
     await initializeAudio();
   }
-  logAudio('ensureAudioReady() end', { audioReady, lastError: audioLastError });
   return audioReady;
 };
 
 export const refreshAudioModeOnForeground = async (): Promise<void> => {
   try {
-    logAudio('refreshAudioModeOnForeground() start');
     await Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
       allowsRecordingIOS: false,
@@ -711,19 +679,10 @@ export const refreshAudioModeOnForeground = async (): Promise<void> => {
       shouldDuckAndroid: true,
       playThroughEarpieceAndroid: false,
     });
-    logAudio('refreshAudioModeOnForeground() success');
-  } catch (err) {
-    warnAudio('refreshAudioModeOnForeground() failed', { err });
-    // ignore; next playback attempt will retry full init if needed
+  } catch {
+    /* ignore; next playback attempt will retry full init if needed */
   }
 };
-
-export const getAudioDebugState = () => ({
-  ready: audioReady,
-  cacheCount: cache.size,
-  poolCount: pools.size,
-  lastError: audioLastError,
-});
 
 /** True when UI stingers are allowed — use in React to skip `playSfx` entirely when muted. */
 export function canPlayUiSfx(): boolean {

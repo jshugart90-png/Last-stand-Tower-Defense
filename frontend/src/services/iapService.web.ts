@@ -1,7 +1,6 @@
 // Web-safe IAP service - no native modules
 
 export const IAP_PRODUCTS = {
-  REMOVE_ADS: 'com.laststanddefense.remove_ads',
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
   GEMS_100: 'com.laststanddefense.gems_100',
@@ -11,7 +10,6 @@ export const IAP_PRODUCTS = {
 };
 
 export const IAP_PRICES: Record<string, string> = {
-  [IAP_PRODUCTS.REMOVE_ADS]: '$2.99',
   [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
   [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
   [IAP_PRODUCTS.GEMS_100]: '$0.99',

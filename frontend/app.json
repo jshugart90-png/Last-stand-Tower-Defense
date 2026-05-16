@@ -2,7 +2,7 @@
   "expo": {
     "name": "Last Stand Tower Defense",
     "slug": "last-stand-tower-defense",
-    "version": "1.0.9",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "laststandtd",
@@ -52,21 +52,10 @@
         }
       ],
       "expo-iap",
-      "expo-web-browser",
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ]
+      "expo-web-browser"
     ],
     "extra": {
       "EXPO_PUBLIC_BACKEND_URL": "",
-      "EXPO_PUBLIC_ADMOB_INTERSTITIAL_ANDROID": "ca-app-pub-3940256099942544/1033173712",
-      "EXPO_PUBLIC_ADMOB_INTERSTITIAL_IOS": "ca-app-pub-3940256099942544/4411468910",
-      "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-3940256099942544/5224354917",
-      "EXPO_PUBLIC_ADMOB_REWARDED_IOS": "ca-app-pub-3940256099942544/1712485313",
       "router": {},
       "eas": {
         "projectId": "7b990481-5fbc-492f-905e-6e0c24a31bf7"

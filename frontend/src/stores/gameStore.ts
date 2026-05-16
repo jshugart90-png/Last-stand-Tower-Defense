@@ -159,8 +159,6 @@ export interface GameState {
   
   // Power-ups
   doubleDamageUntil: number;
-  hasRevive: boolean;
-  adReviveUsed: boolean;
   
   // Game timing
   gameStartTime: number;
@@ -235,9 +233,6 @@ interface GameActions {
   
   // Power-ups
   activateDoubleDamage: (duration: number) => void;
-  grantRevive: () => void;
-  useRevive: () => boolean;
-  canUseAdRevive: () => boolean;
   
   // Utility
   canPlaceTower: (position: Position) => boolean;
@@ -283,7 +278,6 @@ export interface SavedGameStateForExport {
   gridRows: number;
   arenaExpansions: number;
   savedAt: number;
-  adReviveUsed: boolean;
   /** Arena id (see arenaMaps) — saved for resume. */
   mapId?: string;
 }
@@ -355,8 +349,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     laser: 0,
   },
   doubleDamageUntil: 0,
-  hasRevive: false,
-  adReviveUsed: false,
   gameStartTime: 0,
   gameSpeed: 1,
   waveEndTime: 0,
@@ -418,8 +410,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           laser: 0,
         },
         doubleDamageUntil: 0,
-        hasRevive: false,
-        adReviveUsed: false,
         gameStartTime: Date.now(),
         gameSpeed: 1,
         waveEndTime: 0,
@@ -483,8 +473,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         laser: 0,
       },
       doubleDamageUntil: 0,
-      hasRevive: false,
-      adReviveUsed: false,
       gameStartTime: Date.now(),
       gameSpeed: 1,
       waveEndTime: 0,
@@ -1173,7 +1161,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       .filter(Boolean) as Enemy[];
 
     const newBaseHealth = Math.max(0, state.baseHealth - baseDamage);
-    const isGameOver = newBaseHealth <= 0 && !state.hasRevive;
+    const isGameOver = newBaseHealth <= 0;
 
     if (isGameOver) {
       void stopAllSounds();
@@ -1212,11 +1200,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   damageBase: (damage) => {
     set((s) => {
       const newHealth = s.baseHealth - damage;
-      if (newHealth <= 0 && !s.hasRevive) {
+      if (newHealth <= 0) {
         void stopAllSounds();
         return { baseHealth: 0, isGameOver: true, isPlaying: false };
       }
-      return { baseHealth: Math.max(0, newHealth) };
+      return { baseHealth: newHealth };
     });
   },
 
@@ -1234,27 +1222,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   activateDoubleDamage: (duration) => {
     set({ doubleDamageUntil: Date.now() + duration });
   },
-
-  grantRevive: () => set({ hasRevive: true }),
-
-  useRevive: () => {
-    const state = get();
-    if (!state.hasRevive) return false;
-    set({
-      hasRevive: false,
-      baseHealth: Math.max(1, Math.floor(GAME_CONFIG.BASE_HEALTH * 0.4)),
-      isGameOver: false,
-      isPlaying: true,
-      adReviveUsed: true,
-      // Keep the run in-flight: resume the same wave immediately after revive.
-      waveInProgress: true,
-      autoWaveTimer: 0,
-    });
-    setGameplaySfxArmed(true);
-    return true;
-  },
-
-  canUseAdRevive: () => !get().adReviveUsed,
 
   // Utility functions
   canPlaceTower: (position) => {
@@ -1376,7 +1343,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       gridRows: state.gridRows,
       arenaExpansions: state.arenaExpansions,
       savedAt: Date.now(),
-      adReviveUsed: state.adReviveUsed,
       mapId: state.currentMapId,
     };
   },
@@ -1425,8 +1391,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         arenaExpansions: savedGame.arenaExpansions,
         towerPurchaseCount: savedGame.towerPurchaseCount,
         doubleDamageUntil: 0,
-        hasRevive: false,
-        adReviveUsed: savedGame.adReviveUsed,
         gameStartTime: Date.now(),
         gameSpeed: 1,
         waveEndTime: 0,
@@ -1481,8 +1445,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       arenaExpansions: savedGame.arenaExpansions,
       towerPurchaseCount: savedGame.towerPurchaseCount,
       doubleDamageUntil: 0,
-      hasRevive: false,
-      adReviveUsed: savedGame.adReviveUsed,
       gameStartTime: Date.now(),
       gameSpeed: 1,
       waveEndTime: 0,

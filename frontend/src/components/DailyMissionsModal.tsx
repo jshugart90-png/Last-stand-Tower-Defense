@@ -19,7 +19,7 @@ export function DailyMissionsModal({ visible, missions, onClose, onClaim }: Prop
     setClaimedIds((prev) => {
       const next: Record<string, boolean> = {};
       for (const m of missions) {
-        if (m.completed && prev[m.id]) next[m.id] = true;
+        if (m.claimed || (m.completed && prev[m.id])) next[m.id] = true;
       }
       return next;
     });
@@ -53,7 +53,7 @@ export function DailyMissionsModal({ visible, missions, onClose, onClaim }: Prop
           <View style={styles.list}>
             {missions.map((mission) => {
               const progress = Math.min(1, mission.target > 0 ? mission.progress / mission.target : 0);
-              const claimed = !!claimedIds[mission.id];
+              const claimed = mission.claimed || !!claimedIds[mission.id];
               const canClaim = mission.completed && !claimed;
               return (
                 <View key={mission.id} style={styles.card}>

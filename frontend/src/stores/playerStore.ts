@@ -42,7 +42,6 @@ export const ARENA_EXPANSION_PRICE_USD = 2.99;
 // Product ID for in-app purchases
 export const IAP_PRODUCT_IDS = {
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
-  REMOVE_ADS: 'com.laststanddefense.remove_ads',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
   GEMS_100: 'com.laststanddefense.gems_100',
   GEMS_500: 'com.laststanddefense.gems_500',
@@ -87,9 +86,6 @@ export interface SavedGameState {
   
   // Timestamp
   savedAt: number;
-  
-  // Ad revive tracking
-  adReviveUsed: boolean;
 
   /** Arena id for next run (see `src/constants/arenaMaps.ts`). */
   mapId?: string;
@@ -106,7 +102,7 @@ interface PlayerState {
   // Progression
   xp: number;
   level: number;
-  gems: number;  // Persistent currency (earned from gameplay, IAP, ads)
+  gems: number;  // Persistent currency (earned from gameplay, IAP)
   
   // Stats
   totalWavesSurvived: number;
@@ -139,8 +135,6 @@ interface PlayerState {
   
   // Purchases
   premium: boolean;
-  /** Local + persisted: skip automatic interstitials; rewarded ads still allowed. */
-  hasAdFree: boolean;
   arenaExpansions: number;
   
   // Settings
@@ -154,9 +148,6 @@ interface PlayerState {
   performanceMode: boolean;
   vfxQuality: 0 | 1 | 2; // 0 low, 1 medium, 2 high
   autoStartWaves: boolean;
-  
-  // Ad tracking
-  gamesPlayedSinceAd: number;
   
   // Tutorial
   tutorialCompleted: boolean;
@@ -214,6 +205,8 @@ interface PlayerActions {
   setBestWave: (wave: number) => void;
   refreshDailyMissions: () => void;
   refreshWeeklyMissions: () => void;
+  /** Award daily mission gems once; idempotent if already claimed or not complete. */
+  claimDailyMission: (id: string) => void;
   canClaimDailyBonus: () => boolean;
   claimDailyBonus: () => { reward: number; streak: number; milestoneBonus: number };
   /** Call after each completed run with that run's kill count. */
@@ -262,7 +255,6 @@ interface PlayerActions {
   isLogoUnlocked: (logoId: string) => boolean;
   
   // Settings
-  setHasAdFree: (value: boolean) => void;
   toggleSound: () => void;
   toggleMusic: () => void;
   toggleHaptic: () => void;
@@ -271,11 +263,6 @@ interface PlayerActions {
   toggleAutoStartWaves: () => void;
   setSfxVolume: (v: number) => void;
   setMusicVolume: (v: number) => void;
-  
-  // Ad tracking
-  incrementGamesPlayedSinceAd: () => void;
-  resetGamesPlayedSinceAd: () => void;
-  shouldShowInterstitialAd: () => boolean;
   
   // Tutorial
   completeTutorial: () => void;
@@ -361,9 +348,8 @@ const initialState: PlayerState = {
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
-  hasAdFree: false,
   arenaExpansions: 0,
-  soundEnabled: true,
+  soundEnabled: false,
   sfxVolume: 0.9,
   musicEnabled: true,
   musicVolume: 0.65,
@@ -371,7 +357,6 @@ const initialState: PlayerState = {
   performanceMode: false,
   vfxQuality: 2,
   autoStartWaves: false,
-  gamesPlayedSinceAd: 0,
   tutorialCompleted: false,
   dailyMissions: createDefaultDailyMissions(),
   lastDailyMissionDayKey: getLocalDayKey(Date.now()),
@@ -417,7 +402,6 @@ const playerPersistKeys = [
   'unlockedSkins',
   'equippedSkins',
   'premium',
-  'hasAdFree',
   'arenaExpansions',
   'soundEnabled',
   'sfxVolume',
@@ -427,7 +411,6 @@ const playerPersistKeys = [
   'performanceMode',
   'vfxQuality',
   'autoStartWaves',
-  'gamesPlayedSinceAd',
   'tutorialCompleted',
   'dailyMissions',
   'lastDailyMissionDayKey',
@@ -450,6 +433,36 @@ const playerPersistKeys = [
   'selectedLogoId',
 ] as const;
 
+/** True when a resume save exists for an in-progress run (defer daily mission day rollover). */
+const hasActiveSavedRun = (state: PlayerState): boolean => {
+  const sg = state.savedGame;
+  if (!sg) return false;
+  return sg.currentWave > 0 || sg.waveInProgress === true;
+};
+
+/** Merge persisted daily missions with the current template; migrate saves before `claimed` existed. */
+const mergeDailyMissionListForLoad = (
+  stored: Array<Omit<DailyMission, 'claimed'> & { claimed?: boolean }> | undefined
+): DailyMission[] => {
+  const defaults = createDefaultDailyMissions();
+  if (!stored?.length) return defaults;
+  const map = new Map(stored.map((m) => [m.id, m]));
+  return defaults.map((d) => {
+    const s = map.get(d.id);
+    if (!s) return { ...d };
+    const progress = Math.min(d.target, Math.max(0, Math.floor(s.progress)));
+    const completed = progress >= d.target;
+    const hadClaimField = typeof s.claimed === 'boolean';
+    const claimed: boolean = hadClaimField ? Boolean(s.claimed) : completed;
+    return {
+      ...d,
+      progress,
+      completed,
+      claimed,
+    };
+  });
+};
+
 const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
   const today = getLocalDayKey(Date.now());
   const last =
@@ -461,6 +474,9 @@ const maybeResetDailyMissions = (state: PlayerState): Partial<PlayerState> => {
     if (!state.lastDailyMissionDayKey) {
       return { lastDailyMissionDayKey: today };
     }
+    return {};
+  }
+  if (hasActiveSavedRun(state)) {
     return {};
   }
   return {
@@ -490,21 +506,19 @@ const maybeResetWeeklyMissions = (state: PlayerState): Partial<PlayerState> => {
   };
 };
 
+/** Daily mission progress only — gem rewards are granted via `claimDailyMission`. */
 const applyMissionProgress = (
   missions: DailyMission[],
   id: DailyMission['id'],
   amount: number
-): { missions: DailyMission[]; gemsEarned: number } => {
-  if (amount <= 0) return { missions, gemsEarned: 0 };
-  let gemsEarned = 0;
-  const next = missions.map((mission) => {
+): DailyMission[] => {
+  if (amount <= 0) return missions;
+  return missions.map((mission) => {
     if (mission.id !== id || mission.completed) return mission;
     const progress = Math.min(mission.target, mission.progress + amount);
     const completed = progress >= mission.target;
-    if (completed && !mission.completed) gemsEarned += mission.rewardGems;
-    return { ...mission, progress, completed };
+    return { ...mission, progress, completed, claimed: mission.claimed };
   });
-  return { missions: next, gemsEarned };
 };
 
 const applyWeeklyMissionProgress = (
@@ -595,8 +609,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         const nextGamesPlayed = state.gamesPlayed + 1;
 
         const gamesMission = applyMissionProgress(missions, 'play_games', 1);
-        missions = gamesMission.missions;
-        gemsFromMissions += gamesMission.gemsEarned;
+        missions = gamesMission;
 
         const weeklyGamesMission = applyWeeklyMissionProgress(weeklyMissions, 'play_games', 1);
         weeklyMissions = weeklyGamesMission.missions;
@@ -631,12 +644,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         let gemsFromAchievements = 0;
 
         const enemiesMission = applyMissionProgress(missions, 'kill_enemies', enemiesKilled);
-        missions = enemiesMission.missions;
-        gemsFromMissions += enemiesMission.gemsEarned;
+        missions = enemiesMission;
 
         const wavesMission = applyMissionProgress(missions, 'survive_waves', wavesReached);
-        missions = wavesMission.missions;
-        gemsFromMissions += wavesMission.gemsEarned;
+        missions = wavesMission;
 
         const weeklyEnemiesMission = applyWeeklyMissionProgress(weeklyMissions, 'kill_enemies', enemiesKilled);
         weeklyMissions = weeklyEnemiesMission.missions;
@@ -731,6 +742,24 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
     refreshWeeklyMissions: () => {
       set((state) => ({ ...maybeResetWeeklyMissions(state) }));
+    },
+    claimDailyMission: (id) => {
+      set((state) => {
+        const dailyResetPatch = maybeResetDailyMissions(state);
+        let missions = dailyResetPatch.dailyMissions ?? state.dailyMissions;
+        const mission = missions.find((m) => m.id === id);
+        if (!mission || !mission.completed || mission.claimed) {
+          return { ...dailyResetPatch };
+        }
+        const next = missions.map((m) =>
+          m.id === id ? { ...m, claimed: true } : m
+        );
+        return {
+          ...dailyResetPatch,
+          dailyMissions: next,
+          gems: state.gems + mission.rewardGems,
+        };
+      });
     },
     canClaimDailyBonus: () => {
       const state = get();
@@ -1001,7 +1030,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     isLogoUnlocked: (logoId) => get().unlockedLogos.includes(logoId),
 
     // Settings
-    setHasAdFree: (value) => set({ hasAdFree: value }),
     toggleSound: () => set(state => ({ soundEnabled: !state.soundEnabled })),
     toggleMusic: () => set(state => ({ musicEnabled: !state.musicEnabled })),
     toggleHaptic: () => set(state => ({ hapticEnabled: !state.hapticEnabled })),
@@ -1013,17 +1041,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     setMusicVolume: (v) =>
       set({ musicVolume: Math.max(0, Math.min(1, v)) }),
 
-    // Ad tracking
-    incrementGamesPlayedSinceAd: () => {
-      set(state => ({ gamesPlayedSinceAd: state.gamesPlayedSinceAd + 1 }));
-    },
-    resetGamesPlayedSinceAd: () => set({ gamesPlayedSinceAd: 0 }),
-    shouldShowInterstitialAd: () => {
-      const state = get();
-      if (state.premium || state.hasAdFree) return false;
-      return state.gamesPlayedSinceAd >= 2;
-    },
-
     // Tutorial
     completeTutorial: () => set({ tutorialCompleted: true }),
 
@@ -1034,11 +1051,17 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
     },
     
     clearSavedGame: () => {
-      set({ savedGame: null });
+      set((state) => ({
+        savedGame: null,
+        ...maybeResetDailyMissions({ ...state, savedGame: null }),
+      }));
     },
-    
+
     clearCurrentGameProgress: () => {
-      set({ savedGame: null });
+      set((state) => ({
+        savedGame: null,
+        ...maybeResetDailyMissions({ ...state, savedGame: null }),
+      }));
     },
     
     hasSavedGame: () => {
@@ -1054,12 +1077,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       set((state) => ({
         ...state,
         ...data,
-        hasAdFree:
-          typeof data.hasAdFree === 'boolean'
-            ? data.hasAdFree
-            : data.premium === true
-              ? true
-              : state.hasAdFree,
         hasEnteredNameOnce: true,
         unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
         unlockedSpeeds: normalizeUnlockedSpeeds(data.unlockedSpeeds ?? state.unlockedSpeeds),
@@ -1105,11 +1122,12 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         ...current,
         ...p,
         achievements: mergeAchievementLists(p?.achievements),
+        dailyMissions: mergeDailyMissionListForLoad(p?.dailyMissions),
         hasEnteredNameOnce: nameOnboardingDone,
         startingCoinUpgradeLevel: p?.startingCoinUpgradeLevel ?? 0,
         sfxVolume:
           typeof p?.sfxVolume === 'number' ? Math.max(0, Math.min(1, p.sfxVolume)) : 0.9,
-        soundEnabled: typeof p?.soundEnabled === 'boolean' ? p.soundEnabled : true,
+        soundEnabled: typeof p?.soundEnabled === 'boolean' ? p.soundEnabled : false,
         musicVolume:
           typeof p?.musicVolume === 'number' ? Math.max(0, Math.min(1, p.musicVolume)) : 0.65,
         coinIncomeUpgradeLevel:
@@ -1140,12 +1158,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           typeof p?.selectedLogoId === 'string' && p.selectedLogoId.trim().length > 0
             ? p.selectedLogoId
             : DEFAULT_PLAYER_LOGO_ID,
-        hasAdFree:
-          typeof p?.hasAdFree === 'boolean'
-            ? p.hasAdFree
-            : p?.premium === true
-              ? true
-              : current.hasAdFree,
         sessionEnemiesKilledTotal:
           typeof p?.sessionEnemiesKilledTotal === 'number'
             ? Math.max(0, p.sessionEnemiesKilledTotal)
