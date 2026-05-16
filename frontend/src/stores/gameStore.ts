@@ -545,6 +545,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   // Wave management
   startWave: () => {
     clearBonusPopupDismissTimer();
+    setGameplaySfxArmed(true);
     void playWaveStartFanfare();
     set((state) => {
       const nextWave = state.currentWave + 1;
@@ -600,6 +601,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         /* ignore dismiss failure */
       }
     }, 2000);
+
+    void stopAllSounds();
   },
 
   dismissBonusPopup: () => {

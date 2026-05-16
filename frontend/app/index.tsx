@@ -18,7 +18,7 @@ import { useRouter } from 'expo-router';
 import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
-import { playSfx } from '../src/services/audioService';
+import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import {
@@ -495,7 +495,7 @@ export default function HomeScreen() {
   const handleClaimDailyBonus = useCallback(() => {
     const result = claimDailyBonus();
     if (result.reward > 0) {
-      playSfx('chest');
+      if (canPlayUiSfx()) playSfx('chest');
       const milestoneText =
         result.milestoneBonus > 0 ? `\nMilestone chest: +${result.milestoneBonus} gems!` : '';
       Alert.alert(
@@ -510,7 +510,7 @@ export default function HomeScreen() {
   const handleClaimSessionQuest = useCallback(() => {
     const reward = claimSessionQuest();
     if (reward > 0) {
-      playSfx('chest');
+      if (canPlayUiSfx()) playSfx('chest');
       Alert.alert('Session Quest Complete', `Bonus chest opened: +${reward} gems!`);
     } else {
       Alert.alert(
@@ -666,7 +666,9 @@ export default function HomeScreen() {
         visible={showDailyMissionsModal}
         missions={playerStore.dailyMissions}
         onClose={() => setShowDailyMissionsModal(false)}
-        onClaim={() => playSfx('chest')}
+        onClaim={() => {
+          if (canPlayUiSfx()) playSfx('chest');
+        }}
       />
 
       {/* Tutorial overlay */}

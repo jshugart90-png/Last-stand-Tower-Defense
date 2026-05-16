@@ -55,7 +55,7 @@ import {
   loadRewardedAd, showRewardedAd, isRewardedAdReady,
 } from '../src/services/adService';
 import { getDailyChallenge } from '../src/constants/challenges';
-import { playSfx, stopAllSounds, setGameplaySfxArmed } from '../src/services/audioService';
+import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx } from '../src/services/audioService';
 import { getArenaMap, CLASSIC_MAP_ID, isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
@@ -1985,7 +1985,7 @@ export default function GameScreen() {
         setGameplaySfxArmed(true);
       }
       return () => {
-        void stopAllSounds();
+        void cleanupGameplayAudioAfterSession();
       };
     }, [])
   );
@@ -2120,7 +2120,7 @@ export default function GameScreen() {
       waveElapsedMsRef.current = 0;
       spawningCompleteRef.current = false;
       frameAccumRef.current = 0;
-      void stopAllSounds();
+      void cleanupGameplayAudioAfterSession();
     };
   }, [playerStore, startGame, registerRunStarted]);
 
@@ -2570,7 +2570,7 @@ export default function GameScreen() {
     const settleRunLocally = () => {
       playerStore.addXp(totalXpReward);
       const comboResult = playerStore.recordDailyChallengeRun();
-      if (comboResult.bonusGems > 0) {
+      if (comboResult.bonusGems > 0 && canPlayUiSfx()) {
         playSfx('combo');
       }
       if (totalGemReward > 0) {
@@ -2621,7 +2621,7 @@ export default function GameScreen() {
         playerStore.setGems(response.data.new_gem_balance);
       }
       comboResult = playerStore.recordDailyChallengeRun();
-      if (comboResult.bonusGems > 0) {
+      if (comboResult.bonusGems > 0 && canPlayUiSfx()) {
         playSfx('combo');
       }
       if (challengeGemReward > 0) {
@@ -2653,7 +2653,7 @@ export default function GameScreen() {
   useEffect(() => {
     const completed = dailyMissions.filter((m) => m.completed).length;
     if (completed > lastMissionCompletedCountRef.current) {
-      if (isPlaying && !isGameOver) {
+      if (isPlaying && !isGameOver && canPlayUiSfx()) {
         playSfx('mission');
       }
     }

@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { usePlayerStore } from '../src/stores/playerStore';
 import { TOWERS, TOWER_UNLOCK_PRICES, TowerType } from '../src/constants/game';
-import { playSfx } from '../src/services/audioService';
+import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { TacticalTheme } from '../src/theme/colors';
 
 const toNum = (v: string | string[] | undefined, fallback = 0): number => {
@@ -31,6 +31,7 @@ export default function RunResultsScreen() {
   const oneMoreRun = String(Array.isArray(params.oneMoreRun) ? params.oneMoreRun[0] : params.oneMoreRun || '0') === '1';
   const challenge = String(Array.isArray(params.challenge) ? params.challenge[0] : params.challenge || 'Daily Challenge');
   React.useEffect(() => {
+    if (!canPlayUiSfx()) return;
     if (bestDelta > 0) {
       playSfx('record');
     } else if (comboBonus > 0) {
