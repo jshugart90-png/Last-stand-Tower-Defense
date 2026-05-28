@@ -1,0 +1,29 @@
+name: Backend Tests
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    env:
+      EXPO_PUBLIC_BACKEND_URL: ${{ secrets.EXPO_PUBLIC_BACKEND_URL }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependency
+        run: pip install aiohttp
+
+      - name: Run backend test suite
+        run: |
+          python backend_test.py
+          python gem_economy_test.py
+          python balance_test.py

@@ -18,6 +18,9 @@ node_modules/
 
 # Testing
 /coverage
+backend_test_results.json
+gem_economy_test_results.json
+test_reports/
 
 # Next.js
 /.next/

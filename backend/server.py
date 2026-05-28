@@ -13,6 +13,11 @@ import uuid
 from datetime import datetime
 from bson import ObjectId
 import hashlib
+import asyncio
+import json
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -58,6 +63,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+INVALID_PURCHASE_RECEIPT_ERROR = "Invalid or missing purchase receipt."
+APPLE_VERIFY_RECEIPT_URL = "https://buy.itunes.apple.com/verifyReceipt"
+APPLE_SANDBOX_VERIFY_RECEIPT_URL = "https://sandbox.itunes.apple.com/verifyReceipt"
 
 # Helper to convert ObjectId to string
 def serialize_doc(doc):
@@ -214,6 +223,7 @@ class PlayerUpdate(BaseModel):
     equipped_skins: Optional[Dict[str, str]] = None
     premium: Optional[bool] = None
     arena_expansions: Optional[int] = None
+    reward_cooldowns: Optional[Dict[str, str]] = None
 
 class Player(BaseModel):
     id: str = Field(alias="_id")
@@ -231,6 +241,7 @@ class Player(BaseModel):
     equipped_skins: Dict[str, str] = {}
     premium: bool = False
     arena_expanded: bool = False
+    reward_cooldowns: Dict[str, str] = {}
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -259,6 +270,7 @@ class GameResult(BaseModel):
     enemies_killed: int
     towers_placed: int
     duration_seconds: int
+    coins_earned: int
     run_bonus_gems: int = 0  # daily challenge gem bonus from client (capped server-side)
 
 class RewardClaim(BaseModel):
@@ -271,6 +283,9 @@ class PurchaseRequest(BaseModel):
     item_type: str  # "premium", "arena_expansion", "skin", "gems"
     item_id: Optional[str] = None
     gems_amount: Optional[int] = None  # for gem pack purchases
+    platform: str  # "ios" or "android"
+    receipt_data: Optional[str] = None
+    purchase_token: Optional[str] = None
 
 class AnalyticsEvent(BaseModel):
     player_id: str
@@ -289,6 +304,83 @@ def calculate_gem_reward(wave_reached: int, enemies_killed: int) -> dict:
         "raw_performance": raw,
         "total_gems": total,
     }
+
+
+def _http_post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+    request_headers = {"Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    req = urllib_request.Request(
+        url=url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=request_headers,
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except (urllib_error.URLError, urllib_error.HTTPError, json.JSONDecodeError) as exc:
+        logger.warning("POST %s failed during receipt verification: %s", url, exc)
+        return None
+
+
+def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+    req = urllib_request.Request(url=url, headers=headers or {}, method="GET")
+    try:
+        with urllib_request.urlopen(req, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except (urllib_error.URLError, urllib_error.HTTPError, json.JSONDecodeError) as exc:
+        logger.warning("GET %s failed during receipt verification: %s", url, exc)
+        return None
+
+
+async def _validate_apple_receipt(receipt_data: str) -> bool:
+    payload: Dict[str, Any] = {"receipt-data": receipt_data}
+    apple_shared_secret = os.environ.get("APPLE_SHARED_SECRET", "").strip()
+    if apple_shared_secret:
+        payload["password"] = apple_shared_secret
+
+    production_result = await asyncio.to_thread(_http_post_json, APPLE_VERIFY_RECEIPT_URL, payload)
+    if not production_result:
+        return False
+    if int(production_result.get("status", -1)) == 0:
+        return True
+
+    # 21007 = sandbox receipt sent to production endpoint.
+    if int(production_result.get("status", -1)) == 21007:
+        sandbox_result = await asyncio.to_thread(_http_post_json, APPLE_SANDBOX_VERIFY_RECEIPT_URL, payload)
+        return bool(sandbox_result) and int(sandbox_result.get("status", -1)) == 0
+
+    return False
+
+
+async def _validate_google_purchase(product_id: str, purchase_token: str) -> bool:
+    package_name = os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+    access_token = os.environ.get("GOOGLE_PLAY_ACCESS_TOKEN", "").strip()
+    if not package_name or not access_token:
+        logger.warning("Google receipt verification skipped: GOOGLE_PLAY_PACKAGE_NAME or GOOGLE_PLAY_ACCESS_TOKEN missing")
+        return False
+
+    encoded_package_name = urllib_parse.quote(package_name, safe="")
+    encoded_product_id = urllib_parse.quote(product_id, safe="")
+    encoded_token = urllib_parse.quote(purchase_token, safe="")
+
+    url = (
+        "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/"
+        f"{encoded_package_name}/purchases/products/{encoded_product_id}/tokens/{encoded_token}"
+    )
+    response = await asyncio.to_thread(
+        _http_get_json,
+        url,
+        {"Authorization": f"Bearer {access_token}"},
+    )
+    if not response:
+        return False
+
+    # For one-time products, purchaseState=0 means purchased.
+    return int(response.get("purchaseState", -1)) == 0
 
 # ==================== Player Routes ====================
 
@@ -314,6 +406,7 @@ async def create_player(player_data: PlayerCreate):
         "equipped_skins": {},
         "premium": False,
         "arena_expansions": 0,
+        "reward_cooldowns": {},
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
@@ -380,6 +473,27 @@ async def update_player(player_id: str, update_data: PlayerUpdate):
 async def end_game(game_result: GameResult):
     """Record game result and update player stats - awards gems based on performance"""
     try:
+        field_validations = [
+            ("wave_reached", game_result.wave_reached, 1, 500),
+            ("enemies_killed", game_result.enemies_killed, 0, 50000),
+            ("towers_placed", game_result.towers_placed, 0, 1000),
+            ("duration_seconds", game_result.duration_seconds, 1, 86400),
+            ("coins_earned", game_result.coins_earned, 0, 1000000),
+        ]
+        for field_name, value, min_value, max_value in field_validations:
+            if not isinstance(value, int):
+                raise HTTPException(status_code=400, detail=f"{field_name} must be an integer.")
+            if value < 0:
+                raise HTTPException(status_code=400, detail=f"{field_name} must be non-negative.")
+            if value < min_value or value > max_value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name} must be between {min_value} and {max_value}.",
+                )
+
+        if (game_result.enemies_killed / game_result.duration_seconds) > 100:
+            raise HTTPException(status_code=400, detail="Implausible game session data.")
+
         where = {"_id": ObjectId(game_result.player_id)} if DB_PROVIDER == "mongo" else {"_id": game_result.player_id}
         player = await repo_find_one("players", where)
         if not player:
@@ -400,18 +514,20 @@ async def end_game(game_result: GameResult):
         lb_score = new_lifetime_kills + last_run_gems
         new_gems = player.get("gems", 0) + gem_reward["total_gems"]
         
-        # Check for new tower unlocks based on level
+        # Check for newly unlocked towers for levels crossed this run.
         tower_unlocks = {
-            3: "sniper",
-            5: "splash",
-            8: "freeze",
-            12: "missile"
+            2: "sniper",
+            3: "splash",
+            5: "freeze",
+            7: "missile",
         }
-        
-        current_towers = player.get("unlocked_towers", ["machine_gun"])
-        for level, tower in tower_unlocks.items():
-            if new_level >= level and tower not in current_towers:
+        old_level = int(player.get("level", 1) or 1)
+        current_towers = list(player.get("unlocked_towers", ["machine_gun"]) or ["machine_gun"])
+        newly_unlocked = []
+        for level_threshold, tower in sorted(tower_unlocks.items()):
+            if (old_level + 1) <= level_threshold <= new_level and tower not in current_towers:
                 current_towers.append(tower)
+                newly_unlocked.append(tower)
         
         best_wave = max(player.get("best_wave", 0), game_result.wave_reached)
         
@@ -454,9 +570,7 @@ async def end_game(game_result: GameResult):
             game_result.wave_reached,
             game_result.enemies_killed,
         )
-        
-        newly_unlocked = [t for t in current_towers if t not in player.get("unlocked_towers", [])]
-        
+
         return {
             "xp_earned": xp_earned,
             "new_xp": new_xp,
@@ -467,6 +581,8 @@ async def end_game(game_result: GameResult):
             "new_best_wave": best_wave > player.get("best_wave", 0),
             "newly_unlocked_towers": newly_unlocked
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error ending game: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -518,19 +634,69 @@ async def claim_reward(reward: RewardClaim):
         player = await repo_find_one("players", where)
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
+
+        cooldown_seconds_by_reward = {
+            "coins": 30,
+            "revive": 60,
+            "gems": 30,
+            "double_damage": 60,
+        }
+
+        if reward.reward_type not in cooldown_seconds_by_reward:
+            raise HTTPException(status_code=400, detail="Invalid reward type")
+
+        reward_cooldowns = player.get("reward_cooldowns", {}) or {}
+        now = datetime.utcnow()
+        last_claimed_raw = reward_cooldowns.get(reward.reward_type)
+        if isinstance(last_claimed_raw, str):
+            try:
+                last_claimed = datetime.fromisoformat(last_claimed_raw.replace("Z", "+00:00"))
+                if last_claimed.tzinfo is not None:
+                    last_claimed = last_claimed.replace(tzinfo=None)
+                elapsed_seconds = (now - last_claimed).total_seconds()
+                cooldown_seconds = cooldown_seconds_by_reward[reward.reward_type]
+                if elapsed_seconds < cooldown_seconds:
+                    remaining_seconds = max(1, int(cooldown_seconds - elapsed_seconds + 0.999))
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Reward cooldown active. Try again in {remaining_seconds} seconds.",
+                    )
+            except ValueError:
+                logger.warning("Invalid cooldown timestamp for player=%s reward=%s", reward.player_id, reward.reward_type)
         
         response = {"success": True, "reward_type": reward.reward_type}
         
         if reward.reward_type == "gems":
             gems_granted = 10  # 10 gems per ad watch
             new_gems = player.get("gems", 0) + gems_granted
-            await repo_update_one("players", where, {"gems": new_gems, "updated_at": datetime.utcnow()})
+            reward_cooldowns[reward.reward_type] = now.isoformat()
+            await repo_update_one("players", where, {
+                "gems": new_gems,
+                "reward_cooldowns": reward_cooldowns,
+                "updated_at": datetime.utcnow()
+            })
             response["gems_granted"] = gems_granted
             response["new_gem_balance"] = new_gems
         elif reward.reward_type == "revive":
+            reward_cooldowns[reward.reward_type] = now.isoformat()
+            await repo_update_one("players", where, {
+                "reward_cooldowns": reward_cooldowns,
+                "updated_at": datetime.utcnow()
+            })
             response["revive_granted"] = True
         elif reward.reward_type == "double_damage":
+            reward_cooldowns[reward.reward_type] = now.isoformat()
+            await repo_update_one("players", where, {
+                "reward_cooldowns": reward_cooldowns,
+                "updated_at": datetime.utcnow()
+            })
             response["duration_seconds"] = 30
+        elif reward.reward_type == "coins":
+            reward_cooldowns[reward.reward_type] = now.isoformat()
+            await repo_update_one("players", where, {
+                "reward_cooldowns": reward_cooldowns,
+                "updated_at": datetime.utcnow()
+            })
         
         await repo_insert_one("analytics", {
             "player_id": reward.player_id,
@@ -543,6 +709,8 @@ async def claim_reward(reward: RewardClaim):
         })
         
         return response
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error claiming reward: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -553,6 +721,23 @@ async def claim_reward(reward: RewardClaim):
 async def process_purchase(purchase: PurchaseRequest):
     """Process an in-app purchase"""
     try:
+        platform = (purchase.platform or "").strip().lower()
+        receipt_valid = False
+
+        if platform == "ios":
+            if not purchase.receipt_data:
+                raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
+            receipt_valid = await _validate_apple_receipt(purchase.receipt_data)
+        elif platform == "android":
+            if not purchase.purchase_token or not purchase.item_id:
+                raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
+            receipt_valid = await _validate_google_purchase(purchase.item_id, purchase.purchase_token)
+        else:
+            raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
+
+        if not receipt_valid:
+            raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
+
         where = {"_id": ObjectId(purchase.player_id)} if DB_PROVIDER == "mongo" else {"_id": purchase.player_id}
         player = await repo_find_one("players", where)
         if not player:
@@ -593,6 +778,8 @@ async def process_purchase(purchase: PurchaseRequest):
         if "gems" in update_data:
             result["new_gem_balance"] = update_data["gems"]
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing purchase: {e}")
         raise HTTPException(status_code=400, detail=str(e))

@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 import json
 import logging
+import os
 from datetime import datetime
 
 # Configure logging
@@ -15,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Backend URL from environment
-BACKEND_URL = "https://wave-survival-game-2.preview.emergentagent.com"
+BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', 'https://wave-survival-game-2.preview.emergentagent.com')
 API_BASE = f"{BACKEND_URL}/api"
 
 logger.info(f"Testing gem economy at: {API_BASE}")
