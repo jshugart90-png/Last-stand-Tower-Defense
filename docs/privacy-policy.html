@@ -1,45 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Last Stand Tower Defense — Privacy Policy</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #1a1a1a; }
-    h1 { font-size: 1.75rem; }
-    h2 { font-size: 1.15rem; margin-top: 1.5rem; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — Last Stand Tower Defense</title>
+<style>
+  :root {
+    --wall: #1f2733;
+    --wall-deep: #161c25;
+    --signal: #f4811f;
+    --paper: #f7f5f1;
+    --ink: #232a33;
+    --ink-soft: rgba(77, 88, 102, 0.08);
+    --muted: #5b6675;
+    --line: #e3ded5;
+    --maxw: 720px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Charter", "Iowan Old Style", "Georgia", serif;
+    font-size: 18px;
+    line-height: 1.65;
+  }
+  header {
+    background: linear-gradient(160deg, var(--wall) 0%, var(--wall-deep) 100%);
+    color: #fff;
+    padding: 56px 24px 48px;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 14px;
+    background:
+      repeating-linear-gradient(90deg,
+        var(--wall-deep) 0, var(--wall-deep) 22px,
+        transparent 22px, transparent 44px);
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .shield {
+    flex: 0 0 auto;
+    width: 44px; height: 44px;
+    color: var(--signal);
+  }
+  .titles h1 {
+    font-family: "Futura", "Avenir Next", "Helvetica Neue", sans-serif;
+    font-size: clamp(22px, 5vw, 30px);
+    letter-spacing: 0.5px;
+    margin: 0;
+    line-height: 1.1;
+  }
+  .titles .eyebrow {
+    font-family: "Futura", "Avenir Next", "Helvetica Neue", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    font-size: 12px;
+    color: var(--signal);
+    margin: 0 0 6px;
+    font-weight: 700;
+  }
+  main {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+  .updated {
+    font-family: "Futura", "Avenir Next", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin: 0 0 32px;
+  }
+  h2 {
+    font-family: "Futura", "Avenir Next", "Helvetica Neue", sans-serif;
+    font-size: 19px;
+    letter-spacing: 0.3px;
+    margin: 38px 0 10px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h2 .n {
+    color: var(--signal);
+    font-size: 14px;
+    font-weight: 700;
+    flex: 0 0 auto;
+  }
+  p { margin: 0 0 16px; }
+  a { color: #b35a0d; text-underline-offset: 2px; }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin: 0 0 8px; }
+  strong { font-weight: 700; }
+  .note {
+    background: var(--ink-soft);
+    border-left: 3px solid var(--signal);
+    padding: 14px 18px;
+    margin: 0 0 16px;
+    font-size: 16px;
+  }
+  footer {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 24px 60px;
+    color: var(--muted);
+    font-size: 14px;
+    font-family: "Futura", "Avenir Next", "Helvetica Neue", sans-serif;
+  }
+  footer a { color: var(--muted); }
+  a:focus-visible, :focus-visible {
+    outline: 3px solid var(--signal);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  @media (max-width: 480px) {
+    body { font-size: 17px; }
+    header { padding: 40px 20px 36px; }
+    main { padding: 32px 20px 64px; }
+  }
+</style>
 </head>
 <body>
-  <h1>Privacy Policy</h1>
-  <p><strong>Last Stand Tower Defense</strong> (the “App”) is operated by John Shugart. This policy explains what information we collect and how we use it.</p>
+  <header>
+    <div class="header-inner">
+      <svg class="shield" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 1.5 3.5 5v6.2c0 5.2 3.6 9.4 8.5 11.3 4.9-1.9 8.5-6.1 8.5-11.3V5L12 1.5Zm0 2.2 6.5 2.7v4.8c0 4-2.6 7.4-6.5 9.1-3.9-1.7-6.5-5.1-6.5-9.1V6.4L12 3.7Z"/>
+      </svg>
+      <div class="titles">
+        <p class="eyebrow">Last Stand Tower Defense</p>
+        <h1>Privacy Policy</h1>
+      </div>
+    </div>
+  </header>
 
-  <h2>Information we collect</h2>
-  <ul>
-    <li><strong>Gameplay data:</strong> nickname, progress, scores, waves survived, gems, unlocks, and in-app purchase records needed to run the game.</li>
-    <li><strong>Device identifier:</strong> a random device ID used to restore your profile on the same device.</li>
-    <li><strong>Analytics events:</strong> basic gameplay events (for example purchases and ad reward claims) to improve the game.</li>
-    <li><strong>Purchase receipts:</strong> when you buy in-app products, receipt data is sent to Apple or Google for validation. We do not store full payment card details.</li>
-  </ul>
+  <main>
+    <p class="updated">Last updated: June 16, 2026</p>
 
-  <h2>How we use information</h2>
-  <p>We use collected data to operate game features, sync progress, validate purchases, prevent fraud, and improve stability.</p>
+    <p>This Privacy Policy explains how <strong>Horseshoe Round Me Gaming</strong> ("we," "us," or "our") handles information in connection with the mobile game <strong>Last Stand Tower Defense</strong> (the "Game"). By downloading or playing the Game, you agree to the practices described below.</p>
 
-  <h2>Third-party services</h2>
-  <ul>
-    <li><strong>Apple App Store / Google Play:</strong> in-app purchase processing and receipt validation.</li>
-    <li><strong>Hosting &amp; database providers:</strong> secure storage of gameplay profiles.</li>
-  </ul>
+    <h2><span class="n">01</span> Information We Collect</h2>
+    <p>The Game does not require a traditional account with an email address or password. Depending on how you play, we may collect or process the following:</p>
+    <ul>
+      <li><strong>Gameplay profile data:</strong> a display nickname, progress, scores, waves survived, gems, unlocks, missions, and related game statistics.</li>
+      <li><strong>Device identifier:</strong> a random device ID used to restore your profile on the same device.</li>
+      <li><strong>Purchase information:</strong> when you buy in-app products, purchase receipts or tokens are sent to Apple or Google for validation. We do not receive or store your full payment card details.</li>
+      <li><strong>Gameplay analytics:</strong> basic events such as purchases completed and gameplay milestones, used to improve stability and balance.</li>
+    </ul>
+    <div class="note">We do not collect your real name, postal address, or precise location. You choose your in-game nickname.</div>
 
-  <h2>Children</h2>
-  <p>The App is not directed at children under 13. We do not knowingly collect personal information from children under 13.</p>
+    <h2><span class="n">02</span> How We Use Information</h2>
+    <p>We use the information above to:</p>
+    <ul>
+      <li>Operate core game features and sync progress when online</li>
+      <li>Validate in-app purchases and prevent fraud</li>
+      <li>Maintain leaderboards and gameplay statistics where enabled</li>
+      <li>Improve performance, stability, and game balance</li>
+      <li>Respond to support requests</li>
+    </ul>
 
-  <h2>Data retention &amp; deletion</h2>
-  <p>Gameplay data is retained while your account is active. You may request deletion by contacting support.</p>
+    <h2><span class="n">03</span> Third-Party Services</h2>
+    <p>The Game uses the following third-party services:</p>
+    <ul>
+      <li><strong>Apple App Store / Google Play:</strong> in-app purchase processing and receipt validation.</li>
+      <li><strong>Cloud hosting and database providers:</strong> secure storage of gameplay profiles when you play online.</li>
+    </ul>
+    <p>These providers process data according to their own privacy policies. We share only what is necessary to operate the Game.</p>
+    <div class="note">The current version of Last Stand Tower Defense does <strong>not</strong> include third-party advertising SDKs (such as AdMob).</div>
 
-  <h2>Contact</h2>
-  <p>Questions about this policy: <a href="mailto:johntotheshugart@gmail.com">johntotheshugart@gmail.com</a></p>
+    <h2><span class="n">04</span> Children's Privacy</h2>
+    <p>The Game is intended for a general audience consistent with its age rating on the App Store. We do not knowingly collect personal information from children under 13. If you believe a child has provided personal information through the Game, please contact us and we will take appropriate steps.</p>
 
-  <p><em>Last updated: June 2026</em></p>
+    <h2><span class="n">05</span> Data Retention &amp; Deletion</h2>
+    <p>Gameplay data is retained while your profile remains active so we can provide game features. You may request deletion of your data by contacting us at the email below. Local-only progress stored only on your device can be reset from in-game settings.</p>
+
+    <h2><span class="n">06</span> Data Security</h2>
+    <p>We use reasonable technical and organizational measures to protect gameplay data stored on our servers. No method of transmission or storage is completely secure, but we work to safeguard information against unauthorized access.</p>
+
+    <h2><span class="n">07</span> Your Choices</h2>
+    <ul>
+      <li>You may play without providing an email address.</li>
+      <li>You may reset local progress from the in-game Settings screen.</li>
+      <li>You may contact us to request access to or deletion of server-stored gameplay data associated with your profile.</li>
+      <li>In-app purchases are optional and processed by Apple or Google under their respective terms.</li>
+    </ul>
+
+    <h2><span class="n">08</span> Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. When we do, we will revise the "Last updated" date at the top of this page. Continued use of the Game after changes take effect constitutes acceptance of the revised policy.</p>
+
+    <h2><span class="n">09</span> Contact Us</h2>
+    <p>If you have questions about this Privacy Policy or wish to request data deletion, contact:</p>
+    <p><strong>Horseshoe Round Me Gaming</strong><br />
+    <a href="mailto:horseshoeroundme@gmail.com">horseshoeroundme@gmail.com</a></p>
+    <p>Support page: <a href="support.html">Support</a></p>
+  </main>
+
+  <footer>
+    © 2026 Horseshoe Round Me Gaming. All rights reserved.
+  </footer>
 </body>
 </html>
