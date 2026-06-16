@@ -44,6 +44,7 @@ export const gameApi = {
     enemies_killed: number;
     towers_placed: number;
     duration_seconds: number;
+    coins_earned: number;
     /** Daily challenge gem bonus for this run (capped on server). */
     run_bonus_gems?: number;
   }) => api.post('/games/end', data),
@@ -56,6 +57,9 @@ export const purchaseApi = {
     item_type: string;
     item_id?: string;
     gems_amount?: number;
+    platform: string;
+    receipt_data?: string;
+    purchase_token?: string;
   }) => api.post('/purchases', data),
 };
 

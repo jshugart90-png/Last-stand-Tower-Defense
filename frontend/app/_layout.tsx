@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
 import { AppState, InteractionManager } from 'react-native';
-import { isBackendConfigured } from '../src/hooks/useApi';
 import { initializeAudio, refreshAudioModeOnForeground } from '../src/services/audioService';
 import { RootErrorBoundary } from './RootErrorBoundary';
 import { TacticalTheme } from '../src/theme/colors';
@@ -20,8 +19,6 @@ const queryClient = new QueryClient();
 
 export default function RootLayout() {
   useEffect(() => {
-    void SplashScreen.hideAsync().catch(() => {});
-
     const task = InteractionManager.runAfterInteractions(() => {
       void (async () => {
         try {
@@ -29,7 +26,6 @@ export default function RootLayout() {
         } catch {
           // audio is optional; never crash launch
         }
-        if (!isBackendConfigured()) return;
         try {
           const { initializeIAP } = await import('../src/services/iapService');
           await initializeIAP();

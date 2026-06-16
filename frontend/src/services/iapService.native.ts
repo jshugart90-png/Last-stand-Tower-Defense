@@ -53,7 +53,9 @@ export const getProducts = async (): Promise<any[]> => {
   }
 };
 
-export const requestPurchase = async (productId: string): Promise<{ success: boolean; receipt?: string; error?: string }> => {
+export const requestPurchase = async (
+  productId: string,
+): Promise<{ success: boolean; receipt?: string; purchaseToken?: string; error?: string }> => {
   if (!iapInitialized) {
     return { success: false, error: 'IAP not initialized' };
   }
@@ -64,7 +66,11 @@ export const requestPurchase = async (productId: string): Promise<{ success: boo
       const isGemPack = Object.prototype.hasOwnProperty.call(GEM_PACK_AMOUNTS, productId);
       const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || isGemPack;
       await ExpoIAP.finishTransaction({ purchase, isConsumable });
-      return { success: true, receipt: purchase.transactionReceipt };
+      return {
+        success: true,
+        receipt: purchase.transactionReceipt,
+        purchaseToken: purchase.purchaseToken,
+      };
     }
     return { success: false, error: 'Purchase cancelled' };
   } catch (error: any) {

@@ -748,7 +748,7 @@ async def process_purchase(purchase: PurchaseRequest):
         if purchase.item_type == "premium":
             update_data["premium"] = True
         elif purchase.item_type == "arena_expansion":
-            update_data["arena_expanded"] = True
+            update_data["arena_expansions"] = int(player.get("arena_expansions", 0) or 0) + 1
         elif purchase.item_type == "gems" and purchase.gems_amount:
             # IAP gem pack purchase - add gems to balance
             new_gems = player.get("gems", 0) + purchase.gems_amount

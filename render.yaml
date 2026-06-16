@@ -19,3 +19,9 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: APPLE_SHARED_SECRET
+        sync: false
+      - key: GOOGLE_PLAY_PACKAGE_NAME
+        value: com.horseshoeroundme.laststandtowerdefense
+      - key: GOOGLE_PLAY_ACCESS_TOKEN
+        sync: false

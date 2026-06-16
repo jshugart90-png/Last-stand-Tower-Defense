@@ -4,16 +4,22 @@ Focused test for game end endpoint new_balance field verification
 Tests the specific scenario requested in the review.
 """
 
-import requests
 import json
+import os
 import sys
 
-# Backend URL from frontend/.env
-BACKEND_URL = "https://wave-survival-game-2.preview.emergentagent.com/api"
+import requests
+
+# Backend URL from environment
+BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
+if not BACKEND_URL:
+    print("EXPO_PUBLIC_BACKEND_URL is required to run balance_test.py")
+    sys.exit(1)
+API_BASE = f"{BACKEND_URL}/api"
 
 def test_game_end_new_balance():
-    """Test that game end endpoint returns correct new_balance field"""
-    print("🎯 Testing Game End new_balance Field")
+    """Test that game end endpoint returns correct gem balance fields."""
+    print("Testing Game End gem balance fields")
     print("=" * 50)
     
     try:
@@ -24,7 +30,7 @@ def test_game_end_new_balance():
             "device_id": "balance-test-123"
         }
         
-        response = requests.post(f"{BACKEND_URL}/players", json=player_data)
+        response = requests.post(f"{API_BASE}/players", json=player_data)
         print(f"POST /api/players - Status: {response.status_code}")
         
         if response.status_code != 200:
@@ -56,7 +62,7 @@ def test_game_end_new_balance():
             "duration_seconds": 60
         }
         
-        response = requests.post(f"{BACKEND_URL}/games/end", json=game_data)
+        response = requests.post(f"{API_BASE}/games/end", json=game_data)
         print(f"POST /api/games/end - Status: {response.status_code}")
         
         if response.status_code != 200:
@@ -66,28 +72,29 @@ def test_game_end_new_balance():
         game_result = response.json()
         print(f"✅ Game end response: {json.dumps(game_result, indent=2)}")
         
-        # Step 3: CRITICAL CHECK - Verify new_balance field
-        print("\nStep 3: CRITICAL CHECK - Verifying new_balance field...")
-        
-        if "new_balance" not in game_result:
-            print("❌ CRITICAL FAILURE: new_balance field is missing from response!")
+        # Step 3: Verify gem balance fields
+        print("\nStep 3: Verifying gem balance fields...")
+
+        if "new_gem_balance" not in game_result:
+            print("CRITICAL FAILURE: new_gem_balance field is missing from response!")
             return False
-            
-        new_balance = game_result["new_balance"]
-        expected_balance = 100 + 150  # starting_coins(100) + coins_earned(150) = 250
-        
-        print(f"Expected new_balance: {expected_balance}")
-        print(f"Actual new_balance: {new_balance}")
-        
-        if new_balance != expected_balance:
-            print(f"❌ CRITICAL FAILURE: new_balance mismatch! Expected {expected_balance}, got {new_balance}")
+
+        new_gem_balance = game_result["new_gem_balance"]
+        gems_earned = game_result.get("gems_earned", 0)
+        expected_balance = gems_earned
+
+        print(f"Expected new_gem_balance: {expected_balance}")
+        print(f"Actual new_gem_balance: {new_gem_balance}")
+
+        if new_gem_balance != expected_balance:
+            print(f"CRITICAL FAILURE: new_gem_balance mismatch! Expected {expected_balance}, got {new_gem_balance}")
             return False
-            
-        print(f"✅ CRITICAL CHECK PASSED: new_balance = {new_balance} (correct!)")
-        
-        # Step 4: Verify player's coins balance is updated correctly
-        print("\nStep 4: Verifying player balance...")
-        response = requests.get(f"{BACKEND_URL}/players/{player_id}")
+
+        print(f"CRITICAL CHECK PASSED: new_gem_balance = {new_gem_balance}")
+
+        # Step 4: Verify player's gem balance is updated correctly
+        print("\nStep 4: Verifying player gem balance...")
+        response = requests.get(f"{API_BASE}/players/{player_id}")
         print(f"GET /api/players/{player_id} - Status: {response.status_code}")
         
         if response.status_code != 200:
@@ -95,19 +102,19 @@ def test_game_end_new_balance():
             return False
             
         player_data = response.json()
-        player_coins = player_data["coins"]
-        
-        print(f"Player coins balance: {player_coins}")
-        
-        if player_coins != expected_balance:
-            print(f"❌ Player balance mismatch! Expected {expected_balance}, got {player_coins}")
+        player_gems = player_data["gems"]
+
+        print(f"Player gem balance: {player_gems}")
+
+        if player_gems != expected_balance:
+            print(f"Player gem balance mismatch! Expected {expected_balance}, got {player_gems}")
             return False
-            
-        print(f"✅ Player balance verified: {player_coins} coins")
-        
-        print("\n🎉 ALL TESTS PASSED!")
-        print("✅ new_balance field is present and correct")
-        print("✅ Player balance is updated correctly")
+
+        print(f"Player gem balance verified: {player_gems} gems")
+
+        print("\nALL TESTS PASSED!")
+        print("new_gem_balance field is present and correct")
+        print("Player gem balance is updated correctly")
         return True
         
     except requests.exceptions.RequestException as e:

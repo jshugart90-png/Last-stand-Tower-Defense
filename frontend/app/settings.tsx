@@ -14,8 +14,10 @@ import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
+import { PRIVACY_POLICY_URL, SUPPORT_URL } from '../src/constants/legal';
 import { TOWERS } from '../src/constants/game';
 import {
   isBackendConfigured,
@@ -27,8 +29,8 @@ import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 
 const appVersionLabel =
   Constants.expoConfig?.version != null && String(Constants.expoConfig.version).length > 0
-    ? `Last Stand Defense v${Constants.expoConfig.version}`
-    : 'Last Stand Defense';
+    ? `Last Stand Tower Defense v${Constants.expoConfig.version}`
+    : 'Last Stand Tower Defense';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -67,38 +69,15 @@ export default function SettingsScreen() {
   };
 
   const handleRestorePurchases = () => {
-    Alert.alert(
-      'Restore Purchases',
-      'This will restore any previous purchases made with your account.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Restore',
-          onPress: () => {
-            Alert.alert(
-              'Restore purchases',
-              'Use the Shop screen while signed in to your account to restore in-app purchases through the App Store.'
-            );
-          },
-        },
-      ]
-    );
+    router.push('/shop');
   };
 
   const handlePrivacyPolicy = () => {
-    Alert.alert(
-      'Privacy Policy',
-      'Last Stand Defense collects only the data needed for gameplay and accounts. For the full policy, visit our website from a browser.',
-      [{ text: 'OK' }]
-    );
+    void WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL);
   };
 
-  const handleTermsOfService = () => {
-    Alert.alert(
-      'Terms of Service',
-      'By playing Last Stand Defense, you agree to our terms of service. Play responsibly and have fun!',
-      [{ text: 'OK' }]
-    );
+  const handleSupport = () => {
+    void WebBrowser.openBrowserAsync(SUPPORT_URL);
   };
 
   const handleResetProgress = () => {
@@ -397,9 +376,9 @@ export default function SettingsScreen() {
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={handleTermsOfService}>
-            <Ionicons name="document-text" size={24} color="#F39C12" />
-            <Text style={styles.actionButtonText}>Terms of Service</Text>
+          <TouchableOpacity style={styles.actionButton} onPress={handleSupport}>
+            <Ionicons name="help-circle" size={24} color="#F39C12" />
+            <Text style={styles.actionButtonText}>Support</Text>
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
         </View>
@@ -421,7 +400,7 @@ export default function SettingsScreen() {
         {/* Version */}
         <View style={styles.versionContainer}>
           <Text style={styles.versionText}>{appVersionLabel}</Text>
-          <Text style={styles.copyrightText}>Last Stand Defense</Text>
+          <Text style={styles.copyrightText}>Last Stand Tower Defense</Text>
         </View>
       </ScrollView>
     </SafeAreaView>

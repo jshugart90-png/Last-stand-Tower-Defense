@@ -10,14 +10,18 @@ import json
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Backend URL from environment
-BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', 'https://wave-survival-game-2.preview.emergentagent.com')
+BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
+if not BACKEND_URL:
+    raise SystemExit('EXPO_PUBLIC_BACKEND_URL is required to run gem_economy_test.py')
 API_BASE = f"{BACKEND_URL}/api"
+RESULTS_PATH = Path(__file__).resolve().parent / 'gem_economy_test_results.json'
 
 logger.info(f"Testing gem economy at: {API_BASE}")
 
@@ -108,7 +112,8 @@ class GemEconomyTester:
             "wave_reached": 15,
             "enemies_killed": 80,
             "towers_placed": 5,
-            "duration_seconds": 120
+            "duration_seconds": 120,
+            "coins_earned": 0,
         }
         
         status, response = await self.make_request("POST", "/games/end", data)
@@ -128,49 +133,26 @@ class GemEconomyTester:
                 )
                 return False
             
-            # Verify gem breakdown calculation
+            # Verify gem breakdown calculation (scaled formula in backend/server.py)
             gem_breakdown = response["gem_breakdown"]
-            expected_wave_gems = 15  # 1 gem per wave
-            expected_kill_gems = 8   # 80 enemies / 10 = 8 gems
-            expected_milestone_gems = 3  # wave 15 / 10 = 1 milestone * 3 = 3 gems
-            expected_total = 26
-            
-            actual_wave_gems = gem_breakdown.get("wave_gems", 0)
-            actual_kill_gems = gem_breakdown.get("kill_gems", 0)
-            actual_milestone_gems = gem_breakdown.get("milestone_gems", 0)
-            actual_total = gem_breakdown.get("total_gems", 0)
-            
-            # Check each component
-            wave_correct = actual_wave_gems == expected_wave_gems
-            kill_correct = actual_kill_gems == expected_kill_gems
-            milestone_correct = actual_milestone_gems == expected_milestone_gems
+            raw_performance = int(15 * 0.75) + (80 // 20)  # 11 + 4 = 15
+            expected_total = int(0.35 * raw_performance)  # 5
+            actual_total = int(gem_breakdown.get("total_gems", 0))
+            balance_correct = int(response["new_gem_balance"]) == expected_total
             total_correct = actual_total == expected_total
-            balance_correct = response["new_gem_balance"] == expected_total
-            
-            if all([wave_correct, kill_correct, milestone_correct, total_correct, balance_correct]):
+
+            if total_correct and balance_correct:
                 self.log_result(
                     "Step 2: End Game", 
                     True, 
-                    f"Gem rewards calculated correctly: wave_gems={actual_wave_gems}, kill_gems={actual_kill_gems}, milestone_gems={actual_milestone_gems}, total={actual_total}, new_balance={response['new_gem_balance']}"
+                    f"Gem rewards calculated correctly: raw={raw_performance}, total={actual_total}, new_balance={response['new_gem_balance']}"
                 )
                 return True
             else:
-                error_details = []
-                if not wave_correct:
-                    error_details.append(f"wave_gems: expected {expected_wave_gems}, got {actual_wave_gems}")
-                if not kill_correct:
-                    error_details.append(f"kill_gems: expected {expected_kill_gems}, got {actual_kill_gems}")
-                if not milestone_correct:
-                    error_details.append(f"milestone_gems: expected {expected_milestone_gems}, got {actual_milestone_gems}")
-                if not total_correct:
-                    error_details.append(f"total_gems: expected {expected_total}, got {actual_total}")
-                if not balance_correct:
-                    error_details.append(f"new_gem_balance: expected {expected_total}, got {response['new_gem_balance']}")
-                
                 self.log_result(
                     "Step 2: End Game", 
                     False, 
-                    f"Gem calculation errors: {'; '.join(error_details)}"
+                    f"Gem calculation errors: expected total {expected_total}, got total {actual_total}, balance {response.get('new_gem_balance')}"
                 )
                 return False
         else:
@@ -182,7 +164,7 @@ class GemEconomyTester:
             return False
     
     async def test_step_3_verify_player_gems(self):
-        """Step 3: GET /api/players/{player_id} - Verify player.gems equals 26"""
+        """Step 3: GET /api/players/{player_id} - Verify player.gems equals run total"""
         logger.info("\n=== STEP 3: Verify Player Gem Balance ===")
         
         if not self.player_id:
@@ -193,7 +175,7 @@ class GemEconomyTester:
         
         if status == 200:
             actual_gems = response.get("gems", 0)
-            expected_gems = 26
+            expected_gems = 5
             
             if actual_gems == expected_gems:
                 self.log_result(
@@ -243,7 +225,7 @@ class GemEconomyTester:
             gems_granted = response.get("gems_granted", 0)
             new_gem_balance = response.get("new_gem_balance", 0)
             expected_gems_granted = 10
-            expected_new_balance = 36  # 26 + 10
+            expected_new_balance = 15  # 5 + 10
             
             if gems_granted == expected_gems_granted and new_gem_balance == expected_new_balance:
                 self.log_result(
@@ -273,12 +255,12 @@ class GemEconomyTester:
             )
             return False
     
-    async def test_step_5_gem_iap_purchase(self):
-        """Step 5: POST /api/purchases - Process gem IAP purchase"""
-        logger.info("\n=== STEP 5: Gem IAP Purchase ===")
+    async def test_step_5_purchase_receipt_validation(self):
+        """Step 5: POST /api/purchases rejects missing receipt data."""
+        logger.info("\n=== STEP 5: Purchase Receipt Validation ===")
         
         if not self.player_id:
-            self.log_result("Step 5: Gem IAP Purchase", False, "No player ID available")
+            self.log_result("Step 5: Purchase Receipt Validation", False, "No player ID available")
             return False
         
         data = {
@@ -289,34 +271,22 @@ class GemEconomyTester:
         }
         
         status, response = await self.make_request("POST", "/purchases", data)
+        detail = response.get("detail", "")
         
-        if status == 200:
-            new_gem_balance = response.get("new_gem_balance", 0)
-            expected_balance = 536  # 36 + 500
-            
-            if new_gem_balance == expected_balance:
-                self.log_result(
-                    "Step 5: Gem IAP Purchase", 
-                    True, 
-                    f"Gem IAP purchase successful: new balance {new_gem_balance} gems"
-                )
-                return True
-            else:
-                self.log_result(
-                    "Step 5: Gem IAP Purchase", 
-                    False, 
-                    f"Gem balance after IAP incorrect",
-                    f"{expected_balance} gems",
-                    f"{new_gem_balance} gems"
-                )
-                return False
-        else:
+        if status == 400 and "Invalid or missing purchase receipt" in str(detail):
             self.log_result(
-                "Step 5: Gem IAP Purchase", 
-                False, 
-                f"Gem IAP purchase failed. Status: {status}, Response: {response}"
+                "Step 5: Purchase Receipt Validation",
+                True,
+                "Missing receipt correctly rejected with HTTP 400",
             )
-            return False
+            return True
+
+        self.log_result(
+            "Step 5: Purchase Receipt Validation",
+            False,
+            f"Purchase validation failed. Status: {status}, Response: {response}"
+        )
+        return False
     
     async def run_gem_economy_test(self):
         """Run the complete gem economy flow test"""
@@ -328,7 +298,7 @@ class GemEconomyTester:
             self.test_step_2_end_game,
             self.test_step_3_verify_player_gems,
             self.test_step_4_claim_ad_reward,
-            self.test_step_5_gem_iap_purchase
+            self.test_step_5_purchase_receipt_validation
         ]
         
         passed = 0
@@ -368,7 +338,7 @@ async def main():
         passed, total, results = await tester.run_gem_economy_test()
         
         # Save detailed results
-        with open('/app/gem_economy_test_results.json', 'w') as f:
+        with open(RESULTS_PATH, 'w') as f:
             json.dump({
                 "summary": {"passed": passed, "total": total, "success_rate": (passed/total)*100},
                 "results": results,

@@ -2633,6 +2633,7 @@ export default function GameScreen() {
       enemies_killed: enemiesKilled,
       towers_placed: towersPlaced,
       duration_seconds: duration,
+      coins_earned: coins,
       run_bonus_gems: challengeGemReward,
     };
 
@@ -2673,7 +2674,7 @@ export default function GameScreen() {
       (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
     playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
     playerStore.clearCurrentGameProgress();
-  }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge]);
+  }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge, coins]);
 
   useEffect(() => {
     if (!isGameOver) {

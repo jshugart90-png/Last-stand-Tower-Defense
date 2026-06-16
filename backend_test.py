@@ -13,15 +13,17 @@ import json
 import logging
 import os
 from datetime import datetime
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from pathlib import Path
 
 # Get backend URL from environment
-BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', 'https://wave-survival-game-2.preview.emergentagent.com')
+BACKEND_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', '').rstrip('/')
+if not BACKEND_URL:
+    raise SystemExit('EXPO_PUBLIC_BACKEND_URL is required to run backend_test.py')
 API_BASE = f"{BACKEND_URL}/api"
+RESULTS_PATH = Path(__file__).resolve().parent / 'backend_test_results.json'
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 logger.info(f"Testing backend at: {API_BASE}")
 
 class APITester:
@@ -175,17 +177,17 @@ class APITester:
         
         data = {
             "player_id": self.test_player_id,
-            "reward_type": "coins",
-            "ad_type": "rewarded"  # Real ad_type as requested
+            "reward_type": "gems",
+            "ad_type": "rewarded"
         }
         
         status, response = await self.make_request("POST", "/rewards/claim", data)
         
-        if status == 200 and response.get("success") and "coins_granted" in response:
+        if status == 200 and response.get("success") and "gems_granted" in response:
             self.log_result(
                 "Claim Rewarded Ad", 
                 True, 
-                f"Granted {response['coins_granted']} coins, new balance: {response['new_balance']}", 
+                f"Granted {response['gems_granted']} gems, new balance: {response['new_gem_balance']}", 
                 "POST /api/rewards/claim"
             )
             return True
@@ -221,57 +223,38 @@ class APITester:
     
     # ========== Purchase API Tests ==========
     
-    async def test_purchase_premium(self):
-        """Test POST /api/purchases - Process IAP purchase with item_type: 'premium' and proper product ID"""
+    async def test_purchase_receipt_validation(self):
+        """Test POST /api/purchases rejects missing receipt data."""
         if not self.test_player_id:
-            self.log_result("Purchase Premium", False, "No test player created", "POST /api/purchases")
+            self.log_result("Purchase Receipt Validation", False, "No test player created", "POST /api/purchases")
             return False
-        
+
         data = {
             "player_id": self.test_player_id,
-            "item_type": "premium",
-            "item_id": "com.laststanddefense.remove_ads"  # Real IAP product ID as requested
+            "item_type": "gems",
+            "item_id": "com.laststanddefense.gems_500",
+            "gems_amount": 500,
         }
-        
+
         status, response = await self.make_request("POST", "/purchases", data)
-        
-        if status == 200 and response.get("success") and response.get("item_type") == "premium":
+        detail = response.get("detail", "")
+
+        if status == 400 and "Invalid or missing purchase receipt" in str(detail):
             self.log_result(
-                "Purchase Premium", 
-                True, 
-                f"Premium purchase successful with product ID: {response.get('item_id')}", 
-                "POST /api/purchases"
+                "Purchase Receipt Validation",
+                True,
+                "Missing receipt correctly rejected with HTTP 400",
+                "POST /api/purchases",
             )
             return True
-        else:
-            self.log_result("Purchase Premium", False, f"Status: {status}, Response: {response}", "POST /api/purchases")
-            return False
-    
-    async def test_purchase_arena_expansion(self):
-        """Test POST /api/purchases - Process IAP purchase with item_type: 'arena_expansion'"""
-        if not self.test_player_id:
-            self.log_result("Purchase Arena Expansion", False, "No test player created", "POST /api/purchases")
-            return False
-        
-        data = {
-            "player_id": self.test_player_id,
-            "item_type": "arena_expansion",
-            "item_id": "com.laststanddefense.arena_expansion"  # Proper product ID format
-        }
-        
-        status, response = await self.make_request("POST", "/purchases", data)
-        
-        if status == 200 and response.get("success") and response.get("item_type") == "arena_expansion":
-            self.log_result(
-                "Purchase Arena Expansion", 
-                True, 
-                f"Arena expansion purchase successful with product ID: {response.get('item_id')}", 
-                "POST /api/purchases"
-            )
-            return True
-        else:
-            self.log_result("Purchase Arena Expansion", False, f"Status: {status}, Response: {response}", "POST /api/purchases")
-            return False
+
+        self.log_result(
+            "Purchase Receipt Validation",
+            False,
+            f"Status: {status}, Response: {response}",
+            "POST /api/purchases",
+        )
+        return False
     
     # ========== Skins API Tests ==========
     
@@ -353,8 +336,7 @@ class APITester:
             ("Get Leaderboard", self.test_leaderboard),
             ("Claim Rewarded Ad", self.test_claim_rewarded_ad),
             ("Claim Revive Reward", self.test_claim_revive_reward),
-            ("Purchase Premium", self.test_purchase_premium),
-            ("Purchase Arena Expansion", self.test_purchase_arena_expansion),
+            ("Purchase Receipt Validation", self.test_purchase_receipt_validation),
             ("Get Skins", self.test_get_skins),
             ("Analytics Event", self.test_analytics_event),
         ]
@@ -391,7 +373,7 @@ async def main():
         passed, total, results = await tester.run_all_tests()
         
         # Save detailed results
-        with open('/app/backend_test_results.json', 'w') as f:
+        with open(RESULTS_PATH, 'w') as f:
             json.dump({
                 "summary": {"passed": passed, "total": total, "success_rate": (passed/total)*100},
                 "results": results,

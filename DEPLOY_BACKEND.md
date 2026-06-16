@@ -19,6 +19,9 @@ Use `backend/.env.example` as source of truth:
 - `SUPABASE_SERVICE_ROLE_KEY=<server-side-secret>`
 - `SUPABASE_DB_SCHEMA=public`
 - `CORS_ORIGINS=https://your-web-url.com,https://your-other-origin.com`
+- `APPLE_SHARED_SECRET=<app-store-shared-secret>` (required for iOS IAP receipt validation)
+- `GOOGLE_PLAY_PACKAGE_NAME=com.horseshoeroundme.laststandtowerdefense` (Android IAP)
+- `GOOGLE_PLAY_ACCESS_TOKEN=<oauth-access-token>` (Android IAP validation)
 
 Optional fallback Mongo vars (not needed for Supabase mode):
 

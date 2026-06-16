@@ -2,7 +2,7 @@
   "expo": {
     "name": "Last Stand Tower Defense",
     "slug": "last-stand-tower-defense",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "laststandtd",
@@ -37,10 +37,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#07090d"
         }
       ],
       [

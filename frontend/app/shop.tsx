@@ -12,7 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
-import { purchaseApi } from '../src/hooks/useApi';
+import { isBackendConfigured, isServerBackedPlayerId } from '../src/hooks/useApi';
+import { syncPurchaseWithBackend } from '../src/utils/iapBackend';
 import {
   TOWERS,
   TowerType,
@@ -32,7 +33,7 @@ import {
   getRunCoinIncomeMultiplier,
 } from '../src/constants/game';
 import { 
-  IAP_PRODUCTS, IAP_PRICES, GEM_PACK_AMOUNTS, requestPurchase, 
+  IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
 import { TacticalTheme } from '../src/theme/colors';
@@ -290,18 +291,24 @@ export default function ShopScreen() {
               try {
                 const result = await requestPurchase(IAP_PRODUCTS.ARENA_EXPANSION);
                 if (result.success) {
-                  playerStore.addArenaExpansion();
-                  // Report to backend
-                  if (playerStore.playerId) {
-                    try {
-                      await purchaseApi.process({
-                        player_id: playerStore.playerId,
-                        item_type: 'arena_expansion',
-                        item_id: IAP_PRODUCTS.ARENA_EXPANSION,
+                  const playerId = playerStore.playerId;
+                  try {
+                    if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+                      await syncPurchaseWithBackend({
+                        playerId,
+                        itemType: 'arena_expansion',
+                        itemId: IAP_PRODUCTS.ARENA_EXPANSION,
+                        receipt: result.receipt,
+                        purchaseToken: result.purchaseToken,
                       });
-                    } catch {
-                      /* non-fatal: purchase already applied locally */
                     }
+                    playerStore.addArenaExpansion();
+                  } catch {
+                    Alert.alert(
+                      'Purchase Recorded',
+                      'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
+                    );
+                    return;
                   }
                   Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
                 } else if (result.error && result.error !== 'Purchase cancelled') {
@@ -356,7 +363,6 @@ export default function ShopScreen() {
   // Handle gem pack purchase (IAP)
   const handlePurchaseGemPack = async (productId: string) => {
     const gemAmount = GEM_PACK_AMOUNTS[productId];
-    const price = IAP_PRICES[productId];
     
     if (!gemAmount) return;
 
@@ -366,17 +372,31 @@ export default function ShopScreen() {
       try {
         const result = await requestPurchase(productId);
         if (result.success) {
-          playerStore.addGems(gemAmount);
-          if (playerStore.playerId) {
-            try {
-              await purchaseApi.process({
-                player_id: playerStore.playerId,
-                item_type: 'gems',
-                item_id: productId,
+          const playerId = playerStore.playerId;
+          try {
+            if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+              const data = await syncPurchaseWithBackend({
+                playerId,
+                itemType: 'gems',
+                itemId: productId,
+                gemsAmount: gemAmount,
+                receipt: result.receipt,
+                purchaseToken: result.purchaseToken,
               });
-            } catch {
-              /* non-fatal: purchase already applied locally */
+              if (data?.new_gem_balance != null) {
+                playerStore.setGems(data.new_gem_balance);
+              } else {
+                playerStore.addGems(gemAmount);
+              }
+            } else {
+              playerStore.addGems(gemAmount);
             }
+          } catch {
+            Alert.alert(
+              'Purchase Recorded',
+              'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
+            );
+            return;
           }
           Alert.alert('Gems Added!', `${gemAmount.toLocaleString()} gems have been added to your balance!`);
         } else if (result.error && result.error !== 'Purchase cancelled') {

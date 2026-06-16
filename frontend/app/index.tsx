@@ -15,6 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
@@ -247,7 +248,6 @@ export default function HomeScreen() {
   const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
   const claimDailyMission = usePlayerStore((s) => s.claimDailyMission);
   const [loading, setLoading] = useState(true);
-  const [showSplash, setShowSplash] = useState(true);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
@@ -255,14 +255,11 @@ export default function HomeScreen() {
   const xpProgress = getXpProgress(playerStore.xp);
   const xpPercent = Math.min(100, Math.max(0, (xpProgress.xpIntoLevel / xpProgress.xpNeeded) * 100));
 
-  // Show splash screen for minimum 2.5 seconds
   useEffect(() => {
-    const splashTimer = setTimeout(() => {
-      setShowSplash(false);
-    }, 2500); // 2.5 seconds minimum splash time
-
-    return () => clearTimeout(splashTimer);
-  }, []);
+    if (!loading) {
+      void SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [loading]);
 
   const initializePlayer = useCallback(async () => {
     try {
@@ -521,8 +518,7 @@ export default function HomeScreen() {
     }
   }, [claimSessionQuest]);
 
-  // Show splash screen while loading OR during minimum splash time
-  if (loading || showSplash) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
