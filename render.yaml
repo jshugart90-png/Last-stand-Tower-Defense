@@ -5,7 +5,7 @@ services:
     repo: https://github.com/jshugart90-png/Last-stand-Tower-Defense
     branch: main
     rootDir: backend
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
