@@ -8,6 +8,7 @@ export type PurchaseSyncParams = {
   gemsAmount?: number;
   receipt?: string;
   purchaseToken?: string;
+  transactionId?: string;
 };
 
 export async function syncPurchaseWithBackend(params: PurchaseSyncParams) {
@@ -20,6 +21,7 @@ export async function syncPurchaseWithBackend(params: PurchaseSyncParams) {
     return null;
   }
 
+  const receiptData = params.receipt || params.purchaseToken;
   const payload: {
     player_id: string;
     item_type: string;
@@ -28,6 +30,7 @@ export async function syncPurchaseWithBackend(params: PurchaseSyncParams) {
     gems_amount?: number;
     receipt_data?: string;
     purchase_token?: string;
+    transaction_id?: string;
   } = {
     player_id: params.playerId,
     item_type: params.itemType,
@@ -38,12 +41,15 @@ export async function syncPurchaseWithBackend(params: PurchaseSyncParams) {
   if (params.gemsAmount != null) {
     payload.gems_amount = params.gemsAmount;
   }
+  if (params.transactionId) {
+    payload.transaction_id = params.transactionId;
+  }
 
   if (platform === 'ios') {
-    if (!params.receipt) {
+    if (!receiptData) {
       throw new Error('Missing App Store receipt.');
     }
-    payload.receipt_data = params.receipt;
+    payload.receipt_data = receiptData;
   } else {
     if (!params.purchaseToken) {
       throw new Error('Missing Google Play purchase token.');

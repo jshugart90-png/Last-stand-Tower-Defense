@@ -21,6 +21,7 @@ node_modules/
 backend_test_results.json
 gem_economy_test_results.json
 test_reports/
+privacy-site/.git/
 
 # Next.js
 /.next/

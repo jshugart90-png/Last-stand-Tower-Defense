@@ -15,6 +15,7 @@ from bson import ObjectId
 import hashlib
 import asyncio
 import json
+import base64
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -67,6 +68,9 @@ logger = logging.getLogger(__name__)
 INVALID_PURCHASE_RECEIPT_ERROR = "Invalid or missing purchase receipt."
 APPLE_VERIFY_RECEIPT_URL = "https://buy.itunes.apple.com/verifyReceipt"
 APPLE_SANDBOX_VERIFY_RECEIPT_URL = "https://sandbox.itunes.apple.com/verifyReceipt"
+APPLE_STOREKIT_PRODUCTION_URL = "https://api.storekit.itunes.apple.com"
+APPLE_STOREKIT_SANDBOX_URL = "https://api.storekit-sandbox.itunes.apple.com"
+APPLE_BUNDLE_ID = "com.horseshoeroundme.laststandtowerdefense"
 
 # Helper to convert ObjectId to string
 def serialize_doc(doc):
@@ -286,6 +290,7 @@ class PurchaseRequest(BaseModel):
     platform: str  # "ios" or "android"
     receipt_data: Optional[str] = None
     purchase_token: Optional[str] = None
+    transaction_id: Optional[str] = None
 
 class AnalyticsEvent(BaseModel):
     player_id: str
@@ -336,7 +341,10 @@ def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None) -> Option
         return None
 
 
-async def _validate_apple_receipt(receipt_data: str) -> bool:
+async def _validate_apple_receipt(receipt_data: str, expected_product_id: Optional[str] = None) -> bool:
+    if receipt_data.startswith("eyJ"):
+        return await _validate_apple_jws(receipt_data, expected_product_id)
+
     payload: Dict[str, Any] = {"receipt-data": receipt_data}
     apple_shared_secret = os.environ.get("APPLE_SHARED_SECRET", "").strip()
     if apple_shared_secret:
@@ -354,6 +362,112 @@ async def _validate_apple_receipt(receipt_data: str) -> bool:
         return bool(sandbox_result) and int(sandbox_result.get("status", -1)) == 0
 
     return False
+
+
+def _decode_jws_payload(jws: str) -> Optional[Dict[str, Any]]:
+    try:
+        parts = jws.split(".")
+        if len(parts) != 3:
+            return None
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("utf-8"))
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _generate_apple_server_api_token() -> str:
+    key_id = os.environ.get("APPLE_KEY_ID", "").strip()
+    issuer_id = os.environ.get("APPLE_ISSUER_ID", "").strip()
+    private_key = os.environ.get("APPLE_PRIVATE_KEY", "").strip().replace("\\n", "\n")
+    if not key_id or not issuer_id or not private_key:
+        return ""
+    try:
+        import time
+        import jwt as pyjwt
+
+        now = int(time.time())
+        token = pyjwt.encode(
+            {
+                "iss": issuer_id,
+                "iat": now,
+                "exp": now + 3600,
+                "aud": "appstoreconnect-v1",
+                "bid": os.environ.get("APPLE_BUNDLE_ID", APPLE_BUNDLE_ID),
+            },
+            private_key,
+            algorithm="ES256",
+            headers={"kid": key_id, "typ": "JWT"},
+        )
+        return token if isinstance(token, str) else token.decode("utf-8")
+    except Exception as exc:
+        logger.warning("Failed to generate Apple Server API token: %s", exc)
+        return ""
+
+
+async def _validate_apple_transaction_server_api(transaction_id: str) -> bool:
+    token = _generate_apple_server_api_token()
+    if not token:
+        return False
+    headers = {"Authorization": f"Bearer {token}"}
+    encoded_id = urllib_parse.quote(transaction_id, safe="")
+    for base in (APPLE_STOREKIT_PRODUCTION_URL, APPLE_STOREKIT_SANDBOX_URL):
+        url = f"{base}/inApps/v1/transactions/{encoded_id}"
+        result = await asyncio.to_thread(_http_get_json, url, headers)
+        if result and (result.get("signedTransactionInfo") or result.get("transactionId")):
+            return True
+    return False
+
+
+async def _validate_apple_jws(receipt_data: str, expected_product_id: Optional[str] = None) -> bool:
+    payload = _decode_jws_payload(receipt_data)
+    if not payload:
+        return False
+
+    bundle_id = os.environ.get("APPLE_BUNDLE_ID", APPLE_BUNDLE_ID)
+    product_id = payload.get("productId") or payload.get("product_id")
+    tx_bundle = payload.get("bundleId") or payload.get("bundle_id")
+    transaction_id = payload.get("transactionId") or payload.get("transaction_id")
+
+    if tx_bundle and tx_bundle != bundle_id:
+        return False
+    if expected_product_id and product_id and product_id != expected_product_id:
+        return False
+
+    if transaction_id and await _validate_apple_transaction_server_api(str(transaction_id)):
+        return True
+
+    if transaction_id and product_id and tx_bundle == bundle_id:
+        if os.environ.get("APPLE_KEY_ID", "").strip():
+            return False
+        logger.warning(
+            "Apple Server API keys missing; accepting JWS bundle/product match for transaction %s",
+            transaction_id,
+        )
+        return True
+    return False
+
+
+async def _purchase_transaction_already_processed(transaction_id: str) -> bool:
+    if not transaction_id:
+        return False
+    if DB_PROVIDER == "supabase" and supabase:
+        try:
+            res = (
+                supabase.table("analytics")
+                .select("id")
+                .eq("event_type", "purchase_validated")
+                .contains("event_data", {"transaction_id": transaction_id})
+                .limit(1)
+                .execute()
+            )
+            return bool(res.data)
+        except APIError:
+            return False
+    doc = await db.analytics.find_one(
+        {"event_type": "purchase_validated", "event_data.transaction_id": transaction_id}
+    )
+    return doc is not None
 
 
 async def _validate_google_purchase(product_id: str, purchase_token: str) -> bool:
@@ -725,9 +839,16 @@ async def process_purchase(purchase: PurchaseRequest):
         receipt_valid = False
 
         if platform == "ios":
-            if not purchase.receipt_data:
+            tx_id = (purchase.transaction_id or "").strip()
+            if not purchase.receipt_data and not tx_id:
                 raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
-            receipt_valid = await _validate_apple_receipt(purchase.receipt_data)
+            if tx_id and await _purchase_transaction_already_processed(tx_id):
+                receipt_valid = True
+            else:
+                if purchase.receipt_data:
+                    receipt_valid = await _validate_apple_receipt(purchase.receipt_data, purchase.item_id)
+                if not receipt_valid and tx_id:
+                    receipt_valid = await _validate_apple_transaction_server_api(tx_id)
         elif platform == "android":
             if not purchase.purchase_token or not purchase.item_id:
                 raise HTTPException(status_code=400, detail=INVALID_PURCHASE_RECEIPT_ERROR)
@@ -742,6 +863,18 @@ async def process_purchase(purchase: PurchaseRequest):
         player = await repo_find_one("players", where)
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
+
+        tx_id = (purchase.transaction_id or "").strip()
+        if tx_id and await _purchase_transaction_already_processed(tx_id):
+            result = {
+                "success": True,
+                "item_type": purchase.item_type,
+                "item_id": purchase.item_id,
+                "duplicate": True,
+            }
+            if purchase.item_type == "gems":
+                result["new_gem_balance"] = player.get("gems", 0)
+            return result
         
         update_data = {"updated_at": datetime.utcnow()}
         
@@ -769,10 +902,21 @@ async def process_purchase(purchase: PurchaseRequest):
             "event_data": {
                 "item_type": purchase.item_type,
                 "item_id": purchase.item_id,
-                "gems_amount": purchase.gems_amount
+                "gems_amount": purchase.gems_amount,
+                "transaction_id": purchase.transaction_id,
             },
             "timestamp": datetime.utcnow()
         })
+        if purchase.transaction_id:
+            await repo_insert_one("analytics", {
+                "player_id": purchase.player_id,
+                "event_type": "purchase_validated",
+                "event_data": {
+                    "transaction_id": purchase.transaction_id,
+                    "item_id": purchase.item_id,
+                },
+                "timestamp": datetime.utcnow()
+            })
         
         result = {"success": True, "item_type": purchase.item_type, "item_id": purchase.item_id}
         if "gems" in update_data:
@@ -892,10 +1036,23 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
+    apple_server_api_ready = bool(
+        os.environ.get("APPLE_KEY_ID", "").strip()
+        and os.environ.get("APPLE_ISSUER_ID", "").strip()
+        and os.environ.get("APPLE_PRIVATE_KEY", "").strip()
+    )
     return {
         "status": "healthy",
         "db_provider": DB_PROVIDER,
         "environment": ENVIRONMENT,
+        "iap": {
+            "apple_shared_secret_configured": bool(os.environ.get("APPLE_SHARED_SECRET", "").strip()),
+            "apple_server_api_configured": apple_server_api_ready,
+            "google_play_configured": bool(
+                os.environ.get("GOOGLE_PLAY_PACKAGE_NAME", "").strip()
+                and os.environ.get("GOOGLE_PLAY_ACCESS_TOKEN", "").strip()
+            ),
+        },
     }
 
 # Include the router in the main app

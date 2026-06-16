@@ -60,6 +60,7 @@ export const purchaseApi = {
     platform: string;
     receipt_data?: string;
     purchase_token?: string;
+    transaction_id?: string;
   }) => api.post('/purchases', data),
 };
 

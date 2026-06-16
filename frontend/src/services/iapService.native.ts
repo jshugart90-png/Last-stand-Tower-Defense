@@ -25,15 +25,90 @@ export const GEM_PACK_AMOUNTS: Record<string, number> = {
   [IAP_PRODUCTS.GEMS_4000]: 4000,
 };
 
+export type PurchaseResult = {
+  success: boolean;
+  purchase?: any;
+  receipt?: string;
+  purchaseToken?: string;
+  transactionId?: string;
+  error?: string;
+};
+
 export const isIAPAvailable = (): boolean => true;
 
 let iapInitialized = false;
+let purchaseUpdatedSub: { remove: () => void } | null = null;
+let purchaseErrorSub: { remove: () => void } | null = null;
+let pendingPurchaseResolve: ((purchase: any) => void) | null = null;
+let pendingPurchaseReject: ((error: Error) => void) | null = null;
+let pendingProductId: string | null = null;
+
+function clearPendingPurchase() {
+  pendingPurchaseResolve = null;
+  pendingPurchaseReject = null;
+  pendingProductId = null;
+}
+
+function extractPurchaseFields(purchase: any) {
+  const receipt =
+    purchase?.purchaseToken ||
+    purchase?.transactionReceipt ||
+    purchase?.dataAndroid ||
+    '';
+  const transactionId =
+    purchase?.transactionId ||
+    purchase?.id ||
+    purchase?.originalTransactionIdentifierIOS ||
+    undefined;
+  return {
+    receipt: typeof receipt === 'string' ? receipt : '',
+    purchaseToken: typeof purchase?.purchaseToken === 'string' ? purchase.purchaseToken : undefined,
+    transactionId: transactionId != null ? String(transactionId) : undefined,
+  };
+}
+
+function waitForPurchase(productId: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    pendingProductId = productId;
+    pendingPurchaseResolve = resolve;
+    pendingPurchaseReject = reject;
+
+    setTimeout(() => {
+      if (pendingPurchaseReject) {
+        pendingPurchaseReject(new Error('Purchase timed out'));
+        clearPendingPurchase();
+      }
+    }, 120000);
+  });
+}
 
 export const initializeIAP = async (): Promise<boolean> => {
   if (iapInitialized) return true;
 
   try {
     await ExpoIAP.initConnection();
+
+    purchaseUpdatedSub = ExpoIAP.purchaseUpdatedListener((purchase) => {
+      if (!pendingPurchaseResolve) return;
+      const expected = pendingProductId;
+      const actual = purchase?.productId || purchase?.id;
+      if (expected && actual && actual !== expected) {
+        return;
+      }
+      pendingPurchaseResolve(purchase);
+      clearPendingPurchase();
+    });
+
+    purchaseErrorSub = ExpoIAP.purchaseErrorListener((error: any) => {
+      if (!pendingPurchaseReject) return;
+      if (error?.code === 'E_USER_CANCELLED' || error?.code === 'UserCancelled') {
+        pendingPurchaseReject(new Error('Purchase cancelled'));
+      } else {
+        pendingPurchaseReject(new Error(error?.message || 'Purchase failed'));
+      }
+      clearPendingPurchase();
+    });
+
     iapInitialized = true;
     return true;
   } catch {
@@ -46,39 +121,61 @@ export const getProducts = async (): Promise<any[]> => {
 
   try {
     const skus = Object.values(IAP_PRODUCTS);
-    const products = await (ExpoIAP as any).getProducts({ skus });
-    return products;
+    const products = await (ExpoIAP as any).fetchProducts({ skus, type: 'in-app' });
+    return products || [];
   } catch {
-    return [];
+    try {
+      const skus = Object.values(IAP_PRODUCTS);
+      const products = await (ExpoIAP as any).getProducts({ skus });
+      return products || [];
+    } catch {
+      return [];
+    }
   }
 };
 
-export const requestPurchase = async (
-  productId: string,
-): Promise<{ success: boolean; receipt?: string; purchaseToken?: string; error?: string }> => {
+export const requestPurchase = async (productId: string): Promise<PurchaseResult> => {
   if (!iapInitialized) {
     return { success: false, error: 'IAP not initialized' };
   }
 
   try {
-    const purchase = await ExpoIAP.requestPurchase({ sku: productId });
-    if (purchase) {
-      const isGemPack = Object.prototype.hasOwnProperty.call(GEM_PACK_AMOUNTS, productId);
-      const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || isGemPack;
-      await ExpoIAP.finishTransaction({ purchase, isConsumable });
-      return {
-        success: true,
-        receipt: purchase.transactionReceipt,
-        purchaseToken: purchase.purchaseToken,
-      };
+    const purchasePromise = waitForPurchase(productId);
+    await ExpoIAP.requestPurchase({
+      request: {
+        apple: { sku: productId },
+        google: { skus: [productId] },
+      },
+      type: 'in-app',
+    });
+
+    const purchase = await purchasePromise;
+    const fields = extractPurchaseFields(purchase);
+    if (!fields.receipt && !fields.transactionId) {
+      return { success: false, error: 'Missing purchase receipt from App Store.' };
     }
-    return { success: false, error: 'Purchase cancelled' };
+
+    return {
+      success: true,
+      purchase,
+      receipt: fields.receipt,
+      purchaseToken: fields.purchaseToken,
+      transactionId: fields.transactionId,
+    };
   } catch (error: any) {
-    if (error.code === 'E_USER_CANCELLED') {
+    const message = error?.message || 'Purchase failed';
+    if (message === 'Purchase cancelled') {
       return { success: false, error: 'Purchase cancelled' };
     }
-    return { success: false, error: error.message || 'Purchase failed' };
+    return { success: false, error: message };
   }
+};
+
+export const completePurchase = async (purchase: any, productId: string): Promise<void> => {
+  if (!iapInitialized || !purchase) return;
+  const isGemPack = Object.prototype.hasOwnProperty.call(GEM_PACK_AMOUNTS, productId);
+  const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || isGemPack;
+  await ExpoIAP.finishTransaction({ purchase, isConsumable });
 };
 
 export const restorePurchases = async (): Promise<any[]> => {
@@ -95,6 +192,11 @@ export const restorePurchases = async (): Promise<any[]> => {
 export const endIAPConnection = async (): Promise<void> => {
   if (!iapInitialized) return;
   try {
+    purchaseUpdatedSub?.remove();
+    purchaseErrorSub?.remove();
+    purchaseUpdatedSub = null;
+    purchaseErrorSub = null;
+    clearPendingPurchase();
     await ExpoIAP.endConnection();
     iapInitialized = false;
   } catch {

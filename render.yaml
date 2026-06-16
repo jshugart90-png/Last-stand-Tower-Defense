@@ -2,6 +2,8 @@ services:
   - type: web
     name: last-stand-td-api
     runtime: python
+    repo: https://github.com/jshugart90-png/Last-stand-Tower-Defense
+    branch: main
     rootDir: backend
     plan: starter
     buildCommand: pip install -r requirements.txt
@@ -21,6 +23,14 @@ services:
         sync: false
       - key: APPLE_SHARED_SECRET
         sync: false
+      - key: APPLE_KEY_ID
+        sync: false
+      - key: APPLE_ISSUER_ID
+        sync: false
+      - key: APPLE_PRIVATE_KEY
+        sync: false
+      - key: APPLE_BUNDLE_ID
+        value: com.horseshoeroundme.laststandtowerdefense
       - key: GOOGLE_PLAY_PACKAGE_NAME
         value: com.horseshoeroundme.laststandtowerdefense
       - key: GOOGLE_PLAY_ACCESS_TOKEN

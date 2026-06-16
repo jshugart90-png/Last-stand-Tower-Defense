@@ -33,7 +33,7 @@ import {
   getRunCoinIncomeMultiplier,
 } from '../src/constants/game';
 import { 
-  IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, 
+  IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, completePurchase, 
   isIAPAvailable, isIAPInitialized, restorePurchases 
 } from '../src/services/iapService';
 import { TacticalTheme } from '../src/theme/colors';
@@ -290,7 +290,7 @@ export default function ShopScreen() {
               setPurchaseLoading(true);
               try {
                 const result = await requestPurchase(IAP_PRODUCTS.ARENA_EXPANSION);
-                if (result.success) {
+                if (result.success && result.purchase) {
                   const playerId = playerStore.playerId;
                   try {
                     if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
@@ -300,9 +300,11 @@ export default function ShopScreen() {
                         itemId: IAP_PRODUCTS.ARENA_EXPANSION,
                         receipt: result.receipt,
                         purchaseToken: result.purchaseToken,
+                        transactionId: result.transactionId,
                       });
                     }
                     playerStore.addArenaExpansion();
+                    await completePurchase(result.purchase, IAP_PRODUCTS.ARENA_EXPANSION);
                   } catch {
                     Alert.alert(
                       'Purchase Recorded',
@@ -371,7 +373,7 @@ export default function ShopScreen() {
       setPurchaseLoading(true);
       try {
         const result = await requestPurchase(productId);
-        if (result.success) {
+        if (result.success && result.purchase) {
           const playerId = playerStore.playerId;
           try {
             if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
@@ -382,6 +384,7 @@ export default function ShopScreen() {
                 gemsAmount: gemAmount,
                 receipt: result.receipt,
                 purchaseToken: result.purchaseToken,
+                transactionId: result.transactionId,
               });
               if (data?.new_gem_balance != null) {
                 playerStore.setGems(data.new_gem_balance);
@@ -391,6 +394,7 @@ export default function ShopScreen() {
             } else {
               playerStore.addGems(gemAmount);
             }
+            await completePurchase(result.purchase, productId);
           } catch {
             Alert.alert(
               'Purchase Recorded',

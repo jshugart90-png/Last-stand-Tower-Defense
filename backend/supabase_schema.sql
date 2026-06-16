@@ -41,6 +41,7 @@ create index if not exists idx_leaderboard_score on public.leaderboard (leaderbo
 
 -- If tables already exist from an older bootstrap, add columns (safe to re-run):
 alter table public.players add column if not exists lifetime_enemies_killed int not null default 0;
+alter table public.players add column if not exists reward_cooldowns jsonb not null default '{}'::jsonb;
 alter table public.leaderboard add column if not exists lifetime_enemies_killed int not null default 0;
 alter table public.leaderboard add column if not exists last_run_gems int not null default 0;
 alter table public.leaderboard add column if not exists last_run_enemies_killed int not null default 0;
