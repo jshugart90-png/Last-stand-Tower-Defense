@@ -36,7 +36,7 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'finger-print',
       title: 'Place Towers',
-      description: 'Select a tower, then tap or drag on the field to place it',
+      description: 'Select a tower, tap a cell on the field, then confirm with the check button',
     },
     {
       icon: 'shield-checkmark',

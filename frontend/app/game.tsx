@@ -26,7 +26,6 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  type SharedValue,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -72,8 +71,6 @@ const ZOOM_MIN = 0.8;
 const ZOOM_MAX = 2.5;
 
 const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
-
-type BoardHitTestFn = (winX: number, winY: number) => { col: number; row: number } | null;
 
 class GestureAreaErrorBoundary extends Component<
   {
@@ -225,57 +222,45 @@ const getTowerIcon = (type: TowerType, size = 20) => {
   }
 };
 
-type PanelDragSharedValues = {
-  ghostX: SharedValue<number>;
-  ghostY: SharedValue<number>;
-  ghostActive: SharedValue<number>;
-};
-
-/** Full-screen floating tower preview — position driven on the UI thread. */
-const TowerDragGhostOverlay = React.memo(function TowerDragGhostOverlay({
+/** Confirm / cancel bar shown after tapping a cell to preview tower placement. */
+const PlacementConfirmBar = ({
   towerType,
-  ghostX,
-  ghostY,
-  ghostActive,
-  invalidDrop,
+  cost,
+  canAfford,
+  onConfirm,
+  onCancel,
 }: {
-  towerType: TowerType | null;
-  ghostX: SharedValue<number>;
-  ghostY: SharedValue<number>;
-  ghostActive: SharedValue<number>;
-  invalidDrop: boolean;
-}) {
-  const ghostStyle = useAnimatedStyle(() => ({
-    opacity: ghostActive.value,
-    transform: [
-      { translateX: ghostX.value - 30 },
-      { translateY: ghostY.value - 30 },
-    ],
-  }));
-
-  if (!towerType) return null;
-
-  return (
-    <View style={styles.towerDragLayer} pointerEvents="none">
-      <Animated.View
-        style={[
-          styles.towerDragGhost,
-          ghostStyle,
-          {
-            borderColor: invalidDrop ? TacticalTheme.selectionGlowStrong : TacticalTheme.accent,
-            backgroundColor: invalidDrop ? 'rgba(207,47,47,0.35)' : 'rgba(19,25,34,0.92)',
-          },
-        ]}
-      >
-        <View style={[styles.towerDragGhostIcon, { backgroundColor: TOWERS[towerType].color }]}>
-          {getTowerIcon(towerType, 26)}
-        </View>
-      </Animated.View>
+  towerType: TowerType;
+  cost: number;
+  canAfford: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) => (
+  <View style={styles.placementConfirmBar}>
+    <TouchableOpacity style={styles.placementCancelButton} onPress={onCancel} accessibilityLabel="Cancel placement">
+      <Ionicons name="close" size={22} color="#fff" />
+    </TouchableOpacity>
+    <View style={styles.placementConfirmInfo}>
+      <Text style={styles.placementConfirmTitle}>Place {TOWERS[towerType].name}?</Text>
+      <View style={styles.placementConfirmCostRow}>
+        <FontAwesome5 name="coins" size={12} color="#FFD700" />
+        <Text style={[styles.placementConfirmCost, !canAfford && styles.placementConfirmCostRed]}>
+          {cost}
+        </Text>
+      </View>
     </View>
-  );
-});
+    <TouchableOpacity
+      style={[styles.placementConfirmButton, !canAfford && styles.disabledButton]}
+      onPress={onConfirm}
+      disabled={!canAfford}
+      accessibilityLabel="Confirm placement"
+    >
+      <Ionicons name="checkmark" size={26} color="#fff" />
+    </TouchableOpacity>
+  </View>
+);
 
-// Tower panel — drag from icon (primary) or tap to select then drag on map (fallback)
+// Tower panel — tap to select a tower, then tap a cell and confirm
 const TowerPanelItem = React.memo(
   ({
     type,
@@ -284,12 +269,7 @@ const TowerPanelItem = React.memo(
     isUnlocked,
     canAfford,
     isSelected,
-    dragSV,
-    onQuickTap,
-    onDragStart,
-    onDragMove,
-    onDragEnd,
-    onDragFinalize,
+    onTap,
   }: {
     type: TowerType;
     tower: (typeof TOWERS)[TowerType];
@@ -297,62 +277,8 @@ const TowerPanelItem = React.memo(
     isUnlocked: boolean;
     canAfford: boolean;
     isSelected: boolean;
-    dragSV: PanelDragSharedValues;
-    onQuickTap: (t: TowerType) => void;
-    onDragStart: (t: TowerType, winX: number, winY: number) => void;
-    onDragMove: (winX: number, winY: number) => void;
-    onDragEnd: (winX: number, winY: number) => void;
-    onDragFinalize: () => void;
+    onTap: (t: TowerType) => void;
   }) => {
-    const dragPanGesture = useMemo(
-      () =>
-        Gesture.Pan()
-          .maxPointers(1)
-          .minPointers(1)
-          .minDistance(6)
-          .shouldCancelWhenOutside(false)
-          .onStart((e) => {
-            'worklet';
-            dragSV.ghostX.value = e.absoluteX;
-            dragSV.ghostY.value = e.absoluteY;
-            dragSV.ghostActive.value = 1;
-            runOnJS(onDragStart)(type, e.absoluteX, e.absoluteY);
-          })
-          .onUpdate((e) => {
-            'worklet';
-            dragSV.ghostX.value = e.absoluteX;
-            dragSV.ghostY.value = e.absoluteY;
-            runOnJS(onDragMove)(e.absoluteX, e.absoluteY);
-          })
-          .onEnd((e) => {
-            'worklet';
-            dragSV.ghostActive.value = 0;
-            runOnJS(onDragEnd)(e.absoluteX, e.absoluteY);
-          })
-          .onFinalize(() => {
-            'worklet';
-            dragSV.ghostActive.value = 0;
-            runOnJS(onDragFinalize)();
-          }),
-      [dragSV.ghostActive, dragSV.ghostX, dragSV.ghostY, onDragEnd, onDragFinalize, onDragMove, onDragStart, type]
-    );
-
-    const tapGesture = useMemo(
-      () =>
-        Gesture.Tap()
-          .maxDuration(280)
-          .onEnd(() => {
-            'worklet';
-            runOnJS(onQuickTap)(type);
-          }),
-      [onQuickTap, type]
-    );
-
-    const composed = useMemo(
-      () => Gesture.Exclusive(dragPanGesture, tapGesture),
-      [dragPanGesture, tapGesture]
-    );
-
     const costLabel = isUnlocked ? `${cost}` : 'Locked';
 
     if (!isUnlocked) {
@@ -376,7 +302,7 @@ const TowerPanelItem = React.memo(
             styles.towerButtonCantAfford,
             pressed && { opacity: 0.85 },
           ]}
-          onPress={() => onQuickTap(type)}
+          onPress={() => onTap(type)}
         >
           <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
           <Text style={styles.towerName} numberOfLines={1}>
@@ -388,15 +314,20 @@ const TowerPanelItem = React.memo(
     }
 
     return (
-      <GestureDetector gesture={composed}>
-        <View style={[styles.towerButton, isSelected && styles.towerButtonSelected]}>
-          <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
-          <Text style={styles.towerName} numberOfLines={1}>
-            {tower.name}
-          </Text>
-          <Text style={styles.towerCost}>{costLabel}</Text>
-        </View>
-      </GestureDetector>
+      <Pressable
+        style={({ pressed }) => [
+          styles.towerButton,
+          isSelected && styles.towerButtonSelected,
+          pressed && { opacity: 0.85 },
+        ]}
+        onPress={() => onTap(type)}
+      >
+        <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
+        <Text style={styles.towerName} numberOfLines={1}>
+          {tower.name}
+        </Text>
+        <Text style={styles.towerCost}>{costLabel}</Text>
+      </Pressable>
     );
   }
 );
@@ -409,26 +340,14 @@ const TowerPanel = ({
   coins,
   unlockedTowers,
   getTowerCost,
-  scrollEnabled,
-  dragSV,
-  onTowerDragStart,
-  onTowerDragMove,
-  onTowerDragEnd,
-  onTowerDragFinalize,
 }: {
   onSelect: (type: TowerType | null) => void;
   selectedType: TowerType | null;
   coins: number;
   unlockedTowers: TowerType[];
   getTowerCost: (type: TowerType) => number;
-  scrollEnabled: boolean;
-  dragSV: PanelDragSharedValues;
-  onTowerDragStart: (type: TowerType, winX: number, winY: number) => void;
-  onTowerDragMove: (winX: number, winY: number) => void;
-  onTowerDragEnd: (winX: number, winY: number) => void;
-  onTowerDragFinalize: () => void;
 }) => {
-  const onQuickTap = useCallback(
+  const onTap = useCallback(
     (type: TowerType) => {
       const isSelected = selectedType === type;
       onSelect(isSelected ? null : type);
@@ -439,7 +358,6 @@ const TowerPanel = ({
   return (
     <ScrollView
       horizontal
-      scrollEnabled={scrollEnabled}
       showsHorizontalScrollIndicator={false}
       style={styles.towerPanel}
       contentContainerStyle={styles.towerPanelContent}
@@ -461,18 +379,32 @@ const TowerPanel = ({
             isUnlocked={isUnlocked}
             canAfford={canAfford}
             isSelected={isSelected}
-            dragSV={dragSV}
-            onQuickTap={onQuickTap}
-            onDragStart={onTowerDragStart}
-            onDragMove={onTowerDragMove}
-            onDragEnd={onTowerDragEnd}
-            onDragFinalize={onTowerDragFinalize}
+            onTap={onTap}
           />
         );
       })}
     </ScrollView>
   );
 };
+
+// In-game auto-start waves toggle (synced with settings)
+const AutoStartToggle = ({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: () => void;
+}) => (
+  <TouchableOpacity
+    style={[styles.autoStartToggle, enabled && styles.autoStartToggleActive]}
+    onPress={onToggle}
+  >
+    <Ionicons name="play-forward" size={14} color={enabled ? '#fff' : TacticalTheme.textMuted} />
+    <Text style={[styles.autoStartToggleText, enabled && styles.autoStartToggleTextActive]}>
+      Auto {enabled ? 'ON' : 'OFF'}
+    </Text>
+  </TouchableOpacity>
+);
 
 // Speed control buttons — unlocks cost gems only (see shop / player store)
 const SpeedControls = ({
@@ -481,12 +413,16 @@ const SpeedControls = ({
   unlockedSpeeds,
   onPurchaseSpeed,
   gems,
+  autoStartWaves,
+  onToggleAutoStart,
 }: {
   currentSpeed: GameSpeed;
   onSpeedChange: (speed: GameSpeed) => void;
   unlockedSpeeds: GameSpeed[];
   onPurchaseSpeed: (speed: GameSpeed) => void;
   gems: number;
+  autoStartWaves: boolean;
+  onToggleAutoStart: () => void;
 }) => {
   const speeds = [...ALLOWED_GAME_SPEEDS];
 
@@ -536,6 +472,7 @@ const SpeedControls = ({
           </TouchableOpacity>
         );
       })}
+      <AutoStartToggle enabled={autoStartWaves} onToggle={onToggleAutoStart} />
     </View>
   );
 };
@@ -1222,21 +1159,15 @@ const GameBoard = React.memo(
     zoomLevel,
     performanceMode,
     vfxQuality,
-    hoverPlacementCell,
-    onRegisterBoardHitTest,
-    onRegisterClearPlacementPreview,
-    onRegisterBoardScreenSync,
+    previewCell,
   }: {
     onCellPress: (x: number, y: number) => void;
     scale: number;
     zoomLevel: number;
     performanceMode: boolean;
     vfxQuality: 0 | 1 | 2;
-    /** When defined, panel/board drag preview uses this (null = no highlight). When undefined, use in-board pan preview. */
-    hoverPlacementCell?: { col: number; row: number } | null;
-    onRegisterBoardHitTest?: (hit: BoardHitTestFn | null) => void;
-    onRegisterClearPlacementPreview?: (clear: (() => void) | null) => void;
-    onRegisterBoardScreenSync?: (sync: (() => void) | null) => void;
+    /** Highlighted cell for pending tower placement preview. */
+    previewCell?: { col: number; row: number } | null;
   }) => {
     const { gridCols, gridRows, cellSize, selectedTowerType, selectedPlacedTower, mapTheme, spawnPoint, basePosition } =
       useGameStore(
@@ -1255,43 +1186,10 @@ const GameBoard = React.memo(
     const pinchMultSV = useSharedValue(1);
     const startZoomSV = useSharedValue(zoomLevel);
     const committedZoomSV = useSharedValue(zoomLevel);
-    /** UI-thread guard: placement pan must not call JS while pinch is active. */
-    const pinchActiveSV = useSharedValue(0);
-    /** Ref mirror for JS placement commit path. */
-    const pinchActiveRef = useRef(false);
-    const setPinchActive = useCallback((v: boolean) => {
-      pinchActiveRef.current = v;
-    }, []);
 
     const boardSurfaceRef = useRef<View | null>(null);
     const boardScreenRectRef = useRef({ x: 0, y: 0, w: 0, h: 0 });
     const boardSyncRafRef = useRef<number | null>(null);
-
-    const [placementPreview, setPlacementPreview] = useState<{ col: number; row: number } | null>(null);
-    const previewEmitAtRef = useRef(0);
-
-    const emitPlacementPreview = useCallback((col: number | null, row: number | null) => {
-      if (col === null || row === null) {
-        previewEmitAtRef.current = 0;
-        setPlacementPreview((p) => (p === null ? p : null));
-        return;
-      }
-      const now = Date.now();
-      let minGap = 40;
-      try {
-        const ec = useGameStore.getState().enemies.length;
-        if (ec > 55) minGap = 72;
-        else if (ec > 28) minGap = 56;
-      } catch {
-        /* ignore */
-      }
-      if (now - previewEmitAtRef.current < minGap) return;
-      previewEmitAtRef.current = now;
-      setPlacementPreview((prev) => {
-        if (prev?.col === col && prev?.row === row) return prev;
-        return { col, row };
-      });
-    }, []);
 
     const syncBoardScreenRect = useCallback(() => {
       const node = boardSurfaceRef.current;
@@ -1337,17 +1235,11 @@ const GameBoard = React.memo(
       }
     }, []);
 
-    const pinchOnBeginJS = useCallback(() => {
-      setPinchActive(true);
-    }, [setPinchActive]);
+    const pinchOnBeginJS = useCallback(() => {}, []);
 
-    const pinchOnEndJS = useCallback(() => {
-      setPinchActive(false);
-    }, [setPinchActive]);
+    const pinchOnEndJS = useCallback(() => {}, []);
 
-    const pinchOnFinalizeJS = useCallback(() => {
-      setPinchActive(false);
-    }, [setPinchActive]);
+    const pinchOnFinalizeJS = useCallback(() => {}, []);
 
     const pinchGesture = useMemo(
       () =>
@@ -1356,8 +1248,6 @@ const GameBoard = React.memo(
             'worklet';
             startZoomSV.value = committedZoomSV.value;
             pinchMultSV.value = 1;
-            pinchActiveSV.value = 1;
-            runOnJS(pinchOnBeginJS)();
           })
           .onUpdate((e) => {
             'worklet';
@@ -1381,22 +1271,18 @@ const GameBoard = React.memo(
                 ? Math.max(0.8, Math.min(2.5, base * factor))
                 : committedZoomSV.value;
             pinchMultSV.value = 1;
-            pinchActiveSV.value = 0;
             runOnJS(commitZoom)(abs);
             runOnJS(pinchOnEndJS)();
           })
           .onFinalize(() => {
             'worklet';
             pinchMultSV.value = 1;
-            pinchActiveSV.value = 0;
             runOnJS(pinchOnFinalizeJS)();
           }),
       [
         commitZoom,
         committedZoomSV,
-        pinchActiveSV,
         pinchMultSV,
-        pinchOnBeginJS,
         pinchOnEndJS,
         pinchOnFinalizeJS,
         startZoomSV,
@@ -1413,146 +1299,9 @@ const GameBoard = React.memo(
     const boardHeight = gridRows * scaledCellSize;
     const scrollLocked = !!selectedTowerType && !selectedPlacedTower;
 
-    const hitTestBoard = useCallback<BoardHitTestFn>(
-      (winX, winY) => {
-        const r = boardScreenRectRef.current;
-        if (!r.w || !Number.isFinite(scaledCellSize) || scaledCellSize <= 0.5) return null;
-        const lx = winX - r.x;
-        const ly = winY - r.y;
-        if (lx < 0 || ly < 0 || lx >= r.w || ly >= r.h) return null;
-        const col = Math.floor(lx / scaledCellSize);
-        const row = Math.floor(ly / scaledCellSize);
-        if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) return null;
-        return { col, row };
-      },
-      [gridCols, gridRows, scaledCellSize]
-    );
+    const boardGestures = pinchGesture;
 
-    useLayoutEffect(() => {
-      onRegisterBoardHitTest?.(hitTestBoard);
-      return () => {
-        onRegisterBoardHitTest?.(null);
-      };
-    }, [hitTestBoard, onRegisterBoardHitTest]);
-
-    const clearPlacementPreview = useCallback(() => {
-      previewEmitAtRef.current = 0;
-      setPlacementPreview(null);
-    }, []);
-
-    useLayoutEffect(() => {
-      onRegisterClearPlacementPreview?.(clearPlacementPreview);
-      return () => {
-        onRegisterClearPlacementPreview?.(null);
-      };
-    }, [clearPlacementPreview, onRegisterClearPlacementPreview]);
-
-    useLayoutEffect(() => {
-      onRegisterBoardScreenSync?.(scheduleBoardScreenSync);
-      return () => {
-        onRegisterBoardScreenSync?.(null);
-      };
-    }, [onRegisterBoardScreenSync, scheduleBoardScreenSync]);
-
-    const applyPlacementFromPan = useCallback(
-      (absX: number, absY: number, cell: number, cols: number, rows: number) => {
-        if (pinchActiveRef.current) return;
-        if (!Number.isFinite(cell) || cell <= 0.5) return;
-        if (!Number.isFinite(absX) || !Number.isFinite(absY)) return;
-        const col = Math.floor(absX / cell);
-        const row = Math.floor(absY / cell);
-        if (col < 0 || col >= cols || row < 0 || row >= rows) return;
-        try {
-          const st = useGameStore.getState();
-          const type = st.selectedTowerType;
-          if (!type || st.selectedPlacedTower) return;
-          if (!st.canPlaceTower({ x: col, y: row })) return;
-          st.placeTower({ x: col, y: row });
-        } catch {
-          /* ignore */
-        }
-      },
-      []
-    );
-
-    const pushPreviewFromWorklet = useCallback(
-      (col: number | null, row: number | null) => {
-        emitPlacementPreview(col, row);
-      },
-      [emitPlacementPreview]
-    );
-
-    const placePanGesture = useMemo(() => {
-      if (!selectedTowerType || selectedPlacedTower) {
-        return Gesture.Pan().enabled(false);
-      }
-      return Gesture.Pan()
-        .maxPointers(1)
-        .minPointers(1)
-        .minDistance(4)
-        .shouldCancelWhenOutside(false)
-        .onUpdate((e) => {
-          'worklet';
-          if (pinchActiveSV.value === 1) {
-            runOnJS(pushPreviewFromWorklet)(null, null);
-            return;
-          }
-          const cell = scaledCellSize;
-          if (!Number.isFinite(cell) || cell <= 0.5) return;
-          const col = Math.floor(e.x / cell);
-          const row = Math.floor(e.y / cell);
-          if (col < 0 || col >= gridCols || row < 0 || row >= gridRows) {
-            runOnJS(pushPreviewFromWorklet)(null, null);
-            return;
-          }
-          runOnJS(pushPreviewFromWorklet)(col, row);
-        })
-        .onEnd((e) => {
-          'worklet';
-          runOnJS(pushPreviewFromWorklet)(null, null);
-          if (pinchActiveSV.value === 1) return;
-          runOnJS(applyPlacementFromPan)(e.x, e.y, scaledCellSize, gridCols, gridRows);
-        })
-        .onFinalize(() => {
-          'worklet';
-          runOnJS(pushPreviewFromWorklet)(null, null);
-        });
-    }, [
-      applyPlacementFromPan,
-      gridCols,
-      gridRows,
-      pinchActiveSV,
-      pushPreviewFromWorklet,
-      scaledCellSize,
-      selectedPlacedTower,
-      selectedTowerType,
-    ]);
-
-    const boardGestures = useMemo(() => {
-      try {
-        if (selectedTowerType && !selectedPlacedTower) {
-          return Gesture.Simultaneous(pinchGesture, placePanGesture);
-        }
-        return pinchGesture;
-      } catch {
-        return pinchGesture;
-      }
-    }, [pinchGesture, placePanGesture, selectedPlacedTower, selectedTowerType]);
-
-    const effectivePreview =
-      hoverPlacementCell !== undefined ? hoverPlacementCell : placementPreview;
-
-    useEffect(() => {
-      if (!selectedTowerType || selectedPlacedTower) {
-        clearPlacementPreview();
-      }
-    }, [clearPlacementPreview, selectedPlacedTower, selectedTowerType]);
-
-    useEffect(() => {
-      if (hoverPlacementCell !== undefined) {
-        clearPlacementPreview();
-      }
-    }, [clearPlacementPreview, hoverPlacementCell]);
+    const effectivePreview = previewCell ?? null;
 
     return (
     <ScrollView
@@ -2405,163 +2154,89 @@ export default function GameScreen() {
     startWave();
   }, [startWave, playerStore.hapticEnabled]);
 
+  const [pendingPlacement, setPendingPlacement] = useState<{ x: number; y: number } | null>(null);
+
   const handleCellPress = useCallback((x: number, y: number) => {
     if (playerStore.hapticEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
     const existingTower = getTowerAt({ x, y });
-    
+
     if (existingTower) {
+      setPendingPlacement(null);
       selectPlacedTower(existingTower);
-    } else if (selectedTowerType && canPlaceTower({ x, y })) {
-      const success = placeTower({ x, y });
-      if (success && playerStore.hapticEnabled) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (selectedTowerType) {
+      if (canPlaceTower({ x, y })) {
+        setPendingPlacement({ x, y });
+      } else if (playerStore.hapticEnabled) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } else {
+      setPendingPlacement(null);
       if (selectedPlacedTower) {
         selectPlacedTower(null);
       }
     }
-  }, [selectedTowerType, selectedPlacedTower, getTowerAt, canPlaceTower, placeTower, selectPlacedTower, playerStore.hapticEnabled]);
+  }, [selectedTowerType, selectedPlacedTower, getTowerAt, canPlaceTower, selectPlacedTower, playerStore.hapticEnabled]);
 
-  const boardHitTestRef = useRef<BoardHitTestFn | null>(null);
-  const clearBoardPlacementPreviewRef = useRef<(() => void) | null>(null);
-  const syncBoardScreenRectRef = useRef<(() => void) | null>(null);
-  const panelDragTypeRef = useRef<TowerType | null>(null);
-  const panelDragActiveRef = useRef(false);
+  const handleCancelPlacement = useCallback(() => {
+    setPendingPlacement(null);
+    if (playerStore.hapticEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [playerStore.hapticEnabled]);
 
-  const panelDragGhostX = useSharedValue(0);
-  const panelDragGhostY = useSharedValue(0);
-  const panelDragGhostActive = useSharedValue(0);
-  const panelDragSV = useMemo(
-    () => ({
-      ghostX: panelDragGhostX,
-      ghostY: panelDragGhostY,
-      ghostActive: panelDragGhostActive,
-    }),
-    [panelDragGhostActive, panelDragGhostX, panelDragGhostY]
-  );
-
-  const [panelDragActive, setPanelDragActive] = useState(false);
-  const [ghostTowerType, setGhostTowerType] = useState<TowerType | null>(null);
-  const [panelHoverCell, setPanelHoverCell] = useState<{ col: number; row: number } | null>(null);
-  const [towerPanelScrollEnabled, setTowerPanelScrollEnabled] = useState(true);
-  const [invalidDropFlash, setInvalidDropFlash] = useState(false);
-
-  const registerBoardHitTest = useCallback((fn: BoardHitTestFn | null) => {
-    boardHitTestRef.current = fn;
-  }, []);
-
-  const registerClearBoardPlacementPreview = useCallback((fn: (() => void) | null) => {
-    clearBoardPlacementPreviewRef.current = fn;
-  }, []);
-
-  const registerBoardScreenSync = useCallback((fn: (() => void) | null) => {
-    syncBoardScreenRectRef.current = fn;
-  }, []);
-
-  const resetTowerDragSession = useCallback(
-    (opts?: { deselect?: boolean }) => {
-      panelDragGhostActive.value = 0;
-      panelDragActiveRef.current = false;
-      panelDragTypeRef.current = null;
-      setPanelDragActive(false);
-      setGhostTowerType(null);
-      setPanelHoverCell(null);
-      setTowerPanelScrollEnabled(true);
-      setInvalidDropFlash(false);
-      clearBoardPlacementPreviewRef.current?.();
-      if (opts?.deselect) {
-        selectTower(null);
+  const handleConfirmPlacement = useCallback(() => {
+    if (!pendingPlacement || !selectedTowerType) return;
+    const success = placeTower(pendingPlacement);
+    if (success) {
+      setPendingPlacement(null);
+      if (playerStore.hapticEnabled) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-    },
-    [panelDragGhostActive, selectTower]
-  );
+    } else if (playerStore.hapticEnabled) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  }, [pendingPlacement, selectedTowerType, placeTower, playerStore.hapticEnabled]);
 
-  const handleTowerDragStart = useCallback(
-    (type: TowerType, winX: number, winY: number) => {
-      panelDragActiveRef.current = true;
-      panelDragTypeRef.current = type;
-      panelDragGhostX.value = winX;
-      panelDragGhostY.value = winY;
-      panelDragGhostActive.value = 1;
-      setPanelDragActive(true);
-      setGhostTowerType(type);
-      setTowerPanelScrollEnabled(false);
-      setPanelHoverCell(null);
-      setInvalidDropFlash(false);
-      clearBoardPlacementPreviewRef.current?.();
-      syncBoardScreenRectRef.current?.();
+  const handleTowerSelect = useCallback(
+    (type: TowerType | null) => {
+      setPendingPlacement(null);
       selectTower(type);
-      if (playerStore.hapticEnabled) {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      }
     },
-    [playerStore.hapticEnabled, selectTower]
+    [selectTower]
   );
 
-  const handleTowerDragMove = useCallback((winX: number, winY: number) => {
-    if (!panelDragActiveRef.current) return;
-    const hit = boardHitTestRef.current?.(winX, winY) ?? null;
-    setPanelHoverCell((prev) =>
-      prev?.col === hit?.col && prev?.row === hit?.row ? prev : hit
-    );
-  }, []);
+  const handleToggleAutoStart = useCallback(() => {
+    const nextOn = !playerStore.autoStartWaves;
+    playerStore.toggleAutoStartWaves();
+    if (playerStore.hapticEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    if (!nextOn) {
+      useGameStore.setState({ autoWaveTimer: 0 });
+      return;
+    }
+    const st = useGameStore.getState();
+    if (!st.waveInProgress && st.currentWave > 0 && st.autoWaveTimer <= 0) {
+      useGameStore.setState({ autoWaveTimer: GAME_CONFIG.WAVE_DELAY });
+    }
+  }, [playerStore]);
 
-  const handleTowerDragEnd = useCallback(
-    (winX: number, winY: number) => {
-      if (!panelDragActiveRef.current && !panelDragTypeRef.current) {
-        resetTowerDragSession();
-        return;
-      }
+  useEffect(() => {
+    if (!selectedTowerType) {
+      setPendingPlacement(null);
+    }
+  }, [selectedTowerType]);
 
-      const type = panelDragTypeRef.current;
-      const hit = boardHitTestRef.current?.(winX, winY) ?? null;
-
-      resetTowerDragSession();
-
-      if (!type) {
-        return;
-      }
-
-      const failInvalid = () => {
-        selectTower(null);
-        setInvalidDropFlash(true);
-        setTimeout(() => setInvalidDropFlash(false), 380);
-        if (playerStore.hapticEnabled) {
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        }
-      };
-
-      if (!hit) {
-        failInvalid();
-        return;
-      }
-
-      const st = useGameStore.getState();
-      if (!st.canPlaceTower({ x: hit.col, y: hit.row })) {
-        failInvalid();
-        return;
-      }
-
-      const placed = st.placeTower({ x: hit.col, y: hit.row });
-      if (!placed) {
-        failInvalid();
-        return;
-      }
-
-      if (playerStore.hapticEnabled) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    },
-    [playerStore.hapticEnabled, resetTowerDragSession, selectTower]
+  const placementPreviewCell = useMemo(
+    () =>
+      pendingPlacement ? { col: pendingPlacement.x, row: pendingPlacement.y } : null,
+    [pendingPlacement]
   );
 
-  const handleTowerDragFinalize = useCallback(() => {
-    resetTowerDragSession();
-  }, [resetTowerDragSession]);
+  const pendingPlacementCost = selectedTowerType ? getTowerCost(selectedTowerType) : 0;
 
   const handleUpgrade = useCallback(() => {
     if (selectedPlacedTower) {
@@ -2695,7 +2370,12 @@ export default function GameScreen() {
   }, [dailyMissions, isPlaying, isGameOver]);
 
   useEffect(() => {
-    if (!playerStore.autoStartWaves) return;
+    if (!playerStore.autoStartWaves) {
+      if (autoWaveTimer > 0) {
+        useGameStore.setState({ autoWaveTimer: 0 });
+      }
+      return;
+    }
     if (!isPlaying || isPaused || isGameOver || waveInProgress) return;
     if (currentWave === 0 && towersCount > 0) {
       startWave();
@@ -2708,6 +2388,7 @@ export default function GameScreen() {
     waveInProgress,
     currentWave,
     towersCount,
+    autoWaveTimer,
     startWave,
   ]);
 
@@ -2862,6 +2543,8 @@ export default function GameScreen() {
         unlockedSpeeds={unlockedSpeeds}
         onPurchaseSpeed={handlePurchaseSpeed}
         gems={playerStore.gems}
+        autoStartWaves={playerStore.autoStartWaves}
+        onToggleAutoStart={handleToggleAutoStart}
       />
 
       {/* Bonus popup notification */}
@@ -2886,10 +2569,7 @@ export default function GameScreen() {
           zoomLevel={zoomLevel}
           performanceMode={playerStore.performanceMode}
           vfxQuality={vfxQuality}
-          hoverPlacementCell={panelDragActive ? panelHoverCell : undefined}
-          onRegisterBoardHitTest={registerBoardHitTest}
-          onRegisterClearPlacementPreview={registerClearBoardPlacementPreview}
-          onRegisterBoardScreenSync={registerBoardScreenSync}
+          previewCell={placementPreviewCell}
         />
         {/* Overlay so inter-wave UI does not shrink the board viewport (avoids scroll re-center / map jump). */}
         {!waveInProgress && !isGameOver && isPlaying && (
@@ -2910,24 +2590,34 @@ export default function GameScreen() {
                   <Text style={styles.missionNudgeText}>{missionNudge.text}</Text>
                 )}
               </View>
-              <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
-                <Text style={styles.startWaveText}>
-                  Start Wave {currentWave + 1}{' '}
-                  {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
-                </Text>
-              </TouchableOpacity>
+              <View style={styles.waveInfoActions}>
+                <AutoStartToggle
+                  enabled={playerStore.autoStartWaves}
+                  onToggle={handleToggleAutoStart}
+                />
+                <TouchableOpacity style={styles.startWaveButton} onPress={handleStartWave}>
+                  <Text style={styles.startWaveText}>
+                    Start Wave {currentWave + 1}{' '}
+                    {playerStore.autoStartWaves && autoWaveTimer > 0 && currentWave > 0
+                      ? `(${formatTimer(autoWaveTimer)})`
+                      : ''}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
       </View>
 
-      <TowerDragGhostOverlay
-        towerType={ghostTowerType}
-        ghostX={panelDragGhostX}
-        ghostY={panelDragGhostY}
-        ghostActive={panelDragGhostActive}
-        invalidDrop={invalidDropFlash}
-      />
+      {pendingPlacement && selectedTowerType && !selectedPlacedTower && (
+        <PlacementConfirmBar
+          towerType={selectedTowerType}
+          cost={pendingPlacementCost}
+          canAfford={coins >= pendingPlacementCost}
+          onConfirm={handleConfirmPlacement}
+          onCancel={handleCancelPlacement}
+        />
+      )}
 
       {/* Tower options panel */}
       {selectedPlacedTower && (
@@ -2947,25 +2637,19 @@ export default function GameScreen() {
       {/* Tower selection panel */}
       {!selectedPlacedTower && (
         <TowerPanel
-          onSelect={selectTower}
+          onSelect={handleTowerSelect}
           selectedType={selectedTowerType}
           coins={coins}
           unlockedTowers={unlockedTowers}
           getTowerCost={getTowerCost}
-          scrollEnabled={towerPanelScrollEnabled}
-          dragSV={panelDragSV}
-          onTowerDragStart={handleTowerDragStart}
-          onTowerDragMove={handleTowerDragMove}
-          onTowerDragEnd={handleTowerDragEnd}
-          onTowerDragFinalize={handleTowerDragFinalize}
         />
       )}
 
       {/* Instructions */}
-      {selectedTowerType && !selectedPlacedTower && (
+      {selectedTowerType && !selectedPlacedTower && !pendingPlacement && (
         <View style={styles.instructionBar}>
           <Text style={styles.instructionText}>
-            Drag a tower from the panel onto the map · Or tap to select, then drag on the map · Pinch to zoom ·{' '}
+            Tap a cell on the map to preview · Confirm with the check button · Pinch to zoom ·{' '}
             {TOWERS[selectedTowerType].name}
           </Text>
         </View>
@@ -3265,6 +2949,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
+  waveInfoActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  autoStartToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    backgroundColor: TacticalTheme.surfaceDeep,
+  },
+  autoStartToggleActive: {
+    borderColor: TacticalTheme.accent,
+    backgroundColor: 'rgba(46, 204, 113, 0.2)',
+  },
+  autoStartToggleText: {
+    color: TacticalTheme.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  autoStartToggleTextActive: {
+    color: '#fff',
+  },
   bonusText: {
     color: '#2ECC71',
     fontSize: 13,
@@ -3530,28 +3241,51 @@ const styles = StyleSheet.create({
   towerCostRed: {
     color: '#E74C3C',
   },
-  towerDragLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 60,
-  },
-  towerDragGhost: {
-    position: 'absolute',
-    width: 60,
-    height: 60,
-    borderRadius: 12,
-    borderWidth: 2,
-    justifyContent: 'center',
+  placementConfirmBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 4,
-    elevation: 8,
+    backgroundColor: TacticalTheme.surfaceDeep,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a4e',
+    gap: 12,
   },
-  towerDragGhostIcon: {
+  placementCancelButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    backgroundColor: '#555',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placementConfirmInfo: {
+    flex: 1,
+  },
+  placementConfirmTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  placementConfirmCostRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  placementConfirmCost: {
+    color: '#FFD700',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  placementConfirmCostRed: {
+    color: '#E74C3C',
+  },
+  placementConfirmButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#2ECC71',
     justifyContent: 'center',
     alignItems: 'center',
   },
