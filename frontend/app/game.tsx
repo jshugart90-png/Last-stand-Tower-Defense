@@ -2866,7 +2866,9 @@ const styles = StyleSheet.create({
   },
   speedControls: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
+    alignItems: 'center',
     gap: 4,
     paddingVertical: 6,
     backgroundColor: TacticalTheme.panel,
