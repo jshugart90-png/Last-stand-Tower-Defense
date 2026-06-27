@@ -269,7 +269,12 @@ export default function SettingsScreen() {
           <View style={styles.settingRow}>
             <View style={styles.settingInfo}>
               <Ionicons name="play-forward" size={24} color={TacticalTheme.accent} />
-              <Text style={styles.settingLabel}>Auto-Start Waves</Text>
+              <View>
+                <Text style={styles.settingLabel}>Auto-Start Waves</Text>
+                <Text style={styles.settingHint}>
+                  Automatically start the next wave after a short delay
+                </Text>
+              </View>
             </View>
             <Switch
               value={playerStore.autoStartWaves}
