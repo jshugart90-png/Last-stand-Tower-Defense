@@ -36,7 +36,7 @@ const MAP_ORDER = [
   'dusk_causeway',
 ] as const;
 
-const GEM_COSTS = [0, 75, 200, 400, 650, 950, 1300, 1700, 2150, 2700, 3400];
+const GEM_COSTS = [0, 40, 100, 200, 325, 475, 650, 850, 1075, 1350, 1700]; // 2.3: halved — 13.5k total was ~1,300 runs
 /** Min best wave on the *previous* map to unlock the next map (index aligned with GAME_MAPS). */
 /**
  * WG[i] unlocks GAME_MAPS[i] when best wave on GAME_MAPS[i - 1] is ≥ WG[i].

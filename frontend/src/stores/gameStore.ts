@@ -120,6 +120,8 @@ export interface GameState {
   isPlaying: boolean;
   isPaused: boolean;
   isGameOver: boolean;
+  /** True once the player has used their one rewarded-ad revive this run. */
+  revivedThisRun: boolean;
   currentWave: number;
   waveInProgress: boolean;
   /** Planned wave spawns from `getWavePlannedEnemyCount` when the wave starts. */
@@ -200,6 +202,8 @@ interface GameActions {
   pauseGame: () => void;
   resumeGame: () => void;
   endGame: () => void;
+  /** Rewarded-ad revive: restore half base health, clear the field, resume prep. One per run. */
+  reviveGame: () => void;
   restartGame: () => void;
   
   // Speed control
@@ -310,6 +314,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   isPlaying: false,
   isPaused: false,
   isGameOver: false,
+  revivedThisRun: false,
   currentWave: 0,
   waveInProgress: false,
   waveSpawnSlotsTotal: 0,
@@ -378,6 +383,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         isPlaying: true,
         isPaused: false,
         isGameOver: false,
+        revivedThisRun: false,
         currentWave: 0,
         waveInProgress: false,
         waveSpawnSlotsTotal: 0,
@@ -441,6 +447,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       isPlaying: true,
       isPaused: false,
       isGameOver: false,
+      revivedThisRun: false,
       currentWave: 0,
       waveInProgress: false,
       waveSpawnSlotsTotal: 0,
@@ -500,6 +507,26 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     clearBonusPopupDismissTimer();
     void stopAllSounds();
     set({ isPlaying: false, isGameOver: true });
+  },
+
+  reviveGame: () => {
+    clearBonusPopupDismissTimer();
+    setGameplaySfxArmed(true);
+    set({
+      isPlaying: true,
+      isPaused: false,
+      isGameOver: false,
+      revivedThisRun: true,
+      baseHealth: Math.max(1, Math.floor(GAME_CONFIG.BASE_HEALTH / 2)),
+      waveInProgress: false,
+      waveSpawnSlotsTotal: 0,
+      waveSpawnSlotsReleased: 0,
+      autoWaveTimer: 0,
+      enemies: [],
+      projectiles: [],
+      laserBeams: [],
+      selectedPlacedTower: null,
+    });
   },
   
   restartGame: () => {
@@ -1366,6 +1393,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         isPlaying: true,
         isPaused: false,
         isGameOver: false,
+        revivedThisRun: false,
         currentWave: savedGame.currentWave,
         waveInProgress: false,
         waveSpawnSlotsTotal: 0,
@@ -1420,6 +1448,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       isPlaying: true,
       isPaused: false,
       isGameOver: false,
+      revivedThisRun: false,
       currentWave: savedGame.currentWave,
       waveInProgress: false,
       waveSpawnSlotsTotal: 0,

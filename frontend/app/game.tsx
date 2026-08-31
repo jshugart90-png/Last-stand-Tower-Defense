@@ -52,7 +52,7 @@ import {
   COMBO_BONUS_GEMS,
   type EnemyType,
 } from '../src/constants/game';
-import { gameApi, analyticsApi, isServerBackedPlayerId } from '../src/hooks/useApi';
+import { gameApi, analyticsApi, isServerBackedPlayerId, isBackendConfigured, rewardApi } from '../src/hooks/useApi';
 import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx } from '../src/services/audioService';
@@ -64,7 +64,7 @@ import {
 import { getMapById, promoteEnemyType } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { showGameOverInterstitial } from '../src/services/adsService';
+import { showGameOverInterstitial, showRewardedAd, useAdsStatus } from '../src/services/adsService';
 import { useRewardedGems } from '../src/hooks/useRewardedGems';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -1640,9 +1640,12 @@ const GameOverFlowModal = ({
   onHome,
   onPlayAgain,
   rewarded,
+  onReviveWatch,
+  onReviveDecline,
+  reviveBusy,
 }: {
   visible: boolean;
-  step: 'over' | 'results';
+  step: 'revive' | 'over' | 'results';
   wave: number;
   score: number;
   enemiesKilled: number;
@@ -1660,6 +1663,9 @@ const GameOverFlowModal = ({
   onSeeResults: () => void;
   onHome: () => void;
   onPlayAgain: () => void;
+  onReviveWatch: () => void;
+  onReviveDecline: () => void;
+  reviveBusy: boolean;
   /** Rewarded-video bonus (hidden when ads are unavailable). */
   rewarded: {
     visible: boolean;
@@ -1676,7 +1682,29 @@ const GameOverFlowModal = ({
   return (
     <Modal visible transparent animationType="fade">
       <View style={styles.modalOverlay}>
-        {step === 'over' ? (
+        {step === 'revive' ? (
+          <View style={styles.gameOverModal}>
+            <MaterialCommunityIcons name="heart-flash" size={44} color={TacticalTheme.accent} />
+            <Text style={styles.gameOverTitle}>Base destroyed!</Text>
+            <Text style={styles.reviveSubtitle}>
+              Watch a short video to revive with 50% base health and keep this run alive.
+            </Text>
+            <Text style={styles.reviveStatsLine}>Wave {wave} • {enemiesKilled} kills so far</Text>
+            <TouchableOpacity
+              style={[styles.reviveButton, reviveBusy && styles.reviveButtonDisabled]}
+              onPress={onReviveWatch}
+              disabled={reviveBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Watch a video to revive"
+            >
+              <Ionicons name="play-circle" size={22} color={TacticalTheme.white} />
+              <Text style={styles.reviveButtonText}>{reviveBusy ? 'Loading video…' : 'Watch & Revive'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.playAgainSecondary} onPress={onReviveDecline} disabled={reviveBusy}>
+              <Text style={styles.playAgainSecondaryText}>Give up</Text>
+            </TouchableOpacity>
+          </View>
+        ) : step === 'over' ? (
           <View style={styles.gameOverModal}>
             <Text style={styles.gameOverTitle}>Game over</Text>
             <View style={styles.gameOverKillsBlock}>
@@ -1894,7 +1922,13 @@ export default function GameScreen() {
   const waveKeyRef = useRef<string>('');
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [eliteWaveNotice, setEliteWaveNotice] = useState<string | null>(null);
-  const [gameOverStep, setGameOverStep] = useState<'over' | 'results'>('over');
+  const [gameOverStep, setGameOverStep] = useState<'revive' | 'over' | 'results'>('over');
+  const [reviveBusy, setReviveBusy] = useState(false);
+  const revivedThisRun = useGameStore((s) => s.revivedThisRun);
+  const reviveGame = useGameStore((s) => s.reviveGame);
+  const adsReadyForRevive = useAdsStatus((s) => s.ready && s.rewardedReady);
+  /** Snapshot of revive eligibility, frozen at the moment of death (effect lives below, after isGameOver). */
+  const reviveOfferRef = useRef(false);
   
   const playerStore = usePlayerStore();
   const registerRunStarted = usePlayerStore((s) => s.registerRunStarted);
@@ -2064,17 +2098,22 @@ export default function GameScreen() {
     waveSpawnSlotsReleased,
   ]);
 
+  useEffect(() => {
+    if (!isGameOver) reviveOfferRef.current = adsReadyForRevive && !revivedThisRun;
+  }, [adsReadyForRevive, revivedThisRun, isGameOver]);
+
   const sessionRunRecordedRef = useRef(false);
   useLayoutEffect(() => {
     if (!isGameOver) {
       sessionRunRecordedRef.current = false;
       return;
     }
+    if (reviveOfferRef.current) return; // revive pending — record only on final death
     if (sessionRunRecordedRef.current) return;
     if (!usePlayerStore.getState().playerId) return;
     sessionRunRecordedRef.current = true;
     usePlayerStore.getState().recordSessionRunStats(enemiesKilled);
-  }, [isGameOver, enemiesKilled]);
+  }, [isGameOver, gameOverStep, enemiesKilled]);
 
   const slaughterHapticSentRef = useRef(false);
   useEffect(() => {
@@ -2101,7 +2140,7 @@ export default function GameScreen() {
   }, [isGameOver, playerGems, runGemsFromWavePart, playerStore.playerId]);
 
   useEffect(() => {
-    if (isGameOver) setGameOverStep('over');
+    if (isGameOver) setGameOverStep(reviveOfferRef.current ? 'revive' : 'over');
   }, [isGameOver]);
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
@@ -2629,9 +2668,9 @@ export default function GameScreen() {
     playerStore.recordMapBestWave(runMapId, currentWave);
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
-    // Slower progression: modest wave XP + small kill XP + light round completion XP.
-    const waveXp = Math.max(1, Math.floor(currentWave * 0.65));
-    const killXp = Math.floor(enemiesKilled * 0.06);
+    // 2.3: XP tripled — level 2 was ~30 runs away, now ~8-9; levels also pay gems (playerStore.addXp).
+    const waveXp = Math.max(1, Math.floor(currentWave * 2));
+    const killXp = Math.floor(enemiesKilled * 0.2);
     const roundXp = currentWave >= 1 ? 1 : 0;
     const baseXpReward = waveXp + killXp + roundXp;
     const waveGemProgress = useGameStore.getState().runGemsFromWavePart;
@@ -2662,7 +2701,7 @@ export default function GameScreen() {
     }
 
     const endPayload = {
-      player_id: playerStore.playerId,
+      player_id: playerStore.playerId as string, // narrowed by isServerBackedPlayerId above
       wave_reached: currentWave,
       enemies_killed: enemiesKilled,
       towers_placed: towersPlaced,
@@ -2715,8 +2754,9 @@ export default function GameScreen() {
       gameEndHandledRef.current = false;
       return;
     }
+    if (reviveOfferRef.current) return; // revive pending — commit rewards only on final death
     void handleGameEnd();
-  }, [isGameOver, handleGameEnd]);
+  }, [isGameOver, gameOverStep, handleGameEnd]);
 
   useEffect(() => {
     const completed = dailyMissions.filter((m) => m.completed).length;
@@ -2757,6 +2797,36 @@ export default function GameScreen() {
     });
   }, [rewardedGems]);
 
+  const handleReviveDecline = useCallback(() => {
+    reviveOfferRef.current = false;
+    setGameOverStep('over'); // effects re-run and commit the run now
+  }, []);
+
+  const handleReviveWatch = useCallback(() => {
+    if (reviveBusy) return;
+    setReviveBusy(true);
+    void (async () => {
+      try {
+        const result = await showRewardedAd();
+        if (result === 'earned') {
+          // Tell the backend an ad-revive happened (analytics/cooldown); never block gameplay on it.
+          const pid = usePlayerStore.getState().playerId;
+          if (pid && isServerBackedPlayerId(pid) && isBackendConfigured()) {
+            void rewardApi.claim({ player_id: pid, reward_type: 'revive', ad_type: 'rewarded' }).catch(() => {});
+          }
+          reviveOfferRef.current = false;
+          reviveGame();
+          if (canPlayUiSfx()) playSfx('record');
+        } else {
+          reviveOfferRef.current = false;
+          setGameOverStep('over');
+        }
+      } finally {
+        setReviveBusy(false);
+      }
+    })();
+  }, [reviveBusy, reviveGame]);
+
   // Interstitial after game over: capped in adsService, skipped for ad-free players.
   const leavingAfterAdRef = useRef(false);
   const handleRestart = useCallback(() => {
@@ -2789,8 +2859,9 @@ export default function GameScreen() {
   };
 
   const rewardSummary = useMemo(() => {
-    const waveXp = Math.max(1, Math.floor(currentWave * 0.65));
-    const killXp = Math.floor(enemiesKilled * 0.06);
+    // Keep in sync with handleGameEnd's XP formula (2.3: wave*2 + kills*0.2).
+    const waveXp = Math.max(1, Math.floor(currentWave * 2));
+    const killXp = Math.floor(enemiesKilled * 0.2);
     const roundXp = currentWave >= 1 ? 1 : 0;
     const baseXpReward = waveXp + killXp + roundXp;
     const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
@@ -3031,7 +3102,7 @@ export default function GameScreen() {
 
       <GameOverFlowModal
         visible={isGameOver}
-        step={gameOverStep}
+        step={isGameOver && reviveOfferRef.current && gameOverStep !== 'results' ? 'revive' : gameOverStep}
         wave={currentWave}
         score={score}
         enemiesKilled={enemiesKilled}
@@ -3045,6 +3116,9 @@ export default function GameScreen() {
         onSeeResults={handleSeeResults}
         onHome={handleExit}
         onPlayAgain={handleRestart}
+        onReviveWatch={handleReviveWatch}
+        onReviveDecline={handleReviveDecline}
+        reviveBusy={reviveBusy}
         rewarded={{
           visible: rewardedGems.adsReady,
           available: rewardedGems.available,
@@ -3934,6 +4008,36 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  reviveSubtitle: {
+    color: TacticalTheme.textMuted,
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 6,
+    lineHeight: 20,
+  },
+  reviveStatsLine: {
+    color: TacticalTheme.text,
+    fontSize: 13,
+    marginBottom: 14,
+  },
+  reviveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#2ECC71',
+    paddingVertical: 15,
+    borderRadius: 12,
+    width: '100%',
+    marginBottom: 6,
+  },
+  reviveButtonDisabled: { opacity: 0.6 },
+  reviveButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
   },
   rewardedBonusButton: {
     flexDirection: 'row',

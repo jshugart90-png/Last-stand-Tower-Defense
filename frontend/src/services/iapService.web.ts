@@ -12,14 +12,14 @@ export const IAP_PRODUCTS = {
 export const IAP_PRICES: Record<string, string> = {
   [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
   [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
-  [IAP_PRODUCTS.GEMS_100]: '$0.99',
-  [IAP_PRODUCTS.GEMS_500]: '$1.99',
-  [IAP_PRODUCTS.GEMS_1500]: '$4.99',
+  [IAP_PRODUCTS.GEMS_100]: '$0.99',  // 120 gems (2.3 ladder fix)
+  [IAP_PRODUCTS.GEMS_500]: '$2.99',
+  [IAP_PRODUCTS.GEMS_1500]: '$5.99',
   [IAP_PRODUCTS.GEMS_4000]: '$9.99',
 };
 
 export const GEM_PACK_AMOUNTS: Record<string, number> = {
-  [IAP_PRODUCTS.GEMS_100]: 100,
+  [IAP_PRODUCTS.GEMS_100]: 120, // 2.3: was 100 — small pack must not be strictly dominated
   [IAP_PRODUCTS.GEMS_500]: 500,
   [IAP_PRODUCTS.GEMS_1500]: 1500,
   [IAP_PRODUCTS.GEMS_4000]: 4000,

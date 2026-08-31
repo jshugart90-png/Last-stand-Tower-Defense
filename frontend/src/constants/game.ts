@@ -264,7 +264,7 @@ export const GAME_CONFIG = {
 export const RUN_KILL_COIN_BASE_MULT = 1.25;
 
 /** Tighter gem economy: pay out ~35% of legacy run gem rates (~65% reduction) */
-export const GEM_ECONOMY_MULT = 0.35;
+export const GEM_ECONOMY_MULT = 0.7; // 2.3: doubled from 0.35 — runs paid ~1 gem, killing the loop
 
 export const COMBO_BONUS_GEMS_LEGACY = 20;
 export const COMBO_BONUS_GEMS = Math.max(1, Math.floor(COMBO_BONUS_GEMS_LEGACY * GEM_ECONOMY_MULT));

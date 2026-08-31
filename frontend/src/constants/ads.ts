@@ -77,5 +77,8 @@ export const REWARDED_AD_GEMS = 10;
 export const INTERSTITIAL_MIN_INTERVAL_MS = 3 * 60 * 1000;
 export const INTERSTITIAL_SKIP_FIRST_GAME_OVERS = 1;
 
-/** Rewarded ad cooldown shown in UI; backend enforces 30s for "gems". */
-export const REWARDED_AD_COOLDOWN_MS = 30 * 1000;
+/** Rewarded ad cooldown shown in UI; backend enforces the same for "gems". */
+export const REWARDED_AD_COOLDOWN_MS = 180 * 1000;
+
+/** Max rewarded-gem videos per player per day (keeps ads a supplement, not the economy). */
+export const REWARDED_ADS_PER_DAY = 5;

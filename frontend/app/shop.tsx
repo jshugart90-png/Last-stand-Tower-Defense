@@ -334,6 +334,65 @@ export default function ShopScreen() {
   };
 
 
+  // Handle Premium Bundle (removes ads permanently) — real money via IAP
+  const handlePurchasePremium = async () => {
+    if (playerStore.premium) {
+      Alert.alert('Already Premium', 'Ads are already removed on this account.');
+      return;
+    }
+    Alert.alert(
+      'Premium — Remove Ads',
+      'Remove banner and full-screen ads permanently for $4.99?\n\nRewarded "watch a video" bonuses stay available whenever you want them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Buy for $4.99',
+          onPress: async () => {
+            if (isIAPAvailable() && isIAPInitialized()) {
+              setPurchaseLoading(true);
+              try {
+                const result = await requestPurchase(IAP_PRODUCTS.PREMIUM_BUNDLE);
+                if (result.success && result.purchase) {
+                  const playerId = playerStore.playerId;
+                  try {
+                    if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+                      await syncPurchaseWithBackend({
+                        playerId,
+                        itemType: 'premium',
+                        itemId: IAP_PRODUCTS.PREMIUM_BUNDLE,
+                        receipt: result.receipt,
+                        purchaseToken: result.purchaseToken,
+                        transactionId: result.transactionId,
+                      });
+                    }
+                    playerStore.setPremium(true);
+                    await completePurchase(result.purchase, IAP_PRODUCTS.PREMIUM_BUNDLE);
+                  } catch {
+                    playerStore.setPremium(true); // store purchase succeeded; never keep showing ads
+                    Alert.alert(
+                      'Purchase Recorded',
+                      'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
+                    );
+                    return;
+                  }
+                  Alert.alert('Welcome to Premium!', 'Ads are now removed. Thanks for supporting the game!');
+                } else if (result.error && result.error !== 'Purchase cancelled') {
+                  Alert.alert('Purchase Failed', result.error);
+                }
+              } catch {
+                Alert.alert('Error', 'Purchase failed. Please try again.');
+              } finally {
+                setPurchaseLoading(false);
+              }
+            } else {
+              Alert.alert(STORE_UNAVAILABLE_TITLE, STORE_UNAVAILABLE_BODY);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Handle restore purchases
   const handleRestorePurchases = async () => {
     if (isIAPAvailable() && isIAPInitialized()) {
@@ -345,6 +404,9 @@ export default function ShopScreen() {
         for (const purchase of purchases) {
           if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
             playerStore.addArenaExpansion();
+            restoredSomething = true;
+          } else if (purchase.productId === IAP_PRODUCTS.PREMIUM_BUNDLE) {
+            playerStore.setPremium(true);
             restoredSomething = true;
           }
         }
@@ -715,6 +777,30 @@ export default function ShopScreen() {
               Purchase gems to unlock towers, upgrades, and more
             </Text>
 
+            {/* Premium: remove ads (hidden once owned) */}
+            {!playerStore.premium && (
+              <TouchableOpacity
+                style={styles.premiumCard}
+                onPress={handlePurchasePremium}
+                disabled={purchaseLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Remove ads permanently for $4.99"
+              >
+                <View style={styles.premiumIconWrap}>
+                  <MaterialCommunityIcons name="crown" size={26} color="#d4af37" />
+                </View>
+                <View style={styles.rewardedTextWrap}>
+                  <Text style={styles.rewardedTitle}>Remove Ads — Premium</Text>
+                  <Text style={styles.rewardedSubtitle}>
+                    No banners, no full-screen ads. Forever.
+                  </Text>
+                </View>
+                <View style={styles.premiumPriceTag}>
+                  <Text style={styles.premiumPriceText}>$4.99</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
             {/* Free gems: rewarded video */}
             {rewardedGems.adsReady && (
               <TouchableOpacity
@@ -756,7 +842,7 @@ export default function ShopScreen() {
                 <View style={styles.coinPackIconWrap}>
                   <FontAwesome5 name="gem" size={24} color={TacticalTheme.gem} />
                 </View>
-                <Text style={styles.coinPackAmount}>100</Text>
+                <Text style={styles.coinPackAmount}>120</Text>
                 <Text style={styles.coinPackLabel}>Gems</Text>
                 <View style={styles.coinPackPriceTag}>
                   {purchaseLoading ? (
@@ -785,7 +871,7 @@ export default function ShopScreen() {
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Text style={styles.coinPackPrice}>$1.99</Text>
+                    <Text style={styles.coinPackPrice}>$2.99</Text>
                   )}
                 </View>
               </TouchableOpacity>
@@ -806,7 +892,7 @@ export default function ShopScreen() {
                   {purchaseLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <Text style={styles.coinPackPrice}>$4.99</Text>
+                    <Text style={styles.coinPackPrice}>$5.99</Text>
                   )}
                 </View>
               </TouchableOpacity>
@@ -1017,6 +1103,37 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 16,
     paddingBottom: 32,
+  },
+  premiumCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: TacticalTheme.panel,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d4af37',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    gap: 12,
+  },
+  premiumIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: TacticalTheme.panelAlt,
+  },
+  premiumPriceTag: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#d4af37',
+  },
+  premiumPriceText: {
+    color: '#1a1408',
+    fontWeight: '800',
+    fontSize: 14,
   },
   rewardedCard: {
     flexDirection: 'row',
