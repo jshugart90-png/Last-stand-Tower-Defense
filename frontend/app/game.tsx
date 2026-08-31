@@ -64,6 +64,8 @@ import {
 import { getMapById, promoteEnemyType } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
+import { showGameOverInterstitial } from '../src/services/adsService';
+import { useRewardedGems } from '../src/hooks/useRewardedGems';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -1637,6 +1639,7 @@ const GameOverFlowModal = ({
   onSeeResults,
   onHome,
   onPlayAgain,
+  rewarded,
 }: {
   visible: boolean;
   step: 'over' | 'results';
@@ -1657,6 +1660,16 @@ const GameOverFlowModal = ({
   onSeeResults: () => void;
   onHome: () => void;
   onPlayAgain: () => void;
+  /** Rewarded-video bonus (hidden when ads are unavailable). */
+  rewarded: {
+    visible: boolean;
+    available: boolean;
+    busy: boolean;
+    cooldownSeconds: number;
+    gemsPerAd: number;
+    claimed: boolean;
+    onWatch: () => void;
+  };
 }) => {
   if (!visible) return null;
 
@@ -1739,6 +1752,27 @@ const GameOverFlowModal = ({
               <Text style={styles.rewardSummaryText}>+{rewardSummary.xpEarned} XP</Text>
               <Text style={styles.rewardSummaryText}>+{rewardSummary.gemsEarned} gems</Text>
             </View>
+
+            {rewarded.visible && !rewarded.claimed && (
+              <TouchableOpacity
+                style={[styles.rewardedBonusButton, !rewarded.available && styles.rewardedBonusButtonDisabled]}
+                onPress={rewarded.onWatch}
+                disabled={!rewarded.available}
+                accessibilityRole="button"
+                accessibilityLabel={`Watch a video for ${rewarded.gemsPerAd} bonus gems`}
+              >
+                <Ionicons name="play-circle" size={20} color={TacticalTheme.white} />
+                <Text style={styles.rewardedBonusText}>
+                  {rewarded.busy
+                    ? 'Loading video…'
+                    : rewarded.cooldownSeconds > 0
+                      ? `Bonus video in ${rewarded.cooldownSeconds}s`
+                      : rewarded.available
+                        ? `Watch a video: +${rewarded.gemsPerAd} bonus gems`
+                        : 'Bonus video loading…'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={styles.homePrimaryButton} onPress={onHome}>
               <Ionicons name="home" size={22} color="#fff" />
@@ -2711,9 +2745,28 @@ export default function GameScreen() {
     startWave,
   ]);
 
+  // Rewarded bonus on the results screen (one claim per run).
+  const rewardedGems = useRewardedGems();
+  const [rewardedClaimedThisRun, setRewardedClaimedThisRun] = useState(false);
+  useEffect(() => {
+    if (!isGameOver) setRewardedClaimedThisRun(false);
+  }, [isGameOver]);
+  const handleWatchBonusVideo = useCallback(() => {
+    void rewardedGems.watch().then((outcome) => {
+      if (outcome === 'granted') setRewardedClaimedThisRun(true);
+    });
+  }, [rewardedGems]);
+
+  // Interstitial after game over: capped in adsService, skipped for ad-free players.
+  const leavingAfterAdRef = useRef(false);
   const handleRestart = useCallback(() => {
-    playerStore.clearSavedGame(); // Clear saved game on restart
-    restartGame();
+    if (leavingAfterAdRef.current) return;
+    leavingAfterAdRef.current = true;
+    void showGameOverInterstitial().finally(() => {
+      leavingAfterAdRef.current = false;
+      playerStore.clearSavedGame(); // Clear saved game on restart
+      restartGame();
+    });
   }, [restartGame, playerStore]);
 
   const handleSeeResults = useCallback(() => {
@@ -2721,8 +2774,13 @@ export default function GameScreen() {
   }, []);
 
   const handleExit = useCallback(() => {
-    playerStore.clearSavedGame(); // Clear saved game on exit after game over
-    router.replace('/');
+    if (leavingAfterAdRef.current) return;
+    leavingAfterAdRef.current = true;
+    void showGameOverInterstitial().finally(() => {
+      leavingAfterAdRef.current = false;
+      playerStore.clearSavedGame(); // Clear saved game on exit after game over
+      router.replace('/');
+    });
   }, [router, playerStore]);
 
   const formatTimer = (ms: number) => {
@@ -2987,6 +3045,15 @@ export default function GameScreen() {
         onSeeResults={handleSeeResults}
         onHome={handleExit}
         onPlayAgain={handleRestart}
+        rewarded={{
+          visible: rewardedGems.adsReady,
+          available: rewardedGems.available,
+          busy: rewardedGems.busy,
+          cooldownSeconds: rewardedGems.cooldownSeconds,
+          gemsPerAd: rewardedGems.gemsPerAd,
+          claimed: rewardedClaimedThisRun,
+          onWatch: handleWatchBonusVideo,
+        }}
       />
 
       {/* Exit warning modal */}
@@ -3867,6 +3934,25 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  rewardedBonusButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: TacticalTheme.accent,
+    paddingVertical: 13,
+    borderRadius: 12,
+    width: '100%',
+    marginBottom: 10,
+  },
+  rewardedBonusButtonDisabled: {
+    opacity: 0.55,
+  },
+  rewardedBonusText: {
+    color: TacticalTheme.white,
+    fontSize: 15,
+    fontWeight: '700',
   },
   playAgainSecondary: {
     paddingVertical: 12,

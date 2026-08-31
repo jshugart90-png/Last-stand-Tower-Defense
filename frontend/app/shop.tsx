@@ -43,6 +43,8 @@ import {
 } from '../src/constants/storeMessages';
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
+import { AdBanner } from '../src/components/AdBanner';
+import { useRewardedGems } from '../src/hooks/useRewardedGems';
 interface Skin {
   id: string;
   name: string;
@@ -71,6 +73,7 @@ const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) =>
 };
 
 export default function ShopScreen() {
+  const rewardedGems = useRewardedGems();
   const router = useRouter();
   const params = useLocalSearchParams<{ highlightTower?: string }>();
   const playerStore = usePlayerStore();
@@ -712,6 +715,37 @@ export default function ShopScreen() {
               Purchase gems to unlock towers, upgrades, and more
             </Text>
 
+            {/* Free gems: rewarded video */}
+            {rewardedGems.adsReady && (
+              <TouchableOpacity
+                style={[styles.rewardedCard, !rewardedGems.available && styles.rewardedCardDisabled]}
+                onPress={() => { void rewardedGems.watch(); }}
+                disabled={!rewardedGems.available}
+                accessibilityRole="button"
+                accessibilityLabel={`Watch a video for ${rewardedGems.gemsPerAd} gems`}
+              >
+                <View style={styles.rewardedIconWrap}>
+                  <Ionicons name="play-circle" size={28} color={TacticalTheme.accent} />
+                </View>
+                <View style={styles.rewardedTextWrap}>
+                  <Text style={styles.rewardedTitle}>Watch a video</Text>
+                  <Text style={styles.rewardedSubtitle}>
+                    {rewardedGems.busy
+                      ? 'Loading video…'
+                      : rewardedGems.cooldownSeconds > 0
+                        ? `Next free gems in ${rewardedGems.cooldownSeconds}s`
+                        : rewardedGems.available
+                          ? `Earn ${rewardedGems.gemsPerAd} free gems`
+                          : 'Video loading — try again in a moment'}
+                  </Text>
+                </View>
+                <View style={styles.rewardedGemTag}>
+                  <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                  <Text style={styles.rewardedGemText}>+{rewardedGems.gemsPerAd}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
             <View style={styles.coinPacksContainer}>
               {/* Small Pack */}
               <TouchableOpacity 
@@ -910,6 +944,9 @@ export default function ShopScreen() {
 
         {selectedTab === 'logos' && renderLogoCard()}
       </ScrollView>
+
+      {/* Bottom banner ad (hidden for premium / ad-free players) */}
+      <AdBanner placement="shop" />
     </SafeAreaView>
   );
 }
@@ -980,6 +1017,55 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 16,
     paddingBottom: 32,
+  },
+  rewardedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: TacticalTheme.panel,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: TacticalTheme.accent,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+    gap: 12,
+  },
+  rewardedCardDisabled: {
+    opacity: 0.55,
+    borderColor: TacticalTheme.border,
+  },
+  rewardedIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: TacticalTheme.panelAlt,
+  },
+  rewardedTextWrap: { flex: 1 },
+  rewardedTitle: {
+    color: TacticalTheme.white,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  rewardedSubtitle: {
+    color: TacticalTheme.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  rewardedGemTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: TacticalTheme.panelAlt,
+  },
+  rewardedGemText: {
+    color: TacticalTheme.gem,
+    fontWeight: '800',
+    fontSize: 13,
   },
   sectionTitle: {
     color: TacticalTheme.text,

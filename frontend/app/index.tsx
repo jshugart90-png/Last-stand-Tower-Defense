@@ -22,6 +22,7 @@ import * as Crypto from 'expo-crypto';
 import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
+import { AdBanner } from '../src/components/AdBanner';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
@@ -668,6 +669,9 @@ export default function HomeScreen() {
           if (canPlayUiSfx()) playSfx('chest');
         }}
       />
+
+      {/* Bottom banner ad (hidden for premium / ad-free players) */}
+      <AdBanner placement="home" />
 
       {/* Tutorial overlay */}
       {showTutorial && (
