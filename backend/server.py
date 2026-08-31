@@ -301,9 +301,9 @@ class AnalyticsEvent(BaseModel):
 # ==================== Gem Reward Calculations ====================
 
 def calculate_gem_reward(wave_reached: int, enemies_killed: int) -> dict:
-    """Match client run gem formula (scaled, ~65% lower than legacy rates)."""
+    """Match client run gem formula (GEM_ECONOMY_MULT, keep in sync with frontend/src/constants/game.ts)."""
     raw = max(0, int(wave_reached * 0.75) + (enemies_killed // 20))
-    total = int(0.35 * raw)
+    total = int(0.7 * raw)
     return {
         "base_scaled": total,
         "raw_performance": raw,
@@ -752,7 +752,7 @@ async def claim_reward(reward: RewardClaim):
         cooldown_seconds_by_reward = {
             "coins": 30,
             "revive": 60,
-            "gems": 30,
+            "gems": 180,  # matches client REWARDED_AD_COOLDOWN_MS
             "double_damage": 60,
         }
 

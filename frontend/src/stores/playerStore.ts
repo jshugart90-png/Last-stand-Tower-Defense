@@ -191,6 +191,8 @@ interface PlayerActions {
   // Progression
   addXp: (amount: number) => void;
   setLevel: (level: number) => void;
+  /** Mark the account ad-free/premium (Premium Bundle IAP or server sync). */
+  setPremium: (premium: boolean) => void;
   setGems: (gems: number) => void;
   addGems: (amount: number) => void;
   
@@ -280,6 +282,9 @@ interface PlayerActions {
   // Reset
   resetPlayer: () => void;
 }
+
+/** 2.3: gems granted per level-up so leveling is a visible payout. */
+const LEVEL_UP_GEM_REWARD = 15;
 
 // Slower progression curve (noticeably slower than fixed 100 XP levels)
 const XP_LEVEL_BASE = 180;
@@ -590,10 +595,13 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         const gain = Math.max(0, Math.floor(amount));
         const newXp = state.xp + gain;
         const newLevel = getLevelFromXp(newXp);
-        return { xp: newXp, level: newLevel };
+        // 2.3: levels pay out — +15 gems per level gained so the XP bar is a goal, not decoration.
+        const levelsGained = Math.max(0, newLevel - state.level);
+        return { xp: newXp, level: newLevel, gems: state.gems + levelsGained * LEVEL_UP_GEM_REWARD };
       });
     },
     setLevel: (level) => set({ level }),
+    setPremium: (premium) => set({ premium }),
     setGems: (gems) => set({ gems }),
     addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
@@ -779,6 +787,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         const today = getUtcDayKey(now);
         const oneDay = 24 * 60 * 60 * 1000;
         if (today - lastDay === oneDay) {
+          nextStreak = state.loginStreak + 1;
+        } else if (today - lastDay === 2 * oneDay) {
+          // 2.3: one grace day — missing a single day no longer wipes the streak.
           nextStreak = state.loginStreak + 1;
         } else if (today === lastDay) {
           nextStreak = state.loginStreak;

@@ -20,6 +20,7 @@ import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
 import * as Crypto from 'expo-crypto';
 import { playSfx, canPlayUiSfx } from '../src/services/audioService';
+import { getDailyChallenge } from '../src/constants/challenges';
 import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { AdBanner } from '../src/components/AdBanner';
@@ -252,6 +253,7 @@ export default function HomeScreen() {
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
+  const dailyChallenge = React.useMemo(() => getDailyChallenge(), []);
   const completedDailyMissions = playerStore.dailyMissions.filter((m) => m.completed).length;
   const xpProgress = getXpProgress(playerStore.xp);
   const xpPercent = Math.min(100, Math.max(0, (xpProgress.xpIntoLevel / xpProgress.xpNeeded) * 100));
@@ -612,6 +614,19 @@ export default function HomeScreen() {
           <Ionicons name="chevron-forward" size={20} color={TacticalTheme.white} />
         </TouchableOpacity>
 
+        {/* Today's challenge (2.3): surface the rotating modifier as a daily hook */}
+        <View style={styles.dailyChallengeCard}>
+          <MaterialCommunityIcons name="calendar-star" size={20} color={TacticalTheme.gem} />
+          <View style={styles.dailyChallengeTextWrap}>
+            <Text style={styles.dailyChallengeTitle}>Today: {dailyChallenge.name}</Text>
+            <Text style={styles.dailyChallengeSub}>
+              {dailyChallenge.gemMultiplier > 1
+                ? `+${Math.round((dailyChallenge.gemMultiplier - 1) * 100)}% gems & +${Math.round((dailyChallenge.xpMultiplier - 1) * 100)}% XP today`
+                : dailyChallenge.description}
+            </Text>
+          </View>
+        </View>
+
         {/* Play button */}
         <TouchableOpacity
           style={styles.playButton}
@@ -881,6 +896,30 @@ const styles = StyleSheet.create({
     color: TacticalTheme.text,
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  dailyChallengeCard: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: TacticalTheme.panel,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+  },
+  dailyChallengeTextWrap: { flex: 1 },
+  dailyChallengeTitle: {
+    color: TacticalTheme.white,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dailyChallengeSub: {
+    color: TacticalTheme.textMuted,
+    fontSize: 12,
+    marginTop: 1,
   },
   dailyMissionsPrimaryButton: {
     width: '100%',
