@@ -567,12 +567,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       }
     }
 
+    const autoStartWaves = usePlayerStore.getState().autoStartWaves;
     set({
       waveInProgress: false,
       waveSpawnSlotsTotal: 0,
       waveSpawnSlotsReleased: 0,
       waveEndTime: Date.now(),
-      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      autoWaveTimer: autoStartWaves ? GAME_CONFIG.WAVE_DELAY : 0,
       coins: state.coins + bonus,
       score: state.score + bonus,
       lastWaveBonus: bonus,
@@ -793,7 +794,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
     // `>= 100` throttle compared delta to the *unchanged* store value, so at 1x–2x speed the
     // timer never moved (frozen countdown / no auto-start).
-    if (!state.waveInProgress && state.autoWaveTimer > 0 && state.currentWave > 0) {
+    const autoStartWaves = usePlayerStore.getState().autoStartWaves;
+    if (
+      autoStartWaves &&
+      !state.waveInProgress &&
+      state.autoWaveTimer > 0 &&
+      state.currentWave > 0
+    ) {
       const newTimer = state.autoWaveTimer - adjustedDelta;
       if (newTimer <= 0) {
         try {
@@ -1394,7 +1401,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         gameStartTime: Date.now(),
         gameSpeed: 1,
         waveEndTime: 0,
-        autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+        autoWaveTimer: usePlayerStore.getState().autoStartWaves ? GAME_CONFIG.WAVE_DELAY : 0,
         selectedTowerType: null,
         selectedPlacedTower: null,
         zoomLevel: 1,
@@ -1448,7 +1455,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       gameStartTime: Date.now(),
       gameSpeed: 1,
       waveEndTime: 0,
-      autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
+      autoWaveTimer: usePlayerStore.getState().autoStartWaves ? GAME_CONFIG.WAVE_DELAY : 0,
       selectedTowerType: null,
       selectedPlacedTower: null,
       zoomLevel: 1,
