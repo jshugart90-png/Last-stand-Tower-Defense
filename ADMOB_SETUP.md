@@ -53,10 +53,14 @@ Key files: `frontend/src/constants/ads.ts`, `frontend/src/services/adsService.na
 - Production: EAS → project → **Environment variables**, environment **production**, visibility *plain text*:
 
 ```
-EXPO_PUBLIC_ADMOB_IOS_BANNER=ca-app-pub-.../...
-EXPO_PUBLIC_ADMOB_IOS_INTERSTITIAL=ca-app-pub-.../...
-EXPO_PUBLIC_ADMOB_IOS_REWARDED=ca-app-pub-.../...
+# Live iOS units (AdMob app ca-app-pub-9533265028371895~9506046815, created 2026-08-31)
+EXPO_PUBLIC_ADMOB_IOS_BANNER=ca-app-pub-9533265028371895/6595157453
+EXPO_PUBLIC_ADMOB_IOS_INTERSTITIAL=ca-app-pub-9533265028371895/6212391376
+EXPO_PUBLIC_ADMOB_IOS_REWARDED=ca-app-pub-9533265028371895/4129153513
 ```
+
+Push them in one go with `cd frontend && eas env:push --environment production --path .env.production`
+(that file is git-ignored; recreate it from the three lines above).
 
 Missing var → that placement falls back to a Google test unit (harmless, no revenue).
 `EXPO_PUBLIC_ADMOB_TEST_ADS=1` forces test ads in a release build (use for TestFlight QA, then remove).
