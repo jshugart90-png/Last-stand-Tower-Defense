@@ -45,7 +45,7 @@ Key files: `frontend/src/constants/ads.ts`, `frontend/src/services/adsService.na
 "androidAppId": "ca-app-pub-XXXXXXXXXXXXXXXX~AAAAAAAAAA"
 ```
 
-(Wrong/missing App ID = native crash on launch. Test App IDs are the current placeholders.)
+(Wrong/missing App ID = native crash on launch. iOS App ID is set; Android still uses Google's test App ID until an Android app is created in AdMob.)
 
 **Ad unit IDs** → environment variables (never hard-coded):
 
