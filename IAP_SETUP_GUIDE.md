@@ -2,29 +2,9 @@
 
 ## AdMob Configuration
 
-### App ID
-- **AdMob App ID**: `ca-app-pub-9533265028371895~3363655461`
-
-### Ad Unit IDs
-| Ad Type | Unit ID | Usage |
-|---------|---------|-------|
-| Banner | `ca-app-pub-9533265028371895/3866386218` | Shown on Home, Leaderboard, Shop screens |
-| Interstitial | `ca-app-pub-9533265028371895/2757585578` | Every 10 waves, after game over |
-| Rewarded Video | `ca-app-pub-9533265028371895/7614059534` | Watch ads for coins, revive |
-
-### Where Ads Appear
-1. **Rewarded Video Ads**:
-   - Shop: "Watch Ad for 25 Coins" button
-   - Game Over: "Watch Ad to Revive" button (1x per game)
-2. **Banner Ads**:
-   - Home screen (bottom)
-   - Leaderboard screen (bottom)
-   - Shop screen (bottom)
-   - Banner ads are hidden when user purchases "Remove Ads"
-3. **Interstitial Ads** (full-screen):
-   - Every 10 waves during gameplay (wave 10, 20, 30...)
-   - After game over (when player dies)
-   - Interstitial ads are skipped for premium users ("Remove Ads" purchased)
+See **[ADMOB_SETUP.md](./ADMOB_SETUP.md)** — the IDs previously listed here were from a retired AdMob
+setup and must not be reused. Ad unit IDs now come from `EXPO_PUBLIC_ADMOB_*` env vars and the App IDs
+from `frontend/app.json`.
 
 ---
 

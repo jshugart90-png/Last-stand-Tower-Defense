@@ -32,6 +32,13 @@ export default function RootLayout() {
         } catch {
           // IAP optional; never crash launch
         }
+        try {
+          // Ads init last: ATT prompt + consent form should not fight the splash/IAP.
+          const { initializeAds } = await import('../src/services/adsService');
+          await initializeAds();
+        } catch {
+          // Ads optional; never crash launch
+        }
       })();
     });
     const appStateSub = AppState.addEventListener('change', (next) => {

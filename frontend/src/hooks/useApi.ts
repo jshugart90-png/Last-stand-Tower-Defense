@@ -64,6 +64,15 @@ export const purchaseApi = {
   }) => api.post('/purchases', data),
 };
 
+// Rewarded-ad reward APIs (server-authoritative gem grants with cooldowns)
+export const rewardApi = {
+  claim: (data: {
+    player_id: string;
+    reward_type: 'gems' | 'revive' | 'double_damage' | 'coins';
+    ad_type: 'rewarded' | 'interstitial';
+  }) => api.post('/rewards/claim', data),
+};
+
 // Analytics APIs
 export const analyticsApi = {
   log: (data: {
