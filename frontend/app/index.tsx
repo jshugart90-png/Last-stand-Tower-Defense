@@ -435,12 +435,8 @@ export default function HomeScreen() {
           await registerLocalPlayer(nickname);
         }
       } catch {
+        // Soft-fail: continue locally without a blocking "server error" alert (App Review 2.1a).
         await registerLocalPlayer(nickname);
-        Alert.alert(
-          'Offline mode',
-          'Could not reach the game server. You can still play; progress is stored on this device only.',
-          [{ text: 'OK' }]
-        );
       }
 
       setShowNicknameModal(false);

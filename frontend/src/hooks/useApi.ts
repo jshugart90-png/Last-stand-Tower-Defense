@@ -15,16 +15,32 @@ export const isServerBackedPlayerId = (playerId: string | null | undefined): boo
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
-  timeout: 10000,
+  // Render free tier can cold-start past 10s; keep a higher default for Reviewer first launch.
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
+async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // Player APIs
 export const playerApi = {
   create: (nickname: string, deviceId: string) =>
-    api.post('/players', { nickname, device_id: deviceId }),
+    withRetry(() => api.post('/players', { nickname, device_id: deviceId })),
   
   getById: (playerId: string) =>
     api.get(`/players/${playerId}`),
