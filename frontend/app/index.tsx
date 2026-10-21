@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
+import { loginStatusMessage, OFFLINE_NEW_PROFILE_NOTE, OFFLINE_SAVE_NOTE } from '../src/logic/login';
 import * as Crypto from 'expo-crypto';
 import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { getDailyChallenge } from '../src/constants/challenges';
@@ -38,17 +39,27 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'finger-print',
       title: 'Place Towers',
-      description: 'Select a tower, then tap or drag on the field to place it',
+      description: 'Pick a tower, then tap a tile beside the path. You cannot build on the road.',
     },
     {
       icon: 'shield-checkmark',
       title: 'Defend Your Base',
-      description: 'Stop enemies from reaching your base',
+      description: 'Press Start Wave. Stop enemies before they walk into your base.',
     },
     {
-      icon: 'trending-up',
-      title: 'Upgrade & Survive',
-      description: 'Earn gems to upgrade towers and survive longer',
+      icon: 'flash',
+      title: 'Different threats',
+      description: 'Fast runners, flying units, and armored plates need different towers. Flak owns the sky. Cannons crack armor.',
+    },
+    {
+      icon: 'git-branch',
+      title: 'Upgrade paths',
+      description: 'The third upgrade on a tower asks you to specialize. That choice stays on the tower.',
+    },
+    {
+      icon: 'volume-high',
+      title: 'Sound',
+      description: 'Music and effects are on. The iPhone silent switch does not mute the game. Use Settings if you want quiet.',
     },
   ];
 
@@ -250,6 +261,8 @@ export default function HomeScreen() {
   const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
   const claimDailyMission = usePlayerStore((s) => s.claimDailyMission);
   const [loading, setLoading] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(loginStatusMessage(1));
+  const [serverNote, setServerNote] = useState<string | null>(null);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
@@ -291,80 +304,66 @@ export default function HomeScreen() {
         store.setDeviceId(deviceId);
       }
 
-      // If we already have a local-only profile, skip the server
-      if (store.playerId && !isServerBackedPlayerId(store.playerId)) {
-        setLoading(false);
-        return;
-      }
+      setLoading(false);
+      if (!isBackendConfigured()) return;
 
-      // Had a server account in memory but no API URL (misconfig) — keep session without re-fetching
-      if (store.playerId && isServerBackedPlayerId(store.playerId) && !isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
+      const applyServerPlayer = (data: {
+        _id?: string;
+        nickname?: string;
+        xp?: number;
+        level?: number;
+        gems?: number;
+        total_waves_survived?: number;
+        games_played?: number;
+        best_wave?: number;
+        lifetime_enemies_killed?: number;
+        unlocked_towers?: string[];
+        unlocked_skins?: string[];
+        equipped_skins?: Record<string, string>;
+        premium?: boolean;
+        arena_expansions?: number;
+      }) => {
+        const live = usePlayerStore.getState();
+        if (data._id) live.setPlayer(data._id, data.nickname || live.nickname);
+        live.syncFromServer({
+          xp: data.xp,
+          level: data.level,
+          gems: data.gems ?? 0,
+          totalWavesSurvived: data.total_waves_survived,
+          gamesPlayed: data.games_played,
+          bestWave: data.best_wave,
+          lifetimeEnemiesKilled:
+            typeof data.lifetime_enemies_killed === 'number' ? data.lifetime_enemies_killed : undefined,
+          unlockedTowers: data.unlocked_towers as never,
+          unlockedSkins: data.unlocked_skins,
+          equippedSkins: data.equipped_skins,
+          premium: data.premium,
+          arenaExpansions: data.arena_expansions || 0,
+        });
+        setServerNote(null);
+        setShowNicknameModal(false);
+      };
 
-      // If we already have a player ID in local storage, use that
-      if (store.playerId && isBackendConfigured()) {
+      const hadServerId = Boolean(store.playerId && isServerBackedPlayerId(store.playerId));
+      void (async () => {
         try {
-          const response = await playerApi.getById(store.playerId);
-          if (response.data) {
-            store.syncFromServer({
-              xp: response.data.xp,
-              level: response.data.level,
-              gems: response.data.gems,
-              totalWavesSurvived: response.data.total_waves_survived,
-              gamesPlayed: response.data.games_played,
-              bestWave: response.data.best_wave,
-              lifetimeEnemiesKilled:
-                typeof response.data.lifetime_enemies_killed === 'number'
-                  ? response.data.lifetime_enemies_killed
-                  : undefined,
-              unlockedTowers: response.data.unlocked_towers,
-              unlockedSkins: response.data.unlocked_skins,
-              equippedSkins: response.data.equipped_skins,
-              premium: response.data.premium,
-              arenaExpansions: response.data.arena_expansions || 0,
+          if (hadServerId && store.playerId) {
+            const response = await playerApi.getById(store.playerId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
             });
-            setLoading(false);
+            if (response.data) applyServerPlayer(response.data);
             return;
           }
+          if (!store.playerId) {
+            const response = await playerApi.getByDevice(deviceId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+            });
+            if (response.data) applyServerPlayer(response.data);
+          }
         } catch {
+          if (hadServerId) setServerNote(OFFLINE_SAVE_NOTE);
         }
-      }
-
-      if (!isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const response = await playerApi.getByDevice(deviceId);
-        if (response.data) {
-          store.setPlayer(response.data._id, response.data.nickname);
-          store.syncFromServer({
-            xp: response.data.xp,
-            level: response.data.level,
-            gems: response.data.gems ?? 0,
-            totalWavesSurvived: response.data.total_waves_survived,
-            gamesPlayed: response.data.games_played,
-            bestWave: response.data.best_wave,
-            lifetimeEnemiesKilled:
-              typeof response.data.lifetime_enemies_killed === 'number'
-                ? response.data.lifetime_enemies_killed
-                : undefined,
-            unlockedTowers: response.data.unlocked_towers,
-            unlockedSkins: response.data.unlocked_skins,
-            equippedSkins: response.data.equipped_skins,
-            premium: response.data.premium,
-            arenaExpansions: response.data.arena_expansions || 0,
-          });
-          setLoading(false);
-          return;
-        }
-      } catch {
-      }
-
-      setLoading(false);
+      })();
     } catch {
       setLoading(false);
     }
@@ -410,6 +409,7 @@ export default function HomeScreen() {
   const handleNicknameSubmit = async (nickname: string) => {
     try {
       setLoading(true);
+      setLoadingDetail(loginStatusMessage(1));
 
       if (!isBackendConfigured()) {
         await registerLocalPlayer(nickname);
@@ -421,7 +421,9 @@ export default function HomeScreen() {
       }
 
       try {
-        const response = await playerApi.create(nickname, playerStore.deviceId);
+        const response = await playerApi.create(nickname, playerStore.deviceId, {
+          onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+        });
         if (response.data?._id) {
           playerStore.setPlayer(response.data._id, response.data.nickname);
           playerStore.syncFromServer({
@@ -435,8 +437,8 @@ export default function HomeScreen() {
           await registerLocalPlayer(nickname);
         }
       } catch {
-        // Soft-fail: continue locally without a blocking "server error" alert (App Review 2.1a).
         await registerLocalPlayer(nickname);
+        setServerNote(OFFLINE_NEW_PROFILE_NOTE);
       }
 
       setShowNicknameModal(false);
@@ -444,7 +446,8 @@ export default function HomeScreen() {
         setShowTutorial(true);
       }
     } catch {
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      setServerNote(OFFLINE_NEW_PROFILE_NOTE);
+      setShowNicknameModal(false);
     } finally {
       setLoading(false);
     }
@@ -453,6 +456,7 @@ export default function HomeScreen() {
   const handleTutorialComplete = () => {
     playerStore.completeTutorial();
     setShowTutorial(false);
+    router.push('/map-selection');
   };
 
   const handlePlayPress = useCallback(() => {
@@ -527,7 +531,7 @@ export default function HomeScreen() {
           <Text style={styles.splashSubtitle}>DEFENSE</Text>
           <View style={styles.splashLoader}>
             <ActivityIndicator size="large" color={TacticalTheme.accent} />
-            <Text style={styles.splashLoadingText}>Loading...</Text>
+            <Text style={styles.splashLoadingText}>{loadingDetail}</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -537,6 +541,11 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
+      {serverNote ? (
+        <View style={styles.serverNote}>
+          <Text style={styles.serverNoteText}>{serverNote}</Text>
+        </View>
+      ) : null}
       
       {/* Header with player stats */}
       <View style={styles.header}>
@@ -724,6 +733,23 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     marginTop: 12,
     fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 28,
+    lineHeight: 20,
+  },
+  serverNote: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: '#172033',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#3d5a80',
+  },
+  serverNoteText: {
+    color: '#d5dde6',
+    fontSize: 13,
+    lineHeight: 18,
   },
   loadingContainer: {
     flex: 1,

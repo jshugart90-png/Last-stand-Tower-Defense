@@ -16,6 +16,10 @@ import {
   getCoinIncomeUpgradePrice,
   COIN_INCOME_UPGRADE_MAX,
   COMBO_BONUS_GEMS,
+  FORTIFY_UPGRADE_MAX,
+  getFortifyUpgradePrice,
+  CALIBRATION_UPGRADE_MAX,
+  getCalibrationUpgradePrice,
 } from '../constants/game';
 import {
   Achievement,
@@ -25,6 +29,15 @@ import {
   DailyMission,
   WeeklyMission,
 } from '../constants/progression';
+import type { DifficultyMode } from '../logic/difficulty';
+import type { TowerPath } from '../logic/combat';
+import {
+  mergeAchievementLists as mergeAchievementListsPure,
+  mergeNumericRecord,
+  migrateAudioPrefs,
+  migrateFieldBriefing,
+  unionTowerUnlocks,
+} from '../logic/save';
 import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
@@ -58,6 +71,8 @@ export interface SavedTower {
   skin: string;
   targetingMode: TargetingMode;
   totalCostSpent: number;
+  /** In-run specialization chosen at upgrade level 3. Missing on older saves. */
+  path?: TowerPath;
 }
 
 // Full saved game state
@@ -109,6 +124,9 @@ interface PlayerState {
   gamesPlayed: number;
   bestWave: number;
   lifetimeEnemiesKilled: number;
+  lifetimeFlyingKills: number;
+  lifetimeArmoredKills: number;
+  lifetimeBossKills: number;
   lifetimeTowersPlaced: number;
   /** Gems earned in the last completed run (run summary / UI). */
   lastRunGemsEarned: number;
@@ -125,6 +143,15 @@ interface PlayerState {
 
   /** Permanent: +4%/level in-run coin from kills & wave bonus (gems shop) */
   coinIncomeUpgradeLevel: number;
+
+  /** Permanent: +2 base HP per level. */
+  fortifyUpgradeLevel: number;
+
+  /** Permanent: +2% tower damage per level. */
+  calibrationUpgradeLevel: number;
+
+  /** Run ruleset. Older saves default to normal. */
+  difficultyMode: DifficultyMode;
   
   // Speed unlocks (purchased in shop with gems)
   unlockedSpeeds: GameSpeed[];
@@ -139,6 +166,8 @@ interface PlayerState {
   
   // Settings
   soundEnabled: boolean;
+  /** 1 after the one-time unmute migration. Missing on older saves. */
+  audioPrefsRevision: number;
   /** 0–1; combined with soundEnabled in audio service */
   sfxVolume: number;
   musicEnabled: boolean;
@@ -151,6 +180,8 @@ interface PlayerState {
   
   // Tutorial
   tutorialCompleted: boolean;
+  /** In-game three-step briefing. Veterans who finished the old cards skip it. */
+  fieldBriefingSeen: boolean;
 
   // Progression systems
   dailyMissions: DailyMission[];
@@ -202,7 +233,13 @@ interface PlayerActions {
     wavesReached: number,
     enemiesKilled?: number,
     towersPlaced?: number,
-    gemsEarnedThisRun?: number
+    gemsEarnedThisRun?: number,
+    extras?: {
+      flying?: number;
+      armored?: number;
+      bosses?: number;
+      difficulty?: DifficultyMode;
+    }
   ) => void;
   setBestWave: (wave: number) => void;
   refreshDailyMissions: () => void;
@@ -229,6 +266,10 @@ interface PlayerActions {
 
   purchaseStartingCoinsUpgrade: () => boolean;
   purchaseCoinIncomeUpgrade: () => boolean;
+  purchaseFortifyUpgrade: () => boolean;
+  purchaseCalibrationUpgrade: () => boolean;
+  setDifficultyMode: (mode: DifficultyMode) => void;
+  completeFieldBriefing: () => void;
 
   // Speed unlocks (gems)
   purchaseSpeed: (speed: GameSpeed) => boolean;
@@ -335,26 +376,26 @@ const initialState: PlayerState = {
   gamesPlayed: 0,
   bestWave: 0,
   lifetimeEnemiesKilled: 0,
+  lifetimeFlyingKills: 0,
+  lifetimeArmoredKills: 0,
+  lifetimeBossKills: 0,
   lifetimeTowersPlaced: 0,
   lastRunGemsEarned: 0,
   lastRunEnemiesKilled: 0,
   unlockedTowers: ['machine_gun'],
-  towerUpgradeLevels: {
-    machine_gun: 0,
-    sniper: 0,
-    splash: 0,
-    freeze: 0,
-    missile: 0,
-    laser: 0,
-  },
+  towerUpgradeLevels: mergeNumericRecord(undefined),
   startingCoinUpgradeLevel: 0,
   coinIncomeUpgradeLevel: 0,
+  fortifyUpgradeLevel: 0,
+  calibrationUpgradeLevel: 0,
+  difficultyMode: 'normal',
   unlockedSpeeds: [1],  // 1x is free
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
   arenaExpansions: 0,
-  soundEnabled: false,
+  soundEnabled: true,
+  audioPrefsRevision: 1,
   sfxVolume: 0.9,
   musicEnabled: true,
   musicVolume: 0.65,
@@ -363,6 +404,7 @@ const initialState: PlayerState = {
   vfxQuality: 2,
   autoStartWaves: false,
   tutorialCompleted: false,
+  fieldBriefingSeen: false,
   dailyMissions: createDefaultDailyMissions(),
   lastDailyMissionDayKey: getLocalDayKey(Date.now()),
   lastDailyResetAt: Date.now(),
@@ -396,6 +438,9 @@ const playerPersistKeys = [
   'gamesPlayed',
   'bestWave',
   'lifetimeEnemiesKilled',
+  'lifetimeFlyingKills',
+  'lifetimeArmoredKills',
+  'lifetimeBossKills',
   'lifetimeTowersPlaced',
   'lastRunGemsEarned',
   'lastRunEnemiesKilled',
@@ -403,12 +448,16 @@ const playerPersistKeys = [
   'towerUpgradeLevels',
   'startingCoinUpgradeLevel',
   'coinIncomeUpgradeLevel',
+  'fortifyUpgradeLevel',
+  'calibrationUpgradeLevel',
+  'difficultyMode',
   'unlockedSpeeds',
   'unlockedSkins',
   'equippedSkins',
   'premium',
   'arenaExpansions',
   'soundEnabled',
+  'audioPrefsRevision',
   'sfxVolume',
   'musicEnabled',
   'musicVolume',
@@ -417,6 +466,7 @@ const playerPersistKeys = [
   'vfxQuality',
   'autoStartWaves',
   'tutorialCompleted',
+  'fieldBriefingSeen',
   'dailyMissions',
   'lastDailyMissionDayKey',
   'lastDailyResetAt',
@@ -543,15 +593,8 @@ const applyWeeklyMissionProgress = (
   return { missions: next, gemsEarned };
 };
 
-const mergeAchievementLists = (stored: Achievement[] | undefined): Achievement[] => {
-  const defaults = createDefaultAchievements();
-  if (!stored?.length) return defaults;
-  const map = new Map(stored.map((a) => [a.id, a]));
-  return defaults.map((d) => {
-    const s = map.get(d.id);
-    return { ...d, unlocked: s?.unlocked ?? false };
-  });
-};
+const mergeAchievementLists = (stored: Achievement[] | undefined): Achievement[] =>
+  mergeAchievementListsPure(createDefaultAchievements(), stored);
 
 const unlockAchievement = (
   achievements: Achievement[],
@@ -601,7 +644,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
     },
     setLevel: (level) => set({ level }),
-    setPremium: (premium) => set({ premium }),
+    setPremium: (premium) =>
+      set((state) => ({
+        premium,
+        unlockedSkins:
+          premium && !state.unlockedSkins.includes('gold')
+            ? [...state.unlockedSkins, 'gold']
+            : state.unlockedSkins,
+      })),
     setGems: (gems) => set({ gems }),
     addGems: (amount) => set(state => ({ gems: state.gems + amount })),
 
@@ -642,7 +692,7 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
     },
 
-    recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0, gemsEarnedThisRun) => {
+    recordGame: (wavesReached, enemiesKilled = 0, towersPlaced = 0, gemsEarnedThisRun, extras) => {
       set((state) => {
         const dailyResetPatch = maybeResetDailyMissions(state);
         const weeklyResetPatch = maybeResetWeeklyMissions(state);
@@ -666,6 +716,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         gemsFromMissions += weeklyWavesMission.gemsEarned;
 
         const nextEnemiesKilled = state.lifetimeEnemiesKilled + enemiesKilled;
+        const nextFlying = state.lifetimeFlyingKills + Math.max(0, extras?.flying ?? 0);
+        const nextArmored = state.lifetimeArmoredKills + Math.max(0, extras?.armored ?? 0);
+        const nextBosses = state.lifetimeBossKills + Math.max(0, extras?.bosses ?? 0);
         const nextTowersPlaced = state.lifetimeTowersPlaced + towersPlaced;
         const nextBestWave = Math.max(state.bestWave, wavesReached);
         let achievements = state.achievements;
@@ -720,6 +773,26 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           achievements = unlock.achievements;
           gemsFromAchievements += unlock.gemsEarned;
         }
+        if (nextFlying >= 30) {
+          const unlock = unlockAchievement(achievements, 'wing_clipper');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextArmored >= 25) {
+          const unlock = unlockAchievement(achievements, 'plate_breaker');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if (nextBosses >= 3) {
+          const unlock = unlockAchievement(achievements, 'boss_slayer');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
+        if ((extras?.difficulty ?? state.difficultyMode) === 'last_stand' && wavesReached >= 12) {
+          const unlock = unlockAchievement(achievements, 'last_stand_hold');
+          achievements = unlock.achievements;
+          gemsFromAchievements += unlock.gemsEarned;
+        }
 
         const runSummaryPatch =
           gemsEarnedThisRun !== undefined
@@ -735,6 +808,9 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           totalWavesSurvived: state.totalWavesSurvived + wavesReached,
           bestWave: nextBestWave,
           lifetimeEnemiesKilled: nextEnemiesKilled,
+          lifetimeFlyingKills: nextFlying,
+          lifetimeArmoredKills: nextArmored,
+          lifetimeBossKills: nextBosses,
           lifetimeTowersPlaced: nextTowersPlaced,
           dailyMissions: missions,
           weeklyMissions,
@@ -919,6 +995,33 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       });
       return true;
     },
+
+    purchaseFortifyUpgrade: () => {
+      const state = get();
+      if (state.fortifyUpgradeLevel >= FORTIFY_UPGRADE_MAX) return false;
+      const price = getFortifyUpgradePrice(state.fortifyUpgradeLevel);
+      if (state.gems < price) return false;
+      set({
+        gems: state.gems - price,
+        fortifyUpgradeLevel: state.fortifyUpgradeLevel + 1,
+      });
+      return true;
+    },
+
+    purchaseCalibrationUpgrade: () => {
+      const state = get();
+      if (state.calibrationUpgradeLevel >= CALIBRATION_UPGRADE_MAX) return false;
+      const price = getCalibrationUpgradePrice(state.calibrationUpgradeLevel);
+      if (state.gems < price) return false;
+      set({
+        gems: state.gems - price,
+        calibrationUpgradeLevel: state.calibrationUpgradeLevel + 1,
+      });
+      return true;
+    },
+
+    setDifficultyMode: (mode) => set({ difficultyMode: mode }),
+    completeFieldBriefing: () => set({ fieldBriefingSeen: true }),
     
     // Speed unlocks (gems)
     purchaseSpeed: (speed) => {
@@ -1089,7 +1192,10 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         ...state,
         ...data,
         hasEnteredNameOnce: true,
-        unlockedTowers: (data.unlockedTowers as TowerType[]) || state.unlockedTowers,
+        unlockedTowers: unionTowerUnlocks(
+          state.unlockedTowers,
+          data.unlockedTowers as string[] | undefined
+        ),
         unlockedSpeeds: normalizeUnlockedSpeeds(data.unlockedSpeeds ?? state.unlockedSpeeds),
         unlockedLogos:
           Array.isArray(data.unlockedLogos) && data.unlockedLogos.length > 0
@@ -1129,16 +1235,47 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         !!p?.playerId ||
         hasCustomSavedName;
 
+      const audioPrefs = migrateAudioPrefs({
+        soundEnabled: p?.soundEnabled,
+        audioPrefsRevision: p?.audioPrefsRevision,
+      });
       const merged: PlayerState = {
         ...current,
         ...p,
         achievements: mergeAchievementLists(p?.achievements),
         dailyMissions: mergeDailyMissionListForLoad(p?.dailyMissions),
         hasEnteredNameOnce: nameOnboardingDone,
+        towerUpgradeLevels: mergeNumericRecord(p?.towerUpgradeLevels),
+        unlockedTowers: unionTowerUnlocks(p?.unlockedTowers, undefined),
         startingCoinUpgradeLevel: p?.startingCoinUpgradeLevel ?? 0,
+        fortifyUpgradeLevel:
+          typeof p?.fortifyUpgradeLevel === 'number'
+            ? Math.min(FORTIFY_UPGRADE_MAX, Math.max(0, Math.floor(p.fortifyUpgradeLevel)))
+            : 0,
+        calibrationUpgradeLevel:
+          typeof p?.calibrationUpgradeLevel === 'number'
+            ? Math.min(CALIBRATION_UPGRADE_MAX, Math.max(0, Math.floor(p.calibrationUpgradeLevel)))
+            : 0,
+        difficultyMode:
+          p?.difficultyMode === 'casual' ||
+          p?.difficultyMode === 'veteran' ||
+          p?.difficultyMode === 'last_stand'
+            ? p.difficultyMode
+            : 'normal',
+        fieldBriefingSeen: migrateFieldBriefing({
+          tutorialCompleted: p?.tutorialCompleted,
+          fieldBriefingSeen: p?.fieldBriefingSeen,
+        }),
+        lifetimeFlyingKills:
+          typeof p?.lifetimeFlyingKills === 'number' ? Math.max(0, p.lifetimeFlyingKills) : 0,
+        lifetimeArmoredKills:
+          typeof p?.lifetimeArmoredKills === 'number' ? Math.max(0, p.lifetimeArmoredKills) : 0,
+        lifetimeBossKills:
+          typeof p?.lifetimeBossKills === 'number' ? Math.max(0, p.lifetimeBossKills) : 0,
         sfxVolume:
           typeof p?.sfxVolume === 'number' ? Math.max(0, Math.min(1, p.sfxVolume)) : 0.9,
-        soundEnabled: typeof p?.soundEnabled === 'boolean' ? p.soundEnabled : false,
+        soundEnabled: audioPrefs.soundEnabled,
+        audioPrefsRevision: audioPrefs.audioPrefsRevision,
         musicVolume:
           typeof p?.musicVolume === 'number' ? Math.max(0, Math.min(1, p.musicVolume)) : 0.65,
         coinIncomeUpgradeLevel:

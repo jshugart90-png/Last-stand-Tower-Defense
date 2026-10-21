@@ -213,6 +213,9 @@ export default function SettingsScreen() {
               disabled={!playerStore.musicEnabled}
             />
           </View>
+          <Text style={styles.settingHint}>
+            Game audio plays even when the iPhone silent switch is on. These switches are the mute. Music pauses if you leave the app.
+          </Text>
         </View>
 
         {/* Feedback Section */}

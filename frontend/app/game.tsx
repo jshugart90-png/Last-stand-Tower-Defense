@@ -26,6 +26,8 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withSequence,
+  withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,9 +41,9 @@ import {
   Enemy,
 } from '../src/stores/gameStore';
 import { usePlayerStore, SavedGameState } from '../src/stores/playerStore';
-import { 
+import {
   TOWERS, ENEMIES, GAME_CONFIG, getWaveConfig, TowerType, 
-  TARGETING_MODES, TargetingMode, getInfiniteUpgradeStats, 
+  TARGETING_MODES, TargetingMode, 
   GameSpeed,
   SPEED_UNLOCK_PRICES,
   getRunCoinIncomeMultiplier,
@@ -50,12 +52,13 @@ import {
   scaledTotalPerformanceGems,
   endGamePerformanceRemainder,
   COMBO_BONUS_GEMS,
+  REVIVE_GEM_COST,
   type EnemyType,
 } from '../src/constants/game';
-import { gameApi, analyticsApi, isServerBackedPlayerId, isBackendConfigured, rewardApi } from '../src/hooks/useApi';
+import { gameApi, analyticsApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { getDailyChallenge } from '../src/constants/challenges';
-import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx } from '../src/services/audioService';
+import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx, playMusic } from '../src/services/audioService';
 import { getArenaMap, CLASSIC_MAP_ID, isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
@@ -64,8 +67,8 @@ import {
 import { getMapById, promoteEnemyType } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { showGameOverInterstitial, showRewardedAd, useAdsStatus } from '../src/services/adsService';
-import { useRewardedGems } from '../src/hooks/useRewardedGems';
+import { getDifficultyModifiers } from '../src/logic/difficulty';
+import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -222,6 +225,12 @@ const getTowerIcon = (type: TowerType, size = 20) => {
       return <MaterialCommunityIcons name="rocket-launch" {...iconProps} />;
     case 'laser':
       return <MaterialCommunityIcons name="flashlight" {...iconProps} />;
+    case 'tesla':
+      return <MaterialCommunityIcons name="flash" {...iconProps} />;
+    case 'flak':
+      return <MaterialCommunityIcons name="airplane" {...iconProps} />;
+    case 'cannon':
+      return <MaterialCommunityIcons name="bullseye" {...iconProps} />;
     default:
       return <Ionicons name="help" {...iconProps} />;
   }
@@ -553,9 +562,10 @@ const TowerOptionsPanel = ({
   getUpgradeCost,
   getSellValue,
   shopUpgradeLevel,
+  calibrationLevel,
 }: {
   tower: PlacedTower;
-  onUpgrade: () => void;
+  onUpgrade: (path?: TowerPath) => void;
   onSell: () => void;
   onTargetingChange: (mode: TargetingMode) => void;
   onClose: () => void;
@@ -563,22 +573,23 @@ const TowerOptionsPanel = ({
   getUpgradeCost: (tower: PlacedTower) => number;
   getSellValue: (tower: PlacedTower) => number;
   shopUpgradeLevel: number;
+  calibrationLevel: number;
 }) => {
   const towerDef = TOWERS[tower.type];
   const upgradeCost = getUpgradeCost(tower);
   const sellValue = getSellValue(tower);
   const canUpgrade = coins >= upgradeCost;
-  
-  // Apply both in-game and shop upgrades
-  let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-  if (shopUpgradeLevel > 0) {
-    const shopMultiplier = Math.pow(1.05, shopUpgradeLevel);
-    stats = {
-      ...stats,
-      damage: Math.floor(stats.damage * shopMultiplier),
-      range: stats.range * (1 + shopUpgradeLevel * 0.02),
-    };
-  }
+  const path = tower.path ?? 'none';
+  const choosing = needsPathChoice(tower.level, path);
+  const paths = TOWER_PATHS[tower.type];
+  const stats = resolveTowerStats(
+    tower.type,
+    towerDef.baseStats,
+    tower.level,
+    shopUpgradeLevel,
+    path,
+    calibrationLevel
+  );
 
   return (
     <View style={styles.towerOptionsPanel}>
@@ -587,7 +598,10 @@ const TowerOptionsPanel = ({
           {getTowerIcon(tower.type, 16)}
         </View>
         <View style={styles.towerTitleContainer}>
-          <Text style={styles.towerOptionTitle}>{towerDef.name} Lv.{tower.level + 1}</Text>
+          <Text style={styles.towerOptionTitle}>
+            {towerDef.name} Lv.{tower.level + 1}
+            {path !== 'none' ? ` · ${path === 'alpha' ? paths.alpha.name : paths.beta.name}` : ''}
+          </Text>
           {shopUpgradeLevel > 0 && (
             <Text style={styles.shopUpgradeBadge}>+{shopUpgradeLevel} Shop</Text>
           )}
@@ -624,15 +638,33 @@ const TowerOptionsPanel = ({
         ))}
       </View>
 
+      {choosing ? (
+        <View style={styles.pathChoiceRow}>
+          {([paths.alpha, paths.beta] as const).map((choice) => (
+            <TouchableOpacity
+              key={choice.id}
+              style={[styles.pathChoiceButton, !canUpgrade && styles.disabledButton]}
+              onPress={() => onUpgrade(choice.id)}
+              disabled={!canUpgrade}
+            >
+              <Text style={styles.pathChoiceName}>{choice.name}</Text>
+              <Text style={styles.pathChoiceBlurb}>{choice.blurb}</Text>
+              <Text style={styles.actionButtonText}>{upgradeCost}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.towerActionsRow}>
+        {choosing ? null : (
         <TouchableOpacity
           style={[styles.upgradeButton, !canUpgrade && styles.disabledButton]}
-          onPress={onUpgrade}
+          onPress={() => onUpgrade()}
           disabled={!canUpgrade}
         >
           <Ionicons name="arrow-up" size={16} color="#fff" />
           <Text style={styles.actionButtonText}>{upgradeCost}</Text>
         </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.sellButton} onPress={onSell}>
           <Ionicons name="trash" size={16} color="#fff" />
           <Text style={styles.actionButtonText}>+{sellValue}</Text>
@@ -747,26 +779,67 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
   nowTs: number;
 }) {
   const enemyDef = ENEMIES[enemy.type];
-  const healthPercent = enemy.health / enemy.maxHealth;
+  const healthPercent = Math.max(0, Math.min(1, enemy.health / enemy.maxHealth));
   const isSlowed = nowTs < enemy.slowedUntil;
+  const flashing = (enemy.hitFlashUntil ?? 0) > nowTs;
   const enemySize = enemyDef.size * finalScale;
+  const flying = enemy.type === 'flying';
+  const shape =
+    enemy.type === 'fast' || enemy.type === 'flying'
+      ? enemySize / 2
+      : enemy.type === 'tank' || enemy.type === 'armored' || enemy.type === 'boss'
+        ? 4
+        : enemySize / 3;
 
   return (
     <View
       pointerEvents="none"
-      style={[
-        styles.enemy,
-        {
-          left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
-          top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2,
-          width: enemySize,
-          height: enemySize,
-          backgroundColor: isSlowed ? TacticalTheme.freezeTint : enemyDef.color,
-        },
-      ]}
+      style={{
+        position: 'absolute',
+        left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
+        top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2 - (flying ? 6 : 0),
+        width: enemySize,
+        height: enemySize,
+      }}
     >
-      <View style={styles.healthBarContainer}>
-        <View style={[styles.healthBar, { width: `${healthPercent * 100}%` }]} />
+      {flying ? (
+        <View
+          style={{
+            position: 'absolute',
+            left: 2,
+            top: enemySize - 4,
+            width: enemySize - 4,
+            height: 4,
+            borderRadius: 4,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+          }}
+        />
+      ) : null}
+      <View
+        style={[
+          styles.enemy,
+          {
+            width: enemySize,
+            height: enemySize,
+            borderRadius: shape,
+            backgroundColor: flashing ? '#fff' : isSlowed ? TacticalTheme.freezeTint : enemyDef.color,
+            borderWidth: enemy.type === 'armored' || enemy.type === 'boss' || enemy.type === 'shielded' ? 2 : 0,
+            borderColor: enemy.type === 'boss' ? '#F4D35E' : enemy.type === 'armored' ? '#EFEFEF' : '#7FDBFF',
+            transform: enemy.type === 'fast' ? [{ rotate: '45deg' }] : undefined,
+          },
+        ]}
+      >
+        <View style={styles.healthBarContainer}>
+          <View
+            style={[
+              styles.healthBar,
+              {
+                width: `${healthPercent * 100}%`,
+                backgroundColor: healthPercent < 0.35 ? '#E74C3C' : '#2ECC71',
+              },
+            ]}
+          />
+        </View>
       </View>
     </View>
   );
@@ -1083,6 +1156,8 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
     towerUpgradeLevels,
     getTowerColor,
     selectedPlacedTower,
+    floatTexts,
+    bursts,
   } = useGameStore(
     useShallow((s) => ({
       towers: s.towers,
@@ -1092,6 +1167,8 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
       towerUpgradeLevels: s.towerUpgradeLevels,
       getTowerColor: s.getTowerColor,
       selectedPlacedTower: s.selectedPlacedTower,
+      floatTexts: s.floatTexts,
+      bursts: s.bursts,
     }))
   );
 
@@ -1189,13 +1266,56 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
         );
       })}
 
+      {vfxQuality === 0 || performanceMode
+        ? null
+        : bursts.map((burst) => (
+            <View
+              key={burst.id}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: burst.x * scaledCellSize + scaledCellSize / 2 - 8,
+                top: burst.y * scaledCellSize + scaledCellSize / 2 - 8,
+                width: 16,
+                height: 16,
+                borderRadius: 8,
+                backgroundColor: burst.color,
+                opacity: 0.7,
+              }}
+            />
+          ))}
+      {vfxQuality === 0 || performanceMode
+        ? null
+        : floatTexts.map((floater) => (
+            <Text
+              key={floater.id}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: floater.x * scaledCellSize,
+                top: floater.y * scaledCellSize - 10,
+                color: '#fff',
+                fontSize: 11,
+                fontWeight: '800',
+                textShadowColor: '#000',
+                textShadowRadius: 2,
+              }}
+            >
+              {floater.text}
+            </Text>
+          ))}
+
       {towers.map((tower) => {
         const towerDef = TOWERS[tower.type];
         const shopBonus = towerUpgradeLevels[tower.type] || 0;
-        let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
-        if (shopBonus > 0) {
-          stats = { ...stats, range: stats.range * (1 + shopBonus * 0.02) };
-        }
+        const stats = resolveTowerStats(
+          tower.type,
+          towerDef.baseStats,
+          tower.level,
+          shopBonus,
+          tower.path ?? 'none',
+          0
+        );
         const rangeRadius = stats.range * scaledCellSize;
         const isSelected = selectedPlacedTower?.id === tower.id;
 
@@ -1408,6 +1528,24 @@ const GameBoard = React.memo(
     const pinchAnimatedStyle = useAnimatedStyle(() => ({
       transform: [{ scale: pinchMultSV.value }],
     }));
+    const baseHealth = useGameStore((s) => s.baseHealth);
+    const shakeX = useSharedValue(0);
+    const shakeReady = useRef(false);
+    useEffect(() => {
+      if (!shakeReady.current) {
+        shakeReady.current = true;
+        return;
+      }
+      shakeX.value = withSequence(
+        withTiming(6, { duration: 40 }),
+        withTiming(-5, { duration: 40 }),
+        withTiming(3, { duration: 35 }),
+        withTiming(0, { duration: 45 })
+      );
+    }, [baseHealth, shakeX]);
+    const shakeStyle = useAnimatedStyle(() => ({
+      transform: [{ translateX: shakeX.value }],
+    }));
 
     const finalScale = scale * zoomLevel;
     const scaledCellSize = cellSize * finalScale;
@@ -1594,6 +1732,7 @@ const GameBoard = React.memo(
                 pinchAnimatedStyle,
               ]}
             >
+              <Animated.View style={[{ width: boardWidth, height: boardHeight }, shakeStyle]}>
               <GameBoardStaticCells
                 onCellPress={onCellPress}
                 scaledCellSize={scaledCellSize}
@@ -1612,6 +1751,7 @@ const GameBoard = React.memo(
                 basePosition={basePosition}
                 scaledCellSize={scaledCellSize}
               />
+              </Animated.View>
             </Animated.View>
           </GestureDetector>
         </GestureAreaErrorBoundary>
@@ -1677,6 +1817,7 @@ const GameOverFlowModal = ({
     onWatch: () => void;
   };
 }) => {
+  const gemsNow = usePlayerStore((s) => s.gems);
   if (!visible) return null;
 
   return (
@@ -1687,18 +1828,20 @@ const GameOverFlowModal = ({
             <MaterialCommunityIcons name="heart-flash" size={44} color={TacticalTheme.accent} />
             <Text style={styles.gameOverTitle}>Base destroyed!</Text>
             <Text style={styles.reviveSubtitle}>
-              Watch a short video to revive with 50% base health and keep this run alive.
+              Spend {REVIVE_GEM_COST} gems to restore half your base health and keep this run. One continue per run.
             </Text>
             <Text style={styles.reviveStatsLine}>Wave {wave} • {enemiesKilled} kills so far</Text>
             <TouchableOpacity
-              style={[styles.reviveButton, reviveBusy && styles.reviveButtonDisabled]}
+              style={[styles.reviveButton, (reviveBusy || gemsNow < REVIVE_GEM_COST) && styles.reviveButtonDisabled]}
               onPress={onReviveWatch}
-              disabled={reviveBusy}
+              disabled={reviveBusy || gemsNow < REVIVE_GEM_COST}
               accessibilityRole="button"
-              accessibilityLabel="Watch a video to revive"
+              accessibilityLabel={`Spend ${REVIVE_GEM_COST} gems to revive`}
             >
-              <Ionicons name="play-circle" size={22} color={TacticalTheme.white} />
-              <Text style={styles.reviveButtonText}>{reviveBusy ? 'Loading video…' : 'Watch & Revive'}</Text>
+              <FontAwesome5 name="gem" size={16} color={TacticalTheme.white} />
+              <Text style={styles.reviveButtonText}>
+                {gemsNow < REVIVE_GEM_COST ? `Need ${REVIVE_GEM_COST} gems` : `Revive · ${REVIVE_GEM_COST} gems`}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.playAgainSecondary} onPress={onReviveDecline} disabled={reviveBusy}>
               <Text style={styles.playAgainSecondaryText}>Give up</Text>
@@ -1926,7 +2069,6 @@ export default function GameScreen() {
   const [reviveBusy, setReviveBusy] = useState(false);
   const revivedThisRun = useGameStore((s) => s.revivedThisRun);
   const reviveGame = useGameStore((s) => s.reviveGame);
-  const adsReadyForRevive = useAdsStatus((s) => s.ready && s.rewardedReady);
   /** Snapshot of revive eligibility, frozen at the moment of death (effect lives below, after isGameOver). */
   const reviveOfferRef = useRef(false);
   
@@ -2099,8 +2241,8 @@ export default function GameScreen() {
   ]);
 
   useEffect(() => {
-    if (!isGameOver) reviveOfferRef.current = adsReadyForRevive && !revivedThisRun;
-  }, [adsReadyForRevive, revivedThisRun, isGameOver]);
+    if (!isGameOver) reviveOfferRef.current = !revivedThisRun;
+  }, [revivedThisRun, isGameOver]);
 
   const sessionRunRecordedRef = useRef(false);
   useLayoutEffect(() => {
@@ -2318,10 +2460,11 @@ export default function GameScreen() {
                 const mapHealthMult = selectedMap?.enemyHealthMultiplier ?? 1;
                 const mapSpeedMult = selectedMap?.enemySpeedMultiplier ?? 1;
                 try {
-                  state.spawnEnemy(
+                  const diff = getDifficultyModifiers(usePlayerStore.getState().difficultyMode);
+                state.spawnEnemy(
                     next.type as EnemyType,
-                    waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult,
-                    waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult
+                    waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult * diff.enemyHealth,
+                    waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult * diff.enemySpeed
                   );
                 } catch {
                   /* skip spawn slot on failure */
@@ -2636,9 +2779,9 @@ export default function GameScreen() {
     resetTowerDragSession();
   }, [resetTowerDragSession]);
 
-  const handleUpgrade = useCallback(() => {
+  const handleUpgrade = useCallback((path?: TowerPath) => {
     if (selectedPlacedTower) {
-      const success = upgradeTower(selectedPlacedTower.id);
+      const success = upgradeTower(selectedPlacedTower.id, path);
       if (success && playerStore.hapticEnabled) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -2691,7 +2834,12 @@ export default function GameScreen() {
         playerStore.addGems(totalGemReward);
       }
       const runGemsTotal = totalGemReward + comboResult.bonusGems;
-      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+      playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal, {
+        flying: useGameStore.getState().runFlyingKills,
+        armored: useGameStore.getState().runArmoredKills,
+        bosses: useGameStore.getState().runBossKills,
+        difficulty: usePlayerStore.getState().difficultyMode,
+      });
       playerStore.clearCurrentGameProgress();
     };
 
@@ -2745,7 +2893,12 @@ export default function GameScreen() {
 
     const runGemsTotal =
       (response.data?.gems_earned ?? 0) + challengeGemReward + comboResult.bonusGems;
-    playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal);
+    playerStore.recordGame(currentWave, enemiesKilled, towersPlaced, runGemsTotal, {
+        flying: useGameStore.getState().runFlyingKills,
+        armored: useGameStore.getState().runArmoredKills,
+        bosses: useGameStore.getState().runBossKills,
+        difficulty: usePlayerStore.getState().difficultyMode,
+      });
     playerStore.clearCurrentGameProgress();
   }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge, coins]);
 
@@ -2785,17 +2938,19 @@ export default function GameScreen() {
     startWave,
   ]);
 
-  // Rewarded bonus on the results screen (one claim per run).
-  const rewardedGems = useRewardedGems();
-  const [rewardedClaimedThisRun, setRewardedClaimedThisRun] = useState(false);
   useEffect(() => {
-    if (!isGameOver) setRewardedClaimedThisRun(false);
-  }, [isGameOver]);
-  const handleWatchBonusVideo = useCallback(() => {
-    void rewardedGems.watch().then((outcome) => {
-      if (outcome === 'granted') setRewardedClaimedThisRun(true);
-    });
-  }, [rewardedGems]);
+    if (!isPlaying || isGameOver) return;
+    if (waveInProgress && currentWave > 0 && currentWave % 10 === 0) {
+      void playMusic('boss');
+      return;
+    }
+    void playMusic('battle');
+  }, [isPlaying, isGameOver, waveInProgress, currentWave]);
+
+  useEffect(() => {
+    if (!isPlaying || isGameOver || playerStore.fieldBriefingSeen) return;
+    if (currentWave > 0) playerStore.completeFieldBriefing();
+  }, [isPlaying, isGameOver, currentWave, playerStore.fieldBriefingSeen, playerStore]);
 
   const handleReviveDecline = useCallback(() => {
     reviveOfferRef.current = false;
@@ -2804,39 +2959,22 @@ export default function GameScreen() {
 
   const handleReviveWatch = useCallback(() => {
     if (reviveBusy) return;
+    const gems = usePlayerStore.getState().gems;
+    if (gems < REVIVE_GEM_COST) return;
     setReviveBusy(true);
-    void (async () => {
-      try {
-        const result = await showRewardedAd();
-        if (result === 'earned') {
-          // Tell the backend an ad-revive happened (analytics/cooldown); never block gameplay on it.
-          const pid = usePlayerStore.getState().playerId;
-          if (pid && isServerBackedPlayerId(pid) && isBackendConfigured()) {
-            void rewardApi.claim({ player_id: pid, reward_type: 'revive', ad_type: 'rewarded' }).catch(() => {});
-          }
-          reviveOfferRef.current = false;
-          reviveGame();
-          if (canPlayUiSfx()) playSfx('record');
-        } else {
-          reviveOfferRef.current = false;
-          setGameOverStep('over');
-        }
-      } finally {
-        setReviveBusy(false);
-      }
-    })();
+    try {
+      usePlayerStore.getState().addGems(-REVIVE_GEM_COST);
+      reviveOfferRef.current = false;
+      reviveGame();
+      if (canPlayUiSfx()) playSfx('record');
+    } finally {
+      setReviveBusy(false);
+    }
   }, [reviveBusy, reviveGame]);
 
-  // Interstitial after game over: capped in adsService, skipped for ad-free players.
-  const leavingAfterAdRef = useRef(false);
   const handleRestart = useCallback(() => {
-    if (leavingAfterAdRef.current) return;
-    leavingAfterAdRef.current = true;
-    void showGameOverInterstitial().finally(() => {
-      leavingAfterAdRef.current = false;
-      playerStore.clearSavedGame(); // Clear saved game on restart
-      restartGame();
-    });
+    playerStore.clearSavedGame();
+    restartGame();
   }, [restartGame, playerStore]);
 
   const handleSeeResults = useCallback(() => {
@@ -2844,13 +2982,8 @@ export default function GameScreen() {
   }, []);
 
   const handleExit = useCallback(() => {
-    if (leavingAfterAdRef.current) return;
-    leavingAfterAdRef.current = true;
-    void showGameOverInterstitial().finally(() => {
-      leavingAfterAdRef.current = false;
-      playerStore.clearSavedGame(); // Clear saved game on exit after game over
-      router.replace('/');
-    });
+    playerStore.clearSavedGame();
+    router.replace('/');
   }, [router, playerStore]);
 
   const formatTimer = (ms: number) => {
@@ -2950,6 +3083,18 @@ export default function GameScreen() {
           <Ionicons name={isPaused ? 'play' : 'pause'} size={24} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {!playerStore.fieldBriefingSeen && !isGameOver ? (
+        <View style={styles.briefingCard}>
+          <Text style={styles.briefingTitle}>First deployment</Text>
+          <Text style={styles.briefingBody}>
+            Tap Machine Gun, then a tile beside the path. Press Start Wave. Flying enemies laugh at cannons on the ground — bring flak or a sniper. Armored plates shrug off small guns.
+          </Text>
+          <TouchableOpacity onPress={() => playerStore.completeFieldBriefing()}>
+            <Text style={styles.briefingDismiss}>Got it</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <View style={styles.coinMultHint}>
         <FontAwesome5 name="coins" size={11} color="#b8a045" />
@@ -3070,6 +3215,7 @@ export default function GameScreen() {
           getUpgradeCost={getUpgradeCost}
           getSellValue={getSellValue}
           shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
+          calibrationLevel={playerStore.calibrationUpgradeLevel}
         />
       )}
 
@@ -3120,13 +3266,13 @@ export default function GameScreen() {
         onReviveDecline={handleReviveDecline}
         reviveBusy={reviveBusy}
         rewarded={{
-          visible: rewardedGems.adsReady,
-          available: rewardedGems.available,
-          busy: rewardedGems.busy,
-          cooldownSeconds: rewardedGems.cooldownSeconds,
-          gemsPerAd: rewardedGems.gemsPerAd,
-          claimed: rewardedClaimedThisRun,
-          onWatch: handleWatchBonusVideo,
+          visible: false,
+          available: false,
+          busy: false,
+          cooldownSeconds: 0,
+          gemsPerAd: 0,
+          claimed: true,
+          onWatch: () => {},
         }}
       />
 
@@ -3775,6 +3921,53 @@ const styles = StyleSheet.create({
   towerActionsRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  pathChoiceRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  pathChoiceButton: {
+    flex: 1,
+    backgroundColor: '#243044',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#7DF9FF',
+  },
+  pathChoiceName: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  pathChoiceBlurb: {
+    color: '#c5d0dc',
+    fontSize: 11,
+    marginVertical: 4,
+  },
+  briefingCard: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: '#172033',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#3d5a80',
+  },
+  briefingTitle: {
+    color: '#fff',
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  briefingBody: {
+    color: '#d5dde6',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  briefingDismiss: {
+    color: '#7DF9FF',
+    fontWeight: '800',
+    marginTop: 8,
   },
   upgradeButton: {
     flex: 1,

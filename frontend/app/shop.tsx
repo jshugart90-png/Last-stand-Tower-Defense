@@ -31,6 +31,11 @@ import {
   COIN_INCOME_PER_LEVEL,
   getCoinIncomeUpgradePrice,
   getRunCoinIncomeMultiplier,
+  FORTIFY_UPGRADE_MAX,
+  FORTIFY_HP_PER_LEVEL,
+  getFortifyUpgradePrice,
+  CALIBRATION_UPGRADE_MAX,
+  getCalibrationUpgradePrice,
 } from '../src/constants/game';
 import { 
   IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, completePurchase, 
@@ -67,6 +72,12 @@ const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) =>
       return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
     case 'laser':
       return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
+    case 'tesla':
+      return <MaterialCommunityIcons name="flash" size={size} color={color} />;
+    case 'flak':
+      return <MaterialCommunityIcons name="airplane" size={size} color={color} />;
+    case 'cannon':
+      return <MaterialCommunityIcons name="bullseye" size={size} color={color} />;
     default:
       return <Ionicons name="help" size={size} color={color} />;
   }
@@ -249,6 +260,38 @@ export default function ShopScreen() {
     }
   };
 
+  const handlePurchaseFortify = () => {
+    const level = playerStore.fortifyUpgradeLevel;
+    if (level >= FORTIFY_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Base fortification is maxed out.');
+      return;
+    }
+    const price = getFortifyUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseFortifyUpgrade()) {
+      Alert.alert('Upgraded', `Each run starts with ${FORTIFY_HP_PER_LEVEL} more base health.`);
+    }
+  };
+
+  const handlePurchaseCalibration = () => {
+    const level = playerStore.calibrationUpgradeLevel;
+    if (level >= CALIBRATION_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Calibration is maxed out.');
+      return;
+    }
+    const price = getCalibrationUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseCalibrationUpgrade()) {
+      Alert.alert('Upgraded', 'All towers deal 2% more damage.');
+    }
+  };
+
   const handlePurchaseSpeed = (speed: GameSpeed) => {
     const price = SPEED_UNLOCK_PRICES[speed];
     
@@ -337,12 +380,12 @@ export default function ShopScreen() {
   // Handle Premium Bundle (removes ads permanently) — real money via IAP
   const handlePurchasePremium = async () => {
     if (playerStore.premium) {
-      Alert.alert('Already Premium', 'Ads are already removed on this account.');
+      Alert.alert('Already a Commander', 'The coin bonus and Champion Gold skin are already on this account.');
       return;
     }
     Alert.alert(
-      'Premium — Remove Ads',
-      'Remove banner and full-screen ads permanently for $4.99?\n\nRewarded "watch a video" bonuses stay available whenever you want them.',
+      'Commander Bundle — $4.99',
+      'Permanent +15% coins from battles, and the Champion Gold skin unlocks. The game is ad-free for everyone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -375,7 +418,7 @@ export default function ShopScreen() {
                     );
                     return;
                   }
-                  Alert.alert('Welcome to Premium!', 'Ads are now removed. Thanks for supporting the game!');
+                  Alert.alert('Welcome, Commander', 'Battles pay 15% more coins, and Champion Gold is unlocked.');
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
@@ -760,6 +803,55 @@ export default function ShopScreen() {
               </View>
             </View>
 
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Base fortification</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +{FORTIFY_HP_PER_LEVEL} base health per level. Current bonus{' '}
+                {playerStore.fortifyUpgradeLevel * FORTIFY_HP_PER_LEVEL}.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.fortifyUpgradeLevel}/{FORTIFY_UPGRADE_MAX}
+                </Text>
+                {playerStore.fortifyUpgradeLevel >= FORTIFY_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseFortify}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getFortifyUpgradePrice(playerStore.fortifyUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Calibration</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +2% damage for every tower, every run.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.calibrationUpgradeLevel}/{CALIBRATION_UPGRADE_MAX}
+                </Text>
+                {playerStore.calibrationUpgradeLevel >= CALIBRATION_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseCalibration}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getCalibrationUpgradePrice(playerStore.calibrationUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
             <Text style={styles.sectionSubtitle}>
               Unlock towers and upgrade stats. Higher upgrade levels increase that tower&apos;s cost in battle.
@@ -784,15 +876,15 @@ export default function ShopScreen() {
                 onPress={handlePurchasePremium}
                 disabled={purchaseLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Remove ads permanently for $4.99"
+                accessibilityLabel="Commander bundle for $4.99"
               >
                 <View style={styles.premiumIconWrap}>
                   <MaterialCommunityIcons name="crown" size={26} color="#d4af37" />
                 </View>
                 <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Remove Ads — Premium</Text>
+                  <Text style={styles.rewardedTitle}>Commander Bundle</Text>
                   <Text style={styles.rewardedSubtitle}>
-                    No banners, no full-screen ads. Forever.
+                    +15% battle coins and the Champion Gold skin. Same $4.99 product as before.
                   </Text>
                 </View>
                 <View style={styles.premiumPriceTag}>
