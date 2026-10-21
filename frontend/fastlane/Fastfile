@@ -1,0 +1,63 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build a signed IPA and upload it to TestFlight. Does not submit for App Store review."
+  lane :testflight do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      is_key_content_base64: ENV.fetch("ASC_KEY_IS_BASE64", "true") == "true",
+      in_house: false
+    )
+
+    project_dir = File.expand_path("../ios", __dir__)
+    workspace = Dir[File.join(project_dir, "*.xcworkspace")].first
+    project = Dir[File.join(project_dir, "*.xcodeproj")].first
+    UI.user_error!("No Xcode workspace. Run expo prebuild first.") unless workspace
+
+    scheme = ENV["IOS_SCHEME"]
+    if scheme.nil? || scheme.empty?
+      schemes = Dir[File.join(project_dir, "*.xcodeproj")].flat_map do |proj|
+        File.basename(proj, ".xcodeproj")
+      end
+      scheme = schemes.first
+    end
+
+    profile_name = ENV["IOS_PROFILE_NAME"]
+    if profile_name && !profile_name.empty? && project
+      update_code_signing_settings(
+        use_automatic_signing: false,
+        path: project,
+        team_id: ENV["APPLE_TEAM_ID"],
+        profile_name: profile_name,
+        code_sign_identity: "Apple Distribution",
+        targets: [scheme]
+      )
+    end
+
+    gym(
+      workspace: workspace,
+      scheme: scheme,
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: File.expand_path("../build", __dir__),
+      output_name: "LastStand.ipa",
+      clean: true,
+      export_options: profile_name && !profile_name.empty? ? {
+        provisioningProfiles: {
+          "com.horseshoeroundme.laststandtowerdefense" => profile_name
+        }
+      } : nil
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: File.expand_path("../build/LastStand.ipa", __dir__),
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+      distribute_external: false,
+      changelog: "Last Stand Tower Defense 2.3.0"
+    )
+  end
+end

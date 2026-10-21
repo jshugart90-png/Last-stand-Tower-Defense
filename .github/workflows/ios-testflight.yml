@@ -1,0 +1,128 @@
+name: iOS TestFlight
+
+# Uploads a signed build to TestFlight. It does not submit the app for App Store review.
+# Signing material is read from GitHub Actions secrets. Nothing is hardcoded.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  testflight:
+    name: iOS TestFlight
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_B64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      ASC_KEY_RAW: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+      P12_B64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
+      P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require App Store Connect secrets
+        run: |
+          set -euo pipefail
+          missing=0
+          check() {
+            local name="$1"
+            local value="$2"
+            if [ -n "$value" ]; then
+              echo "$name: present"
+            else
+              echo "$name: missing"
+              missing=1
+            fi
+          }
+          check APP_STORE_CONNECT_API_KEY_ID "$ASC_KEY_ID"
+          check APP_STORE_CONNECT_ISSUER_ID "$ASC_ISSUER_ID"
+          if [ -n "$ASC_KEY_B64" ] || [ -n "$ASC_KEY_RAW" ]; then
+            echo "APP_STORE_CONNECT_API_KEY_BASE64 or APP_STORE_CONNECT_API_KEY: present"
+          else
+            echo "APP_STORE_CONNECT_API_KEY_BASE64: missing"
+            echo "APP_STORE_CONNECT_API_KEY: missing"
+            missing=1
+          fi
+          check IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 "$P12_B64"
+          check IOS_DISTRIBUTION_CERTIFICATE_PASSWORD "$P12_PASSWORD"
+          check IOS_PROVISIONING_PROFILE_BASE64 "$PROFILE_B64"
+          check IOS_PROVISIONING_PROFILE_NAME "$PROFILE_NAME"
+          check APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          if [ "$missing" -ne 0 ]; then
+            echo "Stopping before the iOS build. Add the missing secrets to this repository, then rerun iOS TestFlight."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install JavaScript dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Stamp the iOS build number
+        working-directory: frontend
+        run: |
+          node << 'NODE'
+          const fs = require('fs');
+          const path = 'app.json';
+          const app = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const run = Number(process.env.GITHUB_RUN_NUMBER || '1');
+          const build = String(23000 + run);
+          app.expo.version = '2.3.0';
+          app.expo.ios = app.expo.ios || {};
+          app.expo.ios.buildNumber = build;
+          if (app.expo.android) app.expo.android.versionCode = 23000 + run;
+          fs.writeFileSync(path, JSON.stringify(app, null, 2) + '\n');
+          console.log('ios buildNumber', build);
+          NODE
+
+      - name: Prebuild the iOS project
+        working-directory: frontend
+        run: npx expo prebuild --platform ios --no-install --non-interactive
+
+      - name: Install CocoaPods
+        working-directory: frontend/ios
+        run: pod install
+
+      - name: Install the distribution certificate and profile
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$P12_B64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/laststand.mobileprovision"
+          rm -f "$RUNNER_TEMP/dist.p12"
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Build and upload to TestFlight
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          if [ -n "${ASC_KEY_B64}" ]; then
+            export ASC_KEY_CONTENT="$ASC_KEY_B64"
+            export ASC_KEY_IS_BASE64=true
+          else
+            export ASC_KEY_CONTENT="$ASC_KEY_RAW"
+            export ASC_KEY_IS_BASE64=false
+          fi
+          export IOS_PROFILE_NAME="${PROFILE_NAME}"
+          fastlane ios testflight

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, ImageBackground, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -12,6 +12,7 @@ import {
 } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 import { DIFFICULTY_MODES, getDifficultyModifiers } from '../src/logic/difficulty';
+import { uiArt } from '../src/art/sprites';
 
 const MapCard = ({
   map,
@@ -177,9 +178,11 @@ export default function MapSelectionScreen() {
       />
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.startBtn} onPress={startSelectedMap}>
-          <Ionicons name="play" size={20} color={TacticalTheme.white} />
-          <Text style={styles.startBtnText}>Play</Text>
+        <TouchableOpacity onPress={startSelectedMap}>
+          <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.startBtn}>
+            <Ionicons name="play" size={20} color="#1a1208" />
+            <Text style={styles.startBtnText}>Play</Text>
+          </ImageBackground>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -284,13 +287,13 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
   },
   startBtn: {
-    backgroundColor: TacticalTheme.accent,
-    borderRadius: 10,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
+    minWidth: 180,
   },
-  startBtnText: { color: TacticalTheme.white, fontWeight: '800', fontSize: 16 },
+  startBtnText: { color: '#1a1208', fontFamily: 'KenneyFutureNarrow', fontWeight: '800', fontSize: 18 },
 });

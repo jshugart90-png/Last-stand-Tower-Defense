@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "23001",
       "bundleIdentifier": "com.horseshoeroundme.laststandtowerdefense",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -25,7 +26,8 @@
         "com.android.vending.BILLING",
         "android.permission.INTERNET"
       ],
-      "package": "com.horseshoeroundme.laststandtowerdefense"
+      "package": "com.horseshoeroundme.laststandtowerdefense",
+      "versionCode": 23001
     },
     "web": {
       "bundler": "metro",

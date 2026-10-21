@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
 import { AppState, InteractionManager } from 'react-native';
+import { useFonts } from 'expo-font';
 import { initializeAudio, playMusic, refreshAudioModeOnForeground } from '../src/services/audioService';
 import { RootErrorBoundary } from '../src/components/RootErrorBoundary';
 import { TacticalTheme } from '../src/theme/colors';
@@ -19,6 +20,10 @@ const queryClient = new QueryClient();
 
 export default function RootLayout() {
   const pathname = usePathname();
+  const [fontsLoaded, fontError] = useFonts({
+    KenneyFuture: require('../assets/kenney/font/KenneyFuture.ttf'),
+    KenneyFutureNarrow: require('../assets/kenney/font/KenneyFutureNarrow.ttf'),
+  });
   useEffect(() => {
     if (pathname === '/game') return;
     void playMusic('menu');
@@ -50,6 +55,8 @@ export default function RootLayout() {
       appStateSub.remove();
     };
   }, []);
+
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

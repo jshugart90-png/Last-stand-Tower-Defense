@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   AppState,
+  ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -30,6 +31,7 @@ import {
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
 import { TacticalTheme } from '../src/theme/colors';
+import { TowerPicture, uiArt } from '../src/art/sprites';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -566,7 +568,11 @@ export default function HomeScreen() {
       <View style={styles.content}>
         {/* Game title */}
         <View style={styles.titleContainer}>
-          <MaterialCommunityIcons name="shield-sword" size={64} color={TacticalTheme.accent} />
+          <View style={styles.heroRow}>
+            <TowerPicture type="machine_gun" level={2} size={54} />
+            <TowerPicture type="cannon" level={3} size={68} />
+            <TowerPicture type="flak" level={2} size={54} />
+          </View>
           <Text style={styles.title}>LAST STAND</Text>
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
@@ -633,13 +639,11 @@ export default function HomeScreen() {
         </View>
 
         {/* Play button */}
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={handlePlayPress}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="play" size={32} color="#fff" />
-          <Text style={styles.playButtonText}>PLAY</Text>
+        <TouchableOpacity onPress={handlePlayPress} activeOpacity={0.85} style={styles.playWrap}>
+          <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButton}>
+            <Ionicons name="play" size={26} color="#1a1208" />
+            <Text style={styles.playButtonText}>PLAY</Text>
+          </ImageBackground>
         </TouchableOpacity>
 
         {/* Quick actions */}
@@ -870,18 +874,24 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginBottom: 4,
+  },
   title: {
     color: '#fff',
-    fontSize: 42,
-    fontWeight: 'bold',
-    letterSpacing: 4,
-    marginTop: 8,
+    fontSize: 40,
+    fontFamily: 'KenneyFutureNarrow',
+    letterSpacing: 2,
+    marginTop: 4,
   },
   subtitle: {
-    color: TacticalTheme.accent,
-    fontSize: 28,
-    fontWeight: 'bold',
-    letterSpacing: 8,
+    color: '#f0d48a',
+    fontSize: 22,
+    fontFamily: 'KenneyFutureNarrow',
+    letterSpacing: 6,
   },
   dailyBonusCard: {
     width: '100%',
@@ -967,25 +977,22 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '600',
   },
+  playWrap: {
+    marginBottom: 28,
+  },
   playButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: TacticalTheme.accent,
-    paddingVertical: 20,
-    paddingHorizontal: 64,
-    borderRadius: 16,
-    gap: 12,
-    marginBottom: 48,
-    shadowColor: TacticalTheme.black,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
+    justifyContent: 'center',
+    minWidth: 240,
+    paddingVertical: 16,
+    paddingHorizontal: 36,
+    gap: 10,
   },
   playButtonText: {
-    color: TacticalTheme.white,
+    color: '#1a1208',
     fontSize: 28,
-    fontWeight: 'bold',
+    fontFamily: 'KenneyFutureNarrow',
     letterSpacing: 2,
   },
   quickActionsRow: {

@@ -20,6 +20,7 @@ import { getWaveConfig, getWavePlannedEnemyCount } from '../constants/game';
 import { GAME_MAPS } from '../constants/maps';
 import { getArenaMap } from '../constants/arenaMaps';
 import { createDefaultAchievements } from '../constants/progression';
+import { burstArtFrame, enemyArtFrame, towerArtTier } from './artMap';
 
 describe('audio mix', () => {
   it('crossfades from outgoing to incoming', () => {
@@ -195,5 +196,22 @@ describe('waves', () => {
     assert.ok(veteran.enemyHealth > 1);
     assert.ok(veteran.reward > 1);
     assert.equal(getDifficultyModifiers('nope').id, 'normal');
+  });
+});
+
+describe('art tiers', () => {
+  it('steps tower sprites at the first upgrade and the path upgrade', () => {
+    assert.equal(towerArtTier(0), 0);
+    assert.equal(towerArtTier(1), 1);
+    assert.equal(towerArtTier(2), 1);
+    assert.equal(towerArtTier(3), 2);
+  });
+
+  it('flaps flying enemies and keeps ground units on one frame', () => {
+    assert.equal(enemyArtFrame('basic', 0), 0);
+    assert.equal(enemyArtFrame('flying', 0), 0);
+    assert.equal(enemyArtFrame('flying', 180), 1);
+    assert.equal(burstArtFrame(0), 0);
+    assert.equal(burstArtFrame(270), 3);
   });
 });

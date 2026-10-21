@@ -257,9 +257,32 @@ function samplesFor(key: string): Float32Array {
   return built;
 }
 
+const FILE_SFX: Record<string, number> = {
+  ui_mission: require('../../assets/kenney/sfx/click.wav'),
+  ui_combo: require('../../assets/kenney/sfx/tap.wav'),
+  ui_chest: require('../../assets/kenney/sfx/click.wav'),
+  ui_record: require('../../assets/kenney/sfx/tap.wav'),
+  build: require('../../assets/kenney/sfx/click.wav'),
+  upgrade: require('../../assets/kenney/sfx/tap.wav'),
+};
+
 async function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
   const existing = cache.get(key);
   if (existing && !loop) return existing;
+  const file = FILE_SFX[key];
+  if (file) {
+    try {
+      const { sound } = await Audio.Sound.createAsync(file, {
+        shouldPlay: false,
+        volume: 1,
+        isLooping: loop,
+      });
+      if (!loop) cache.set(key, sound);
+      return sound;
+    } catch {
+      /* generated tone below */
+    }
+  }
   try {
     const base64 = float32ToWavBase64(samplesFor(key));
     let uri = `data:audio/wav;base64,${base64}`;

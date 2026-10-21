@@ -20,6 +20,8 @@ import {
   Modal,
   Alert,
   BackHandler,
+  Image,
+  ImageBackground,
 } from 'react-native';
 import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
 import Animated, {
@@ -66,6 +68,8 @@ import {
 } from '../src/constants/sessionProgress';
 import { getMapById, promoteEnemyType } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
+import { BurstPicture, EnemyPicture, ShotPicture, TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
+import { burstArtFrame, enemyArtFrame } from '../src/logic/artMap';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
@@ -209,33 +213,6 @@ function ensureWaveSpawnSchedule(args: {
   waveKeyRef.current = waveChallengeKey;
 }
 
-// Helper function for tower icons
-const getTowerIcon = (type: TowerType, size = 20) => {
-  const iconProps = { size, color: '#fff' };
-  switch (type) {
-    case 'machine_gun':
-      return <MaterialCommunityIcons name="pistol" {...iconProps} />;
-    case 'sniper':
-      return <MaterialCommunityIcons name="crosshairs-gps" {...iconProps} />;
-    case 'splash':
-      return <MaterialCommunityIcons name="bomb" {...iconProps} />;
-    case 'freeze':
-      return <MaterialCommunityIcons name="snowflake" {...iconProps} />;
-    case 'missile':
-      return <MaterialCommunityIcons name="rocket-launch" {...iconProps} />;
-    case 'laser':
-      return <MaterialCommunityIcons name="flashlight" {...iconProps} />;
-    case 'tesla':
-      return <MaterialCommunityIcons name="flash" {...iconProps} />;
-    case 'flak':
-      return <MaterialCommunityIcons name="airplane" {...iconProps} />;
-    case 'cannon':
-      return <MaterialCommunityIcons name="bullseye" {...iconProps} />;
-    default:
-      return <Ionicons name="help" {...iconProps} />;
-  }
-};
-
 type PanelDragSharedValues = {
   ghostX: SharedValue<number>;
   ghostY: SharedValue<number>;
@@ -279,7 +256,7 @@ const TowerDragGhostOverlay = React.memo(function TowerDragGhostOverlay({
         ]}
       >
         <View style={[styles.towerDragGhostIcon, { backgroundColor: TOWERS[towerType].color }]}>
-          {getTowerIcon(towerType, 26)}
+          <TowerPicture type={towerType} level={0} size={36} />
         </View>
       </Animated.View>
     </View>
@@ -369,7 +346,7 @@ const TowerPanelItem = React.memo(
     if (!isUnlocked) {
       return (
         <View style={[styles.towerButton, styles.towerButtonLocked]}>
-          <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
+          <TowerPicture type={type} level={0} size={36} />
           <Text style={styles.towerName} numberOfLines={1}>
             {tower.name}
           </Text>
@@ -389,7 +366,7 @@ const TowerPanelItem = React.memo(
           ]}
           onPress={() => onQuickTap(type)}
         >
-          <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
+          <TowerPicture type={type} level={0} size={36} />
           <Text style={styles.towerName} numberOfLines={1}>
             {tower.name}
           </Text>
@@ -401,7 +378,7 @@ const TowerPanelItem = React.memo(
     return (
       <GestureDetector gesture={composed}>
         <View style={[styles.towerButton, isSelected && styles.towerButtonSelected]}>
-          <View style={[styles.towerIcon, { backgroundColor: tower.color }]}>{getTowerIcon(type)}</View>
+          <TowerPicture type={type} level={0} size={36} />
           <Text style={styles.towerName} numberOfLines={1}>
             {tower.name}
           </Text>
@@ -595,7 +572,7 @@ const TowerOptionsPanel = ({
     <View style={styles.towerOptionsPanel}>
       <View style={styles.towerOptionHeader}>
         <View style={[styles.towerOptionIcon, { backgroundColor: towerDef.color }]}>
-          {getTowerIcon(tower.type, 16)}
+          <TowerPicture type={tower.type} level={tower.level} size={22} />
         </View>
         <View style={styles.towerTitleContainer}>
           <Text style={styles.towerOptionTitle}>
@@ -725,8 +702,27 @@ const GameMapCell = React.memo(
       [scaledCellSize, col, row, onPath, canPlace, isPlacementPreview, isSpawn, isBase, mapTheme]
     );
 
+    const ground = onPath ? terrainArt.path : (col + row) % 2 === 0 ? terrainArt.grass : terrainArt.grassAlt;
+    const showDecor = !onPath && !isSpawn && !isBase && !hasTower && (col * 5 + row * 3) % 11 === 0;
+    const art = (
+      <>
+        <Image
+          source={ground}
+          resizeMode="cover"
+          style={{ position: 'absolute', left: 0, top: 0, width: scaledCellSize, height: scaledCellSize }}
+        />
+        {showDecor ? (
+          <Image
+            source={terrainArt.decor}
+            resizeMode="contain"
+            style={{ position: 'absolute', left: 0, top: 0, width: scaledCellSize, height: scaledCellSize, opacity: 0.9 }}
+          />
+        ) : null}
+      </>
+    );
+
     if (hasTower) {
-      return <View style={cellStyle} />;
+      return <View style={cellStyle}>{art}</View>;
     }
 
     return (
@@ -734,7 +730,9 @@ const GameMapCell = React.memo(
         style={cellStyle}
         onPress={() => onCellPress(col, row)}
         activeOpacity={0.7}
-      />
+      >
+        {art}
+      </TouchableOpacity>
     );
   }
 );
@@ -782,14 +780,9 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
   const healthPercent = Math.max(0, Math.min(1, enemy.health / enemy.maxHealth));
   const isSlowed = nowTs < enemy.slowedUntil;
   const flashing = (enemy.hitFlashUntil ?? 0) > nowTs;
-  const enemySize = enemyDef.size * finalScale;
+  const enemySize = Math.max(enemyDef.size * finalScale, scaledCellSize * 0.72);
   const flying = enemy.type === 'flying';
-  const shape =
-    enemy.type === 'fast' || enemy.type === 'flying'
-      ? enemySize / 2
-      : enemy.type === 'tank' || enemy.type === 'armored' || enemy.type === 'boss'
-        ? 4
-        : enemySize / 3;
+  const bob = flying ? 0 : Math.sin(nowTs / 180 + enemy.position.x) * 1.5;
 
   return (
     <View
@@ -797,7 +790,7 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
       style={{
         position: 'absolute',
         left: enemy.position.x * scaledCellSize + (scaledCellSize - enemySize) / 2,
-        top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2 - (flying ? 6 : 0),
+        top: enemy.position.y * scaledCellSize + (scaledCellSize - enemySize) / 2 - (flying ? 8 : 0) + bob,
         width: enemySize,
         height: enemySize,
       }}
@@ -806,40 +799,52 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
         <View
           style={{
             position: 'absolute',
-            left: 2,
-            top: enemySize - 4,
-            width: enemySize - 4,
+            left: 4,
+            top: enemySize - 6,
+            width: enemySize - 8,
             height: 4,
             borderRadius: 4,
-            backgroundColor: 'rgba(0,0,0,0.45)',
+            backgroundColor: 'rgba(0,0,0,0.4)',
           }}
         />
       ) : null}
-      <View
-        style={[
-          styles.enemy,
-          {
+      <EnemyPicture type={enemy.type} frame={enemyArtFrame(enemy.type, nowTs)} size={enemySize} />
+      {flashing ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
             width: enemySize,
             height: enemySize,
-            borderRadius: shape,
-            backgroundColor: flashing ? '#fff' : isSlowed ? TacticalTheme.freezeTint : enemyDef.color,
-            borderWidth: enemy.type === 'armored' || enemy.type === 'boss' || enemy.type === 'shielded' ? 2 : 0,
-            borderColor: enemy.type === 'boss' ? '#F4D35E' : enemy.type === 'armored' ? '#EFEFEF' : '#7FDBFF',
-            transform: enemy.type === 'fast' ? [{ rotate: '45deg' }] : undefined,
-          },
-        ]}
-      >
-        <View style={styles.healthBarContainer}>
-          <View
-            style={[
-              styles.healthBar,
-              {
-                width: `${healthPercent * 100}%`,
-                backgroundColor: healthPercent < 0.35 ? '#E74C3C' : '#2ECC71',
-              },
-            ]}
-          />
-        </View>
+            backgroundColor: 'rgba(255,255,255,0.45)',
+          }}
+        />
+      ) : null}
+      {isSlowed ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: enemySize,
+            height: enemySize,
+            backgroundColor: 'rgba(120,200,255,0.28)',
+          }}
+        />
+      ) : null}
+      <View style={styles.healthBarContainer}>
+        <View
+          style={[
+            styles.healthBar,
+            {
+              width: `${healthPercent * 100}%`,
+              backgroundColor: healthPercent < 0.35 ? '#E74C3C' : '#2ECC71',
+            },
+          ]}
+        />
       </View>
     </View>
   );
@@ -848,24 +853,16 @@ const GameEnemySprite = React.memo(function GameEnemySprite({
 const GameProjectileSprite = React.memo(function GameProjectileSprite({
   left,
   top,
-  backgroundColor,
+  towerType,
 }: {
   left: number;
   top: number;
-  backgroundColor: string;
+  towerType: TowerType;
 }) {
   return (
-    <View
-      pointerEvents="none"
-      style={[
-        styles.projectile,
-        {
-          left,
-          top,
-          backgroundColor,
-        },
-      ]}
-    />
+    <View pointerEvents="none" style={[styles.projectile, { left, top, backgroundColor: 'transparent' }]}>
+      <ShotPicture towerType={towerType} size={14} />
+    </View>
   );
 });
 
@@ -874,14 +871,12 @@ const GameTowerSprite = React.memo(function GameTowerSprite({
   scaledCellSize,
   rangeRadius,
   isSelected,
-  getTowerColor,
   onCellPress,
 }: {
   tower: PlacedTower;
   scaledCellSize: number;
   rangeRadius: number;
   isSelected: boolean;
-  getTowerColor: (t: PlacedTower) => string;
   onCellPress: (x: number, y: number) => void;
 }) {
   const cx = tower.position.x * scaledCellSize;
@@ -921,18 +916,15 @@ const GameTowerSprite = React.memo(function GameTowerSprite({
           style={[
             styles.tower,
             {
-              width: scaledCellSize * 0.8,
-              height: scaledCellSize * 0.8,
-              backgroundColor: getTowerColor(tower),
-              borderWidth: isSelected ? 3 : tower.level > 0 ? 2 : 0,
-              borderColor: isSelected ? '#FFD700' :
-                tower.level >= 5 ? '#FF00FF' :
-                tower.level >= 3 ? '#00FF88' :
-                tower.level >= 1 ? '#C0C0C0' : 'transparent',
+              width: scaledCellSize * 0.92,
+              height: scaledCellSize * 0.92,
+              backgroundColor: 'transparent',
+              borderWidth: isSelected ? 2 : 0,
+              borderColor: '#FFD700',
             },
           ]}
         >
-          {getTowerIcon(tower.type, scaledCellSize * 0.4)}
+          <TowerPicture type={tower.type} level={tower.level} size={scaledCellSize * 0.92} />
           {tower.level > 0 && (
             <View style={styles.levelBadge}>
               <Text style={styles.levelText}>{tower.level}</Text>
@@ -1154,7 +1146,6 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
     projectiles,
     laserBeams,
     towerUpgradeLevels,
-    getTowerColor,
     selectedPlacedTower,
     floatTexts,
     bursts,
@@ -1165,7 +1156,6 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
       projectiles: s.projectiles,
       laserBeams: s.laserBeams,
       towerUpgradeLevels: s.towerUpgradeLevels,
-      getTowerColor: s.getTowerColor,
       selectedPlacedTower: s.selectedPlacedTower,
       floatTexts: s.floatTexts,
       bursts: s.bursts,
@@ -1255,13 +1245,12 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
             py += (dy / dist) * lead;
           }
         }
-        const bg = proj.isFreeze ? TacticalTheme.freezeTint : proj.isSplash ? '#FF6B35' : '#FFD700';
         return (
           <GameProjectileSprite
             key={proj.id}
-            left={px * scaledCellSize + scaledCellSize / 2 - 4}
-            top={py * scaledCellSize + scaledCellSize / 2 - 4}
-            backgroundColor={bg}
+            left={px * scaledCellSize + scaledCellSize / 2 - 8}
+            top={py * scaledCellSize + scaledCellSize / 2 - 8}
+            towerType={proj.towerType}
           />
         );
       })}
@@ -1274,15 +1263,12 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
               pointerEvents="none"
               style={{
                 position: 'absolute',
-                left: burst.x * scaledCellSize + scaledCellSize / 2 - 8,
-                top: burst.y * scaledCellSize + scaledCellSize / 2 - 8,
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: burst.color,
-                opacity: 0.7,
+                left: burst.x * scaledCellSize + scaledCellSize / 2 - 14,
+                top: burst.y * scaledCellSize + scaledCellSize / 2 - 14,
               }}
-            />
+            >
+              <BurstPicture frame={burstArtFrame(nowTs)} size={28} />
+            </View>
           ))}
       {vfxQuality === 0 || performanceMode
         ? null
@@ -1326,7 +1312,6 @@ const GameBoardCombatEntities = React.memo(function GameBoardCombatEntities({
             scaledCellSize={scaledCellSize}
             rangeRadius={rangeRadius}
             isSelected={isSelected}
-            getTowerColor={getTowerColor}
             onCellPress={onCellPress}
           />
         );
@@ -1824,7 +1809,7 @@ const GameOverFlowModal = ({
     <Modal visible transparent animationType="fade">
       <View style={styles.modalOverlay}>
         {step === 'revive' ? (
-          <View style={styles.gameOverModal}>
+          <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.kenneyPanelImage} style={styles.gameOverModal}>
             <MaterialCommunityIcons name="heart-flash" size={44} color={TacticalTheme.accent} />
             <Text style={styles.gameOverTitle}>Base destroyed!</Text>
             <Text style={styles.reviveSubtitle}>
@@ -1846,10 +1831,10 @@ const GameOverFlowModal = ({
             <TouchableOpacity style={styles.playAgainSecondary} onPress={onReviveDecline} disabled={reviveBusy}>
               <Text style={styles.playAgainSecondaryText}>Give up</Text>
             </TouchableOpacity>
-          </View>
+          </ImageBackground>
         ) : step === 'over' ? (
-          <View style={styles.gameOverModal}>
-            <Text style={styles.gameOverTitle}>Game over</Text>
+          <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.kenneyPanelImage} style={styles.gameOverModal}>
+            <Text style={[styles.gameOverTitle, styles.kenneyTitle]}>Game over</Text>
             <View style={styles.gameOverKillsBlock}>
               <Text style={styles.gameOverKillsNumber}>{enemiesKilled}</Text>
               <Text style={styles.gameOverKillsCaption}>enemies destroyed this run</Text>
@@ -1871,13 +1856,14 @@ const GameOverFlowModal = ({
             </Text>
             <Text style={styles.gameOverWave}>Wave {wave} • Score {score}</Text>
             <TouchableOpacity style={styles.resultsPrimaryButton} onPress={onSeeResults}>
-              <Text style={styles.resultsPrimaryText}>See results</Text>
-              <Ionicons name="chevron-forward" size={22} color={TacticalTheme.white} />
+              <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.kenneyBtn}>
+                <Text style={styles.kenneyBtnText}>See results</Text>
+              </ImageBackground>
             </TouchableOpacity>
-          </View>
+          </ImageBackground>
         ) : (
-          <View style={styles.gameOverModal}>
-            <Text style={styles.resultsScreenTitle}>Run results</Text>
+          <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.kenneyPanelImage} style={styles.gameOverModal}>
+            <Text style={[styles.resultsScreenTitle, styles.kenneyTitle]}>Run results</Text>
             <Text style={styles.resultsChallenge}>{rewardSummary.challengeName}</Text>
 
             <View style={styles.resultsHeroCard}>
@@ -1945,15 +1931,18 @@ const GameOverFlowModal = ({
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.homePrimaryButton} onPress={onHome}>
-              <Ionicons name="home" size={22} color="#fff" />
-              <Text style={styles.homePrimaryText}>Home</Text>
+            <TouchableOpacity onPress={onHome}>
+              <ImageBackground source={uiArt.buttonBlue} resizeMode="stretch" style={styles.kenneyBtn}>
+                <Text style={styles.kenneyBtnText}>Home</Text>
+              </ImageBackground>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.playAgainSecondary} onPress={onPlayAgain}>
-              <Text style={styles.playAgainSecondaryText}>Play again</Text>
+            <TouchableOpacity onPress={onPlayAgain} style={{ marginTop: 8 }}>
+              <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.kenneyBtn}>
+                <Text style={styles.kenneyBtnText}>Play again</Text>
+              </ImageBackground>
             </TouchableOpacity>
-          </View>
+          </ImageBackground>
         )}
       </View>
     </Modal>
@@ -3746,9 +3735,8 @@ const styles = StyleSheet.create({
   },
   projectile: {
     position: 'absolute',
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 16,
+    height: 16,
     zIndex: 16,
   },
   base: {
@@ -4014,14 +4002,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   gameOverModal: {
-    backgroundColor: TacticalTheme.panel,
+    backgroundColor: 'transparent',
     borderRadius: 16,
-    padding: 32,
+    padding: 28,
     alignItems: 'center',
-    width: '85%',
-    maxWidth: 350,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
+    width: '88%',
+    maxWidth: 380,
+    overflow: 'hidden',
+  },
+  kenneyPanelImage: {
+    borderRadius: 16,
+  },
+  kenneyTitle: {
+    fontFamily: 'KenneyFutureNarrow',
+    letterSpacing: 1,
+  },
+  kenneyBtn: {
+    minWidth: 220,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  kenneyBtnText: {
+    color: '#1a1208',
+    fontSize: 18,
+    fontFamily: 'KenneyFutureNarrow',
+    fontWeight: '700',
   },
   gameOverTitle: {
     color: TacticalTheme.accent,
