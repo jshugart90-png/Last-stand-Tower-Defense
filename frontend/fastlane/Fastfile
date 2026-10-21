@@ -1,5 +1,7 @@
 default_platform(:ios)
 
+BUNDLE_ID = "com.horseshoeroundme.laststandtowerdefense"
+
 platform :ios do
   desc "Build a signed IPA and upload it to TestFlight. Does not submit for App Store review."
   lane :testflight do
@@ -11,30 +13,68 @@ platform :ios do
       in_house: false
     )
 
+    team_id = ENV.fetch("APPLE_TEAM_ID")
+    keychain_path = ENV["KEYCHAIN_PATH"].to_s
+    keychain_password = ENV["KEYCHAIN_PASSWORD"].to_s
+    manual_cert = ENV["IOS_MANUAL_CERT"] == "true"
+    profile_name = ENV["IOS_PROFILE_NAME"].to_s.strip
+
     project_dir = File.expand_path("../ios", __dir__)
     workspace = Dir[File.join(project_dir, "*.xcworkspace")].first
     project = Dir[File.join(project_dir, "*.xcodeproj")].first
     UI.user_error!("No Xcode workspace. Run expo prebuild first.") unless workspace
+    UI.user_error!("No Xcode project. Run expo prebuild first.") unless project
 
-    scheme = ENV["IOS_SCHEME"]
-    if scheme.nil? || scheme.empty?
-      schemes = Dir[File.join(project_dir, "*.xcodeproj")].flat_map do |proj|
-        File.basename(proj, ".xcodeproj")
-      end
-      scheme = schemes.first
-    end
+    scheme = ENV["IOS_SCHEME"].to_s.strip
+    scheme = File.basename(project, ".xcodeproj") if scheme.empty?
 
-    profile_name = ENV["IOS_PROFILE_NAME"]
-    if profile_name && !profile_name.empty? && project
-      update_code_signing_settings(
-        use_automatic_signing: false,
-        path: project,
-        team_id: ENV["APPLE_TEAM_ID"],
-        profile_name: profile_name,
-        code_sign_identity: "Apple Distribution",
-        targets: [scheme]
+    unless manual_cert
+      UI.message("Creating or fetching the Apple Distribution certificate with the App Store Connect API key")
+      get_certificates(
+        api_key: api_key,
+        development: false,
+        team_id: team_id,
+        keychain_path: keychain_path,
+        keychain_password: keychain_password
       )
+      # cert imports a new private key. Allow codesign to use it without a GUI prompt.
+      unless keychain_path.empty? || keychain_password.empty?
+        sh(
+          "security", "set-key-partition-list",
+          "-S", "apple-tool:,apple:,codesign:",
+          "-s",
+          "-k", keychain_password,
+          keychain_path
+        )
+      end
     end
+
+    if profile_name.empty?
+      UI.message("Creating or fetching the App Store provisioning profile with the App Store Connect API key")
+      get_provisioning_profile(
+        api_key: api_key,
+        app_identifier: BUNDLE_ID,
+        team_id: team_id,
+        platform: "ios",
+        development: false,
+        adhoc: false,
+        skip_install: false,
+        # Renew so the profile includes the certificate installed in this keychain.
+        force: true,
+        include_all_certificates: true
+      )
+      profile_name = ENV["SIGH_NAME"].to_s.strip
+      UI.user_error!("get_provisioning_profile did not return a profile name") if profile_name.empty?
+    end
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: project,
+      team_id: team_id,
+      profile_name: profile_name,
+      code_sign_identity: "Apple Distribution",
+      targets: [scheme]
+    )
 
     gym(
       workspace: workspace,
@@ -44,11 +84,13 @@ platform :ios do
       output_directory: File.expand_path("../build", __dir__),
       output_name: "LastStand.ipa",
       clean: true,
-      export_options: profile_name && !profile_name.empty? ? {
+      export_options: {
+        signingStyle: "manual",
+        teamID: team_id,
         provisioningProfiles: {
-          "com.horseshoeroundme.laststandtowerdefense" => profile_name
+          BUNDLE_ID => profile_name
         }
-      } : nil
+      }
     )
 
     upload_to_testflight(

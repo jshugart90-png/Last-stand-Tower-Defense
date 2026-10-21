@@ -1,7 +1,22 @@
 name: iOS TestFlight
 
 # Uploads a signed build to TestFlight. It does not submit the app for App Store review.
-# Signing material is read from GitHub Actions secrets. Nothing is hardcoded.
+#
+# Required secrets:
+#   APP_STORE_CONNECT_API_KEY_ID
+#   APP_STORE_CONNECT_ISSUER_ID
+#   APP_STORE_CONNECT_API_KEY_BASE64   (.p8, base64)
+#   APPLE_TEAM_ID
+#
+# With those four, fastlane creates or fetches the Apple Distribution certificate
+# and the App Store provisioning profile (get_certificates / get_provisioning_profile)
+# inside a temporary keychain. A fresh runner has no private key, so the API-key
+# path mints a certificate when it cannot download one. Apple caps distribution
+# certificates; the optional p12 override reuses an existing one instead.
+#
+# Optional override (a pair is used only when both values are set):
+#   IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 + IOS_DISTRIBUTION_CERTIFICATE_PASSWORD
+#   IOS_PROVISIONING_PROFILE_BASE64 + IOS_PROVISIONING_PROFILE_NAME
 
 on:
   workflow_dispatch:
@@ -15,7 +30,6 @@ jobs:
       ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       ASC_KEY_B64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
-      ASC_KEY_RAW: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
       P12_B64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
       P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
       PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
@@ -32,29 +46,40 @@ jobs:
           check() {
             local name="$1"
             local value="$2"
+            local required="$3"
             if [ -n "$value" ]; then
               echo "$name: present"
             else
               echo "$name: missing"
-              missing=1
+              if [ "$required" = "required" ]; then
+                missing=1
+              fi
             fi
           }
-          check APP_STORE_CONNECT_API_KEY_ID "$ASC_KEY_ID"
-          check APP_STORE_CONNECT_ISSUER_ID "$ASC_ISSUER_ID"
-          if [ -n "$ASC_KEY_B64" ] || [ -n "$ASC_KEY_RAW" ]; then
-            echo "APP_STORE_CONNECT_API_KEY_BASE64 or APP_STORE_CONNECT_API_KEY: present"
-          else
-            echo "APP_STORE_CONNECT_API_KEY_BASE64: missing"
-            echo "APP_STORE_CONNECT_API_KEY: missing"
-            missing=1
+          echo "Required:"
+          check APP_STORE_CONNECT_API_KEY_ID "$ASC_KEY_ID" required
+          check APP_STORE_CONNECT_ISSUER_ID "$ASC_ISSUER_ID" required
+          check APP_STORE_CONNECT_API_KEY_BASE64 "$ASC_KEY_B64" required
+          check APPLE_TEAM_ID "$APPLE_TEAM_ID" required
+          echo "Optional override:"
+          check IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 "$P12_B64" optional
+          check IOS_DISTRIBUTION_CERTIFICATE_PASSWORD "$P12_PASSWORD" optional
+          check IOS_PROVISIONING_PROFILE_BASE64 "$PROFILE_B64" optional
+          check IOS_PROVISIONING_PROFILE_NAME "$PROFILE_NAME" optional
+          if [ -n "$P12_B64" ] && [ -z "$P12_PASSWORD" ]; then
+            echo "P12 is set without IOS_DISTRIBUTION_CERTIFICATE_PASSWORD. The override will be ignored."
           fi
-          check IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 "$P12_B64"
-          check IOS_DISTRIBUTION_CERTIFICATE_PASSWORD "$P12_PASSWORD"
-          check IOS_PROVISIONING_PROFILE_BASE64 "$PROFILE_B64"
-          check IOS_PROVISIONING_PROFILE_NAME "$PROFILE_NAME"
-          check APPLE_TEAM_ID "$APPLE_TEAM_ID"
+          if [ -z "$P12_B64" ] && [ -n "$P12_PASSWORD" ]; then
+            echo "Certificate password is set without IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64. The override will be ignored."
+          fi
+          if [ -n "$PROFILE_B64" ] && [ -z "$PROFILE_NAME" ]; then
+            echo "Profile is set without IOS_PROVISIONING_PROFILE_NAME. The override will be ignored."
+          fi
+          if [ -z "$PROFILE_B64" ] && [ -n "$PROFILE_NAME" ]; then
+            echo "Profile name is set without IOS_PROVISIONING_PROFILE_BASE64. The override will be ignored."
+          fi
           if [ "$missing" -ne 0 ]; then
-            echo "Stopping before the iOS build. Add the missing secrets to this repository, then rerun iOS TestFlight."
+            echo "Stopping before the iOS build. Add the missing required secrets, then rerun iOS TestFlight."
             exit 1
           fi
 
@@ -94,21 +119,47 @@ jobs:
         working-directory: frontend/ios
         run: pod install
 
-      - name: Install the distribution certificate and profile
+      - name: Prepare the temporary signing keychain
         run: |
           set -euo pipefail
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          echo "$P12_B64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
-          security import "$RUNNER_TEMP/dist.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/laststand.mobileprovision"
-          rm -f "$RUNNER_TEMP/dist.p12"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          {
+            echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+            echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+          if [ -n "$P12_B64" ] && [ -n "$P12_PASSWORD" ]; then
+            echo "$P12_B64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+            security import "$RUNNER_TEMP/dist.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            rm -f "$RUNNER_TEMP/dist.p12"
+            echo "IOS_MANUAL_CERT=true" >> "$GITHUB_ENV"
+            echo "Using the optional distribution certificate override."
+          else
+            echo "IOS_MANUAL_CERT=false" >> "$GITHUB_ENV"
+            echo "No p12 override. fastlane will create or fetch the distribution certificate."
+          fi
+
+          if [ -n "$PROFILE_B64" ] && [ -n "$PROFILE_NAME" ]; then
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            echo "$PROFILE_B64" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/laststand.mobileprovision"
+            {
+              echo "IOS_PROFILE_NAME<<EOF"
+              echo "$PROFILE_NAME"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+            echo "Using the optional provisioning profile override."
+          else
+            echo "IOS_PROFILE_NAME=" >> "$GITHUB_ENV"
+            echo "No profile override. fastlane will create or fetch the App Store profile."
+          fi
 
       - name: Install fastlane
         run: gem install fastlane --no-document
@@ -117,12 +168,6 @@ jobs:
         working-directory: frontend
         run: |
           set -euo pipefail
-          if [ -n "${ASC_KEY_B64}" ]; then
-            export ASC_KEY_CONTENT="$ASC_KEY_B64"
-            export ASC_KEY_IS_BASE64=true
-          else
-            export ASC_KEY_CONTENT="$ASC_KEY_RAW"
-            export ASC_KEY_IS_BASE64=false
-          fi
-          export IOS_PROFILE_NAME="${PROFILE_NAME}"
+          export ASC_KEY_CONTENT="$ASC_KEY_B64"
+          export ASC_KEY_IS_BASE64=true
           fastlane ios testflight

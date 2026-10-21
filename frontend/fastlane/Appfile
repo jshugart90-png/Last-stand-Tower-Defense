@@ -1,1 +1,2 @@
 app_identifier("com.horseshoeroundme.laststandtowerdefense")
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"] && !ENV["APPLE_TEAM_ID"].empty?
