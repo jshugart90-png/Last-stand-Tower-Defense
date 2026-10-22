@@ -1,5 +1,6 @@
 import axios from 'axios';
 import Constants from 'expo-constants';
+import { LOGIN_ATTEMPTS, LOGIN_TIMEOUT_MS, loginRetryDelayMs } from '../logic/login';
 
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || Constants.expoConfig?.extra?.EXPO_PUBLIC_BACKEND_URL || '';
 
@@ -16,21 +17,25 @@ export const isServerBackedPlayerId = (playerId: string | null | undefined): boo
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   // Render free tier can cold-start past 10s; keep a higher default for Reviewer first launch.
-  timeout: 30000,
+  timeout: LOGIN_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
+type RetryOpts = { attempts?: number; onAttempt?: (attempt: number, attempts: number) => void };
+
+async function withRetry<T>(fn: () => Promise<T>, opts?: RetryOpts): Promise<T> {
+  const attempts = opts?.attempts ?? LOGIN_ATTEMPTS;
   let lastError: unknown;
   for (let i = 0; i < attempts; i++) {
+    opts?.onAttempt?.(i + 1, attempts);
     try {
       return await fn();
     } catch (err) {
       lastError = err;
       if (i < attempts - 1) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, loginRetryDelayMs(i + 1)));
       }
     }
   }
@@ -39,14 +44,14 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
 
 // Player APIs
 export const playerApi = {
-  create: (nickname: string, deviceId: string) =>
-    withRetry(() => api.post('/players', { nickname, device_id: deviceId })),
+  create: (nickname: string, deviceId: string, opts?: RetryOpts) =>
+    withRetry(() => api.post('/players', { nickname, device_id: deviceId }), opts),
   
-  getById: (playerId: string) =>
-    api.get(`/players/${playerId}`),
+  getById: (playerId: string, opts?: RetryOpts) =>
+    withRetry(() => api.get(`/players/${playerId}`), opts),
   
-  getByDevice: (deviceId: string) =>
-    api.get(`/players/device/${deviceId}`),
+  getByDevice: (deviceId: string, opts?: RetryOpts) =>
+    withRetry(() => api.get(`/players/device/${deviceId}`), opts),
   
   update: (playerId: string, data: any) =>
     api.patch(`/players/${playerId}`, data),

@@ -31,6 +31,11 @@ import {
   COIN_INCOME_PER_LEVEL,
   getCoinIncomeUpgradePrice,
   getRunCoinIncomeMultiplier,
+  FORTIFY_UPGRADE_MAX,
+  FORTIFY_HP_PER_LEVEL,
+  getFortifyUpgradePrice,
+  CALIBRATION_UPGRADE_MAX,
+  getCalibrationUpgradePrice,
 } from '../src/constants/game';
 import { 
   IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, completePurchase, 
@@ -44,6 +49,8 @@ import {
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { AdBanner } from '../src/components/AdBanner';
+import { TowerPicture } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 import { useRewardedGems } from '../src/hooks/useRewardedGems';
 interface Skin {
   id: string;
@@ -51,26 +58,6 @@ interface Skin {
   price: number;
   color: string;
 }
-
-// Tower icon helper
-const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) => {
-  switch (type) {
-    case 'machine_gun':
-      return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
-    case 'sniper':
-      return <MaterialCommunityIcons name="crosshairs-gps" size={size} color={color} />;
-    case 'splash':
-      return <MaterialCommunityIcons name="bomb" size={size} color={color} />;
-    case 'freeze':
-      return <MaterialCommunityIcons name="snowflake" size={size} color={color} />;
-    case 'missile':
-      return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
-    case 'laser':
-      return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
-    default:
-      return <Ionicons name="help" size={size} color={color} />;
-  }
-};
 
 export default function ShopScreen() {
   const rewardedGems = useRewardedGems();
@@ -249,6 +236,38 @@ export default function ShopScreen() {
     }
   };
 
+  const handlePurchaseFortify = () => {
+    const level = playerStore.fortifyUpgradeLevel;
+    if (level >= FORTIFY_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Base fortification is maxed out.');
+      return;
+    }
+    const price = getFortifyUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseFortifyUpgrade()) {
+      Alert.alert('Upgraded', `Each run starts with ${FORTIFY_HP_PER_LEVEL} more base health.`);
+    }
+  };
+
+  const handlePurchaseCalibration = () => {
+    const level = playerStore.calibrationUpgradeLevel;
+    if (level >= CALIBRATION_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Calibration is maxed out.');
+      return;
+    }
+    const price = getCalibrationUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseCalibrationUpgrade()) {
+      Alert.alert('Upgraded', 'All towers deal 2% more damage.');
+    }
+  };
+
   const handlePurchaseSpeed = (speed: GameSpeed) => {
     const price = SPEED_UNLOCK_PRICES[speed];
     
@@ -337,12 +356,12 @@ export default function ShopScreen() {
   // Handle Premium Bundle (removes ads permanently) — real money via IAP
   const handlePurchasePremium = async () => {
     if (playerStore.premium) {
-      Alert.alert('Already Premium', 'Ads are already removed on this account.');
+      Alert.alert('Already a Commander', 'The coin bonus and Champion Gold skin are already on this account.');
       return;
     }
     Alert.alert(
-      'Premium — Remove Ads',
-      'Remove banner and full-screen ads permanently for $4.99?\n\nRewarded "watch a video" bonuses stay available whenever you want them.',
+      'Commander Bundle — $4.99',
+      'Permanent +15% coins from battles, and the Champion Gold skin unlocks. The game is ad-free for everyone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -375,7 +394,7 @@ export default function ShopScreen() {
                     );
                     return;
                   }
-                  Alert.alert('Welcome to Premium!', 'Ads are now removed. Thanks for supporting the game!');
+                  Alert.alert('Welcome, Commander', 'Battles pay 15% more coins, and Champion Gold is unlocked.');
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
@@ -499,8 +518,8 @@ export default function ShopScreen() {
           highlightedTower === towerType && styles.towerCardHighlighted,
         ]}
       >
-        <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
-          {getTowerIcon(towerType, 28)}
+        <View style={styles.towerIconLarge}>
+          <TowerPicture type={towerType} level={Math.min(2, upgradeLevel)} size={56} />
         </View>
         
         <View style={styles.towerInfo}>
@@ -625,7 +644,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <WoodPanel style={styles.header} cap={18}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -634,7 +653,7 @@ export default function ShopScreen() {
           <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
-      </View>
+      </WoodPanel>
 
       {/* Tabs */}
       <View style={styles.tabs}>
@@ -760,6 +779,55 @@ export default function ShopScreen() {
               </View>
             </View>
 
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Base fortification</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +{FORTIFY_HP_PER_LEVEL} base health per level. Current bonus{' '}
+                {playerStore.fortifyUpgradeLevel * FORTIFY_HP_PER_LEVEL}.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.fortifyUpgradeLevel}/{FORTIFY_UPGRADE_MAX}
+                </Text>
+                {playerStore.fortifyUpgradeLevel >= FORTIFY_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseFortify}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getFortifyUpgradePrice(playerStore.fortifyUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Calibration</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +2% damage for every tower, every run.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.calibrationUpgradeLevel}/{CALIBRATION_UPGRADE_MAX}
+                </Text>
+                {playerStore.calibrationUpgradeLevel >= CALIBRATION_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseCalibration}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getCalibrationUpgradePrice(playerStore.calibrationUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
             <Text style={styles.sectionSubtitle}>
               Unlock towers and upgrade stats. Higher upgrade levels increase that tower&apos;s cost in battle.
@@ -784,15 +852,15 @@ export default function ShopScreen() {
                 onPress={handlePurchasePremium}
                 disabled={purchaseLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Remove ads permanently for $4.99"
+                accessibilityLabel="Commander bundle for $4.99"
               >
                 <View style={styles.premiumIconWrap}>
                   <MaterialCommunityIcons name="crown" size={26} color="#d4af37" />
                 </View>
                 <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Remove Ads — Premium</Text>
+                  <Text style={styles.rewardedTitle}>Commander Bundle</Text>
                   <Text style={styles.rewardedSubtitle}>
-                    No banners, no full-screen ads. Forever.
+                    +15% battle coins and the Champion Gold skin. Same $4.99 product as before.
                   </Text>
                 </View>
                 <View style={styles.premiumPriceTag}>
@@ -1048,9 +1116,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  headerImage: {
+    borderRadius: 0,
   },
   backButton: {
     padding: 4,
@@ -1283,11 +1353,11 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   towerIconLarge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
+    width: 56,
+    height: 64,
+    justifyContent: 'flex-end',
     alignItems: 'center',
+    overflow: 'visible',
   },
   towerInfo: {
     flex: 1,

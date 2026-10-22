@@ -634,6 +634,9 @@ async def end_game(game_result: GameResult):
             3: "splash",
             5: "freeze",
             7: "missile",
+            12: "tesla",
+            16: "flak",
+            20: "cannon",
         }
         old_level = int(player.get("level", 1) or 1)
         current_towers = list(player.get("unlocked_towers", ["machine_gun"]) or ["machine_gun"])

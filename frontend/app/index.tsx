@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   AppState,
+  ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -18,6 +19,7 @@ import { useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
+import { loginStatusMessage, OFFLINE_NEW_PROFILE_NOTE, OFFLINE_SAVE_NOTE } from '../src/logic/login';
 import * as Crypto from 'expo-crypto';
 import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { getDailyChallenge } from '../src/constants/challenges';
@@ -29,6 +31,8 @@ import {
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
 import { TacticalTheme } from '../src/theme/colors';
+import { TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -38,17 +42,27 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'finger-print',
       title: 'Place Towers',
-      description: 'Select a tower, then tap or drag on the field to place it',
+      description: 'Pick a tower, then tap a tile beside the path. You cannot build on the road.',
     },
     {
       icon: 'shield-checkmark',
       title: 'Defend Your Base',
-      description: 'Stop enemies from reaching your base',
+      description: 'Press Start Wave. Stop enemies before they walk into your base.',
     },
     {
-      icon: 'trending-up',
-      title: 'Upgrade & Survive',
-      description: 'Earn gems to upgrade towers and survive longer',
+      icon: 'flash',
+      title: 'Different threats',
+      description: 'Wolf riders, wyverns, and plate orcs need different towers. Ballistas own the sky. Cannons crack plate.',
+    },
+    {
+      icon: 'git-branch',
+      title: 'Upgrade paths',
+      description: 'The third upgrade on a tower asks you to specialize. That choice stays on the tower.',
+    },
+    {
+      icon: 'volume-high',
+      title: 'Sound',
+      description: 'Music and effects are on. The iPhone silent switch does not mute the game. Use Settings if you want quiet.',
     },
   ];
 
@@ -250,6 +264,8 @@ export default function HomeScreen() {
   const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
   const claimDailyMission = usePlayerStore((s) => s.claimDailyMission);
   const [loading, setLoading] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(loginStatusMessage(1));
+  const [serverNote, setServerNote] = useState<string | null>(null);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
@@ -291,80 +307,66 @@ export default function HomeScreen() {
         store.setDeviceId(deviceId);
       }
 
-      // If we already have a local-only profile, skip the server
-      if (store.playerId && !isServerBackedPlayerId(store.playerId)) {
-        setLoading(false);
-        return;
-      }
+      setLoading(false);
+      if (!isBackendConfigured()) return;
 
-      // Had a server account in memory but no API URL (misconfig) — keep session without re-fetching
-      if (store.playerId && isServerBackedPlayerId(store.playerId) && !isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
+      const applyServerPlayer = (data: {
+        _id?: string;
+        nickname?: string;
+        xp?: number;
+        level?: number;
+        gems?: number;
+        total_waves_survived?: number;
+        games_played?: number;
+        best_wave?: number;
+        lifetime_enemies_killed?: number;
+        unlocked_towers?: string[];
+        unlocked_skins?: string[];
+        equipped_skins?: Record<string, string>;
+        premium?: boolean;
+        arena_expansions?: number;
+      }) => {
+        const live = usePlayerStore.getState();
+        if (data._id) live.setPlayer(data._id, data.nickname || live.nickname);
+        live.syncFromServer({
+          xp: data.xp,
+          level: data.level,
+          gems: data.gems ?? 0,
+          totalWavesSurvived: data.total_waves_survived,
+          gamesPlayed: data.games_played,
+          bestWave: data.best_wave,
+          lifetimeEnemiesKilled:
+            typeof data.lifetime_enemies_killed === 'number' ? data.lifetime_enemies_killed : undefined,
+          unlockedTowers: data.unlocked_towers as never,
+          unlockedSkins: data.unlocked_skins,
+          equippedSkins: data.equipped_skins,
+          premium: data.premium,
+          arenaExpansions: data.arena_expansions || 0,
+        });
+        setServerNote(null);
+        setShowNicknameModal(false);
+      };
 
-      // If we already have a player ID in local storage, use that
-      if (store.playerId && isBackendConfigured()) {
+      const hadServerId = Boolean(store.playerId && isServerBackedPlayerId(store.playerId));
+      void (async () => {
         try {
-          const response = await playerApi.getById(store.playerId);
-          if (response.data) {
-            store.syncFromServer({
-              xp: response.data.xp,
-              level: response.data.level,
-              gems: response.data.gems,
-              totalWavesSurvived: response.data.total_waves_survived,
-              gamesPlayed: response.data.games_played,
-              bestWave: response.data.best_wave,
-              lifetimeEnemiesKilled:
-                typeof response.data.lifetime_enemies_killed === 'number'
-                  ? response.data.lifetime_enemies_killed
-                  : undefined,
-              unlockedTowers: response.data.unlocked_towers,
-              unlockedSkins: response.data.unlocked_skins,
-              equippedSkins: response.data.equipped_skins,
-              premium: response.data.premium,
-              arenaExpansions: response.data.arena_expansions || 0,
+          if (hadServerId && store.playerId) {
+            const response = await playerApi.getById(store.playerId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
             });
-            setLoading(false);
+            if (response.data) applyServerPlayer(response.data);
             return;
           }
+          if (!store.playerId) {
+            const response = await playerApi.getByDevice(deviceId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+            });
+            if (response.data) applyServerPlayer(response.data);
+          }
         } catch {
+          if (hadServerId) setServerNote(OFFLINE_SAVE_NOTE);
         }
-      }
-
-      if (!isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const response = await playerApi.getByDevice(deviceId);
-        if (response.data) {
-          store.setPlayer(response.data._id, response.data.nickname);
-          store.syncFromServer({
-            xp: response.data.xp,
-            level: response.data.level,
-            gems: response.data.gems ?? 0,
-            totalWavesSurvived: response.data.total_waves_survived,
-            gamesPlayed: response.data.games_played,
-            bestWave: response.data.best_wave,
-            lifetimeEnemiesKilled:
-              typeof response.data.lifetime_enemies_killed === 'number'
-                ? response.data.lifetime_enemies_killed
-                : undefined,
-            unlockedTowers: response.data.unlocked_towers,
-            unlockedSkins: response.data.unlocked_skins,
-            equippedSkins: response.data.equipped_skins,
-            premium: response.data.premium,
-            arenaExpansions: response.data.arena_expansions || 0,
-          });
-          setLoading(false);
-          return;
-        }
-      } catch {
-      }
-
-      setLoading(false);
+      })();
     } catch {
       setLoading(false);
     }
@@ -410,6 +412,7 @@ export default function HomeScreen() {
   const handleNicknameSubmit = async (nickname: string) => {
     try {
       setLoading(true);
+      setLoadingDetail(loginStatusMessage(1));
 
       if (!isBackendConfigured()) {
         await registerLocalPlayer(nickname);
@@ -421,7 +424,9 @@ export default function HomeScreen() {
       }
 
       try {
-        const response = await playerApi.create(nickname, playerStore.deviceId);
+        const response = await playerApi.create(nickname, playerStore.deviceId, {
+          onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+        });
         if (response.data?._id) {
           playerStore.setPlayer(response.data._id, response.data.nickname);
           playerStore.syncFromServer({
@@ -435,8 +440,8 @@ export default function HomeScreen() {
           await registerLocalPlayer(nickname);
         }
       } catch {
-        // Soft-fail: continue locally without a blocking "server error" alert (App Review 2.1a).
         await registerLocalPlayer(nickname);
+        setServerNote(OFFLINE_NEW_PROFILE_NOTE);
       }
 
       setShowNicknameModal(false);
@@ -444,7 +449,8 @@ export default function HomeScreen() {
         setShowTutorial(true);
       }
     } catch {
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      setServerNote(OFFLINE_NEW_PROFILE_NOTE);
+      setShowNicknameModal(false);
     } finally {
       setLoading(false);
     }
@@ -453,6 +459,7 @@ export default function HomeScreen() {
   const handleTutorialComplete = () => {
     playerStore.completeTutorial();
     setShowTutorial(false);
+    router.push('/map-selection');
   };
 
   const handlePlayPress = useCallback(() => {
@@ -527,7 +534,7 @@ export default function HomeScreen() {
           <Text style={styles.splashSubtitle}>DEFENSE</Text>
           <View style={styles.splashLoader}>
             <ActivityIndicator size="large" color={TacticalTheme.accent} />
-            <Text style={styles.splashLoadingText}>Loading...</Text>
+            <Text style={styles.splashLoadingText}>{loadingDetail}</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -535,8 +542,15 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ImageBackground source={terrainArt.grass} resizeMode="cover" style={styles.container}>
+      <View style={styles.homeScrim} />
+    <SafeAreaView style={styles.homeSafe}>
       <StatusBar style="light" />
+      {serverNote ? (
+        <View style={styles.serverNote}>
+          <Text style={styles.serverNoteText}>{serverNote}</Text>
+        </View>
+      ) : null}
       
       {/* Header with player stats */}
       <View style={styles.header}>
@@ -557,12 +571,18 @@ export default function HomeScreen() {
       <View style={styles.content}>
         {/* Game title */}
         <View style={styles.titleContainer}>
-          <MaterialCommunityIcons name="shield-sword" size={64} color={TacticalTheme.accent} />
-          <Text style={styles.title}>LAST STAND</Text>
-          <Text style={styles.subtitle}>DEFENSE</Text>
+          <View style={styles.heroRow}>
+            <TowerPicture type="machine_gun" level={2} size={54} />
+            <TowerPicture type="cannon" level={3} size={68} />
+            <TowerPicture type="flak" level={2} size={54} />
+          </View>
+          <WoodPanel style={styles.titlePlaque} cap={14}>
+            <Text style={styles.title}>LAST STAND</Text>
+            <Text style={styles.subtitle}>DEFENSE</Text>
+          </WoodPanel>
         </View>
 
-        <View style={styles.dailyBonusCard}>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
             <Text style={styles.dailyBonusSub}>
@@ -576,9 +596,9 @@ export default function HomeScreen() {
           >
             <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
           </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
-        <View style={styles.dailyBonusCard}>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
             <Text style={styles.dailyBonusSub}>
@@ -594,7 +614,7 @@ export default function HomeScreen() {
           >
             <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
           </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
         <TouchableOpacity
           style={styles.dailyMissionsPrimaryButton}
@@ -624,28 +644,32 @@ export default function HomeScreen() {
         </View>
 
         {/* Play button */}
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={handlePlayPress}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="play" size={32} color="#fff" />
-          <Text style={styles.playButtonText}>PLAY</Text>
+        <TouchableOpacity onPress={handlePlayPress} activeOpacity={0.85} style={styles.playWrap}>
+          <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButton}>
+            <Ionicons name="play" size={26} color="#1a1208" />
+            <Text style={styles.playButtonText}>PLAY</Text>
+          </ImageBackground>
         </TouchableOpacity>
 
         {/* Quick actions */}
         <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleShopPress} activeOpacity={0.85}>
-            <Ionicons name="cart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Shop</Text>
+          <TouchableOpacity onPress={handleShopPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="cart-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Shop</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleSettingsPress} activeOpacity={0.85}>
-            <Ionicons name="settings-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Settings</Text>
+          <TouchableOpacity onPress={handleSettingsPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="settings-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Settings</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleProgressPress} activeOpacity={0.85}>
-            <Ionicons name="stats-chart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Progress</Text>
+          <TouchableOpacity onPress={handleProgressPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="stats-chart-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Progress</Text>
+            </ImageBackground>
           </TouchableOpacity>
         </View>
       </View>
@@ -689,6 +713,7 @@ export default function HomeScreen() {
         <TutorialOverlay onComplete={handleTutorialComplete} />
       )}
     </SafeAreaView>
+    </ImageBackground>
   );
 }
 
@@ -696,6 +721,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: TacticalTheme.bg,
+  },
+  homeScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(28, 16, 8, 0.22)',
+  },
+  homeSafe: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   splashContainer: {
     flex: 1,
@@ -724,6 +757,23 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     marginTop: 12,
     fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 28,
+    lineHeight: 20,
+  },
+  serverNote: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: '#172033',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#3d5a80',
+  },
+  serverNoteText: {
+    color: '#d5dde6',
+    fontSize: 13,
+    lineHeight: 18,
   },
   loadingContainer: {
     flex: 1,
@@ -844,30 +894,46 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginBottom: 4,
+  },
+  titlePlaque: {
+    paddingHorizontal: 22,
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
   title: {
-    color: '#fff',
-    fontSize: 42,
-    fontWeight: 'bold',
-    letterSpacing: 4,
-    marginTop: 8,
+    color: '#ffe7a3',
+    fontSize: 40,
+    fontFamily: 'DisplayNarrow',
+    letterSpacing: 2,
+    textShadowColor: 'rgba(90, 48, 12, 0.85)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 2,
   },
   subtitle: {
-    color: TacticalTheme.accent,
-    fontSize: 28,
-    fontWeight: 'bold',
-    letterSpacing: 8,
+    color: '#f0c14d',
+    fontSize: 22,
+    fontFamily: 'DisplayNarrow',
+    letterSpacing: 6,
   },
   dailyBonusCard: {
     width: '100%',
-    backgroundColor: TacticalTheme.surfaceDeep,
+    backgroundColor: 'transparent',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
     padding: 12,
     marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  woodCardImage: {
+    borderRadius: 12,
   },
   dailyBonusTitle: {
     color: TacticalTheme.text,
@@ -941,25 +1007,22 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '600',
   },
+  playWrap: {
+    marginBottom: 28,
+  },
   playButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: TacticalTheme.accent,
-    paddingVertical: 20,
-    paddingHorizontal: 64,
-    borderRadius: 16,
-    gap: 12,
-    marginBottom: 48,
-    shadowColor: TacticalTheme.black,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
+    justifyContent: 'center',
+    minWidth: 240,
+    paddingVertical: 16,
+    paddingHorizontal: 36,
+    gap: 10,
   },
   playButtonText: {
-    color: TacticalTheme.white,
+    color: '#1a1208',
     fontSize: 28,
-    fontWeight: 'bold',
+    fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
   },
   quickActionsRow: {
@@ -970,17 +1033,17 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  quickActionBtn: {
+  quickActionWrap: {
     flex: 1,
-    minHeight: 64,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    backgroundColor: TacticalTheme.panel,
+  },
+  quickActionBtn: {
+    minHeight: 72,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
     paddingHorizontal: 6,
+    paddingVertical: 8,
+    overflow: 'hidden',
   },
   quickActionText: {
     color: TacticalTheme.text,
