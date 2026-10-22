@@ -1,88 +1,111 @@
 import React from 'react';
 import { Image, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 import type { EnemyType, TowerType } from '../constants/game';
-import { ENEMY_ART, TOWER_ART_TIERS, towerArtTier } from '../logic/artMap';
+import { towerArtTier } from '../logic/artMap';
 
-const td = {
-  24: require('../../assets/kenney/td/t24.png'),
-  25: require('../../assets/kenney/td/t25.png'),
-  50: require('../../assets/kenney/td/t50.png'),
-  183: require('../../assets/kenney/td/t183.png'),
-  180: require('../../assets/kenney/td/t180.png'),
-  181: require('../../assets/kenney/td/t181.png'),
-  182: require('../../assets/kenney/td/t182.png'),
-  203: require('../../assets/kenney/td/t203.png'),
-  204: require('../../assets/kenney/td/t204.png'),
-  205: require('../../assets/kenney/td/t205.png'),
-  206: require('../../assets/kenney/td/t206.png'),
-  226: require('../../assets/kenney/td/t226.png'),
-  227: require('../../assets/kenney/td/t227.png'),
-  228: require('../../assets/kenney/td/t228.png'),
-  229: require('../../assets/kenney/td/t229.png'),
-  245: require('../../assets/kenney/td/t245.png'),
-  246: require('../../assets/kenney/td/t246.png'),
-  247: require('../../assets/kenney/td/t247.png'),
-  248: require('../../assets/kenney/td/t248.png'),
-  249: require('../../assets/kenney/td/t249.png'),
-  250: require('../../assets/kenney/td/t250.png'),
-  251: require('../../assets/kenney/td/t251.png'),
-  252: require('../../assets/kenney/td/t252.png'),
-  268: require('../../assets/kenney/td/t268.png'),
-  269: require('../../assets/kenney/td/t269.png'),
-  270: require('../../assets/kenney/td/t270.png'),
-  271: require('../../assets/kenney/td/t271.png'),
-  272: require('../../assets/kenney/td/t272.png'),
-  273: require('../../assets/kenney/td/t273.png'),
-  274: require('../../assets/kenney/td/t274.png'),
-  275: require('../../assets/kenney/td/t275.png'),
-  276: require('../../assets/kenney/td/t276.png'),
-  278: require('../../assets/kenney/td/t278.png'),
-  284: require('../../assets/kenney/td/t284.png'),
-  286: require('../../assets/kenney/td/t286.png'),
-  288: require('../../assets/kenney/td/t288.png'),
-  291: require('../../assets/kenney/td/t291.png'),
-  292: require('../../assets/kenney/td/t292.png'),
-  293: require('../../assets/kenney/td/t293.png'),
-  294: require('../../assets/kenney/td/t294.png'),
-  295: require('../../assets/kenney/td/t295.png'),
-  296: require('../../assets/kenney/td/t296.png'),
-  297: require('../../assets/kenney/td/t297.png'),
-  298: require('../../assets/kenney/td/t298.png'),
-} as const;
+/** Hand-painted fantasy art (original, generated for Last Stand). See docs/ART_MANIFEST.md. */
+const towerTiers: Record<TowerType, readonly [ImageSourcePropType, ImageSourcePropType, ImageSourcePropType]> = {
+  machine_gun: [
+    require('../../assets/art/towers/machine_gun_t0.png'),
+    require('../../assets/art/towers/machine_gun_t1.png'),
+    require('../../assets/art/towers/machine_gun_t2.png'),
+  ],
+  sniper: [
+    require('../../assets/art/towers/sniper_t0.png'),
+    require('../../assets/art/towers/sniper_t1.png'),
+    require('../../assets/art/towers/sniper_t2.png'),
+  ],
+  splash: [
+    require('../../assets/art/towers/splash_t0.png'),
+    require('../../assets/art/towers/splash_t1.png'),
+    require('../../assets/art/towers/splash_t2.png'),
+  ],
+  freeze: [
+    require('../../assets/art/towers/freeze_t0.png'),
+    require('../../assets/art/towers/freeze_t1.png'),
+    require('../../assets/art/towers/freeze_t2.png'),
+  ],
+  missile: [
+    require('../../assets/art/towers/missile_t0.png'),
+    require('../../assets/art/towers/missile_t1.png'),
+    require('../../assets/art/towers/missile_t2.png'),
+  ],
+  laser: [
+    require('../../assets/art/towers/laser_t0.png'),
+    require('../../assets/art/towers/laser_t1.png'),
+    require('../../assets/art/towers/laser_t2.png'),
+  ],
+  tesla: [
+    require('../../assets/art/towers/tesla_t0.png'),
+    require('../../assets/art/towers/tesla_t1.png'),
+    require('../../assets/art/towers/tesla_t2.png'),
+  ],
+  flak: [
+    require('../../assets/art/towers/flak_t0.png'),
+    require('../../assets/art/towers/flak_t1.png'),
+    require('../../assets/art/towers/flak_t2.png'),
+  ],
+  cannon: [
+    require('../../assets/art/towers/cannon_t0.png'),
+    require('../../assets/art/towers/cannon_t1.png'),
+    require('../../assets/art/towers/cannon_t2.png'),
+  ],
+};
 
-type TdId = keyof typeof td;
-
-function tile(id: TdId): ImageSourcePropType {
-  return td[id];
-}
+const enemyFrames: Record<EnemyType, readonly [ImageSourcePropType, ImageSourcePropType]> = {
+  basic: [require('../../assets/art/enemies/basic.png'), require('../../assets/art/enemies/basic.png')],
+  fast: [require('../../assets/art/enemies/fast.png'), require('../../assets/art/enemies/fast.png')],
+  tank: [require('../../assets/art/enemies/tank.png'), require('../../assets/art/enemies/tank.png')],
+  armored: [require('../../assets/art/enemies/armored.png'), require('../../assets/art/enemies/armored.png')],
+  boss: [require('../../assets/art/enemies/boss.png'), require('../../assets/art/enemies/boss.png')],
+  shielded: [require('../../assets/art/enemies/shielded.png'), require('../../assets/art/enemies/shielded.png')],
+  healer: [require('../../assets/art/enemies/healer.png'), require('../../assets/art/enemies/healer.png')],
+  splitter: [require('../../assets/art/enemies/splitter.png'), require('../../assets/art/enemies/splitter.png')],
+  flying: [require('../../assets/art/enemies/flying_0.png'), require('../../assets/art/enemies/flying_1.png')],
+};
 
 export const uiArt = {
-  buttonBlue: require('../../assets/kenney/ui/button-blue.png') as ImageSourcePropType,
-  buttonRed: require('../../assets/kenney/ui/button-red.png') as ImageSourcePropType,
-  panel: require('../../assets/kenney/ui/panel.png') as ImageSourcePropType,
-  buttonSquare: require('../../assets/kenney/ui/button-square.png') as ImageSourcePropType,
+  buttonBlue: require('../../assets/art/ui/button_blue.png') as ImageSourcePropType,
+  buttonRed: require('../../assets/art/ui/button_red.png') as ImageSourcePropType,
+  panel: require('../../assets/art/ui/panel.png') as ImageSourcePropType,
+  buttonSquare: require('../../assets/art/ui/button_square.png') as ImageSourcePropType,
 };
 
 export const terrainArt = {
-  grass: tile(24),
-  grassAlt: tile(25),
-  path: tile(50),
-  decor: tile(183),
+  grass: require('../../assets/art/terrain/grass.png') as ImageSourcePropType,
+  grassAlt: require('../../assets/art/terrain/grass_alt.png') as ImageSourcePropType,
+  path: require('../../assets/art/terrain/path.png') as ImageSourcePropType,
+  decor: require('../../assets/art/terrain/decor_rocks.png') as ImageSourcePropType,
+  /** Extra decor variants; pick one per cell, e.g. by (col * 7 + row) % 3. */
+  decorVariants: [
+    require('../../assets/art/terrain/decor_rocks.png'),
+    require('../../assets/art/terrain/decor_bush.png'),
+    require('../../assets/art/terrain/decor_pine.png'),
+  ] as ImageSourcePropType[],
 };
 
-const bases = [tile(180), tile(181), tile(182)] as const;
-const bullets: Record<string, ImageSourcePropType> = {
-  machine_gun: tile(272),
-  sniper: tile(273),
-  splash: tile(274),
-  freeze: tile(275),
-  missile: tile(251),
-  laser: tile(291),
-  tesla: tile(272),
-  flak: tile(274),
-  cannon: tile(275),
+const bases = [
+  require('../../assets/art/towers/pad_t0.png'),
+  require('../../assets/art/towers/pad_t1.png'),
+  require('../../assets/art/towers/pad_t2.png'),
+] as const;
+const bullets: Record<TowerType, ImageSourcePropType> = {
+  machine_gun: require('../../assets/art/projectiles/machine_gun.png'),
+  sniper: require('../../assets/art/projectiles/sniper.png'),
+  splash: require('../../assets/art/projectiles/splash.png'),
+  freeze: require('../../assets/art/projectiles/freeze.png'),
+  missile: require('../../assets/art/projectiles/missile.png'),
+  laser: require('../../assets/art/projectiles/laser.png'),
+  tesla: require('../../assets/art/projectiles/tesla.png'),
+  flak: require('../../assets/art/projectiles/flak.png'),
+  cannon: require('../../assets/art/projectiles/cannon.png'),
 };
-const bursts = [tile(295), tile(296), tile(297), tile(298)] as const;
+const bursts = [
+  require('../../assets/art/effects/burst_0.png'),
+  require('../../assets/art/effects/burst_1.png'),
+  require('../../assets/art/effects/burst_2.png'),
+  require('../../assets/art/effects/burst_3.png'),
+] as const;
 
 export function TowerPicture({
   type,
@@ -96,12 +119,11 @@ export function TowerPicture({
   style?: StyleProp<ViewStyle>;
 }) {
   const tier = towerArtTier(level);
-  const gunId = TOWER_ART_TIERS[type][tier] as TdId;
   return (
     <View style={[{ width: size, height: size }, style]}>
       <Image source={bases[tier]} style={{ width: size, height: size }} resizeMode="contain" />
       <Image
-        source={tile(gunId)}
+        source={towerTiers[type][tier]}
         style={{ position: 'absolute', left: 0, top: 0, width: size, height: size }}
         resizeMode="contain"
       />
@@ -118,13 +140,12 @@ export function EnemyPicture({
   frame: 0 | 1;
   size: number;
 }) {
-  const id = ENEMY_ART[type][frame] as TdId;
-  return <Image source={tile(id)} style={{ width: size, height: size }} resizeMode="contain" />;
+  return <Image source={enemyFrames[type][frame]} style={{ width: size, height: size }} resizeMode="contain" />;
 }
 
 export function ShotPicture({ towerType, size }: { towerType: TowerType; size: number }) {
   return (
-    <Image source={bullets[towerType] ?? tile(272)} style={{ width: size, height: size }} resizeMode="contain" />
+    <Image source={bullets[towerType] ?? bullets.machine_gun} style={{ width: size, height: size }} resizeMode="contain" />
   );
 }
 
