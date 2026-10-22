@@ -20,7 +20,20 @@ import { getWaveConfig, getWavePlannedEnemyCount } from '../constants/game';
 import { GAME_MAPS } from '../constants/maps';
 import { getArenaMap } from '../constants/arenaMaps';
 import { createDefaultAchievements } from '../constants/progression';
-import { burstArtFrame, enemyArtFrame, towerArtTier } from './artMap';
+import {
+  BOSS_DRAW_SCALE,
+  ENEMY_DRAW_SCALE,
+  PAD_DRAW_SCALE,
+  TOWER_DRAW_SCALE,
+  burstArtFrame,
+  burstFrameFromAge,
+  decorVariant,
+  enemyArtFrame,
+  enemyFacesLeft,
+  grassUsesAlt,
+  projectileAngleDeg,
+  towerArtTier,
+} from './artMap';
 
 describe('audio mix', () => {
   it('crossfades from outgoing to incoming', () => {
@@ -213,5 +226,21 @@ describe('art tiers', () => {
     assert.equal(enemyArtFrame('flying', 180), 1);
     assert.equal(burstArtFrame(0), 0);
     assert.equal(burstArtFrame(270), 3);
+  });
+
+  it('sizes painted sprites and plays an explosion once', () => {
+    assert.equal(TOWER_DRAW_SCALE, 1.45);
+    assert.equal(PAD_DRAW_SCALE, 0.92);
+    assert.equal(ENEMY_DRAW_SCALE, 1);
+    assert.equal(BOSS_DRAW_SCALE, 1.35);
+    assert.equal(burstFrameFromAge(0), 0);
+    assert.equal(burstFrameFromAge(100), 1);
+    assert.equal(burstFrameFromAge(200), 2);
+    assert.equal(burstFrameFromAge(400), 3);
+    assert.equal(enemyFacesLeft(3, 2), true);
+    assert.equal(enemyFacesLeft(3, 4), false);
+    assert.ok(Math.abs(projectileAngleDeg(1, 0) - 45) < 0.01);
+    assert.equal(typeof grassUsesAlt(1, 2), 'boolean');
+    assert.ok(decorVariant(0, 0) === null || decorVariant(0, 0)! <= 2);
   });
 });

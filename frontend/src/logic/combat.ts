@@ -8,16 +8,16 @@ export type PathInfo = { id: Exclude<TowerPath, 'none'>; name: string; blurb: st
 
 export const TOWER_PATHS: Record<TowerType, { alpha: PathInfo; beta: PathInfo }> = {
   machine_gun: {
-    alpha: { id: 'alpha', name: 'Overclock', blurb: 'Shoots much faster.' },
-    beta: { id: 'beta', name: 'Hollow points', blurb: 'Heavier bullets, slower cycle.' },
+    alpha: { id: 'alpha', name: 'Swift volley', blurb: 'Looses arrows much faster.' },
+    beta: { id: 'beta', name: 'Broadhead', blurb: 'Heavier arrows, slower cycle.' },
   },
   sniper: {
-    alpha: { id: 'alpha', name: 'Piercing round', blurb: 'Ignores most armor.' },
-    beta: { id: 'beta', name: 'Deadeye', blurb: 'Bigger hits, longer reload.' },
+    alpha: { id: 'alpha', name: 'Heartseeker', blurb: 'Ignores most armor.' },
+    beta: { id: 'beta', name: 'Deadeye', blurb: 'Bigger hits, longer draw.' },
   },
   splash: {
-    alpha: { id: 'alpha', name: 'Wide bore', blurb: 'Larger blast.' },
-    beta: { id: 'beta', name: 'Incendiary', blurb: 'Hotter payload.' },
+    alpha: { id: 'alpha', name: 'Wide flask', blurb: 'Larger splash.' },
+    beta: { id: 'beta', name: 'Vitriol', blurb: 'A hotter brew.' },
   },
   freeze: {
     alpha: { id: 'alpha', name: 'Deep freeze', blurb: 'Stronger, longer slow.' },
@@ -25,7 +25,7 @@ export const TOWER_PATHS: Record<TowerType, { alpha: PathInfo; beta: PathInfo }>
   },
   missile: {
     alpha: { id: 'alpha', name: 'Cluster', blurb: 'Wider explosion.' },
-    beta: { id: 'beta', name: 'Rapid rack', blurb: 'Reloads sooner.' },
+    beta: { id: 'beta', name: 'Quick cast', blurb: 'The next fireball comes sooner.' },
   },
   laser: {
     alpha: { id: 'alpha', name: 'Focus lens', blurb: 'Ramp climbs faster.' },
@@ -33,14 +33,14 @@ export const TOWER_PATHS: Record<TowerType, { alpha: PathInfo; beta: PathInfo }>
   },
   tesla: {
     alpha: { id: 'alpha', name: 'Fork', blurb: 'Chains to more targets.' },
-    beta: { id: 'beta', name: 'Overcharge', blurb: 'Harder arcs.' },
+    beta: { id: 'beta', name: 'Storm surge', blurb: 'Harder arcs.' },
   },
   flak: {
-    alpha: { id: 'alpha', name: 'Proximity', blurb: 'Wider airburst.' },
-    beta: { id: 'beta', name: 'Heavy shell', blurb: 'More punch per burst.' },
+    alpha: { id: 'alpha', name: 'Wide net', blurb: 'A wider burst in the air.' },
+    beta: { id: 'beta', name: 'Heavy bolt', blurb: 'More punch per shot.' },
   },
   cannon: {
-    alpha: { id: 'alpha', name: 'Sabot', blurb: 'Punches straight through armor.' },
+    alpha: { id: 'alpha', name: 'Armor break', blurb: 'Punches straight through plate.' },
     beta: { id: 'beta', name: 'Siege', blurb: 'Slower, much harder shot.' },
   },
 };

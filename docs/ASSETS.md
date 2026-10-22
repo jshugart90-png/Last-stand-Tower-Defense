@@ -5,6 +5,8 @@ Version 2.3.0 uses original hand-painted fantasy art generated for this game (se
 | Asset | Where | Source | License |
 | --- | --- | --- | --- |
 | Towers (9 types × 3 tiers), build pads, enemies, projectiles, explosion frames, terrain tiles and decor | `frontend/assets/art/` | Original art generated for Last Stand Tower Defense (hand-painted fantasy style) | Original work owned by the app's publisher. Commercial use allowed. No third-party license. |
+| Fixed-path map paintings | `frontend/assets/art/maps/<mapId>.jpg` | Original full-board paintings, one per arena, aligned to that map's grid. Free Play has no file and keeps the tiled meadow. | Original work. Commercial use allowed. |
+| Path edge fade and board vignette | `frontend/assets/art/terrain/edge_fade.png`, `vignette.png` | Made in-repo from the grass tile and a warm radial darkening, used only when a map has no painting | Original work. Commercial use allowed. |
 | Buttons, panel, app icon, adaptive icon, favicon | `frontend/assets/art/ui/`, `frontend/assets/images/icon.png`, `adaptive-icon.png`, `favicon.png` | Original art generated for Last Stand Tower Defense | Original work. Commercial use allowed. |
 | Kenney Future and Kenney Future Narrow | `frontend/assets/kenney/font/` | Same UI pack, `Font/` | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). |
 | UI clicks (`click.wav`, `tap.wav`) | `frontend/assets/kenney/sfx/` | Same UI pack, `Sounds/click-a.ogg` and `Sounds/tap-a.ogg`, converted to 22 kHz WAV so iOS can play them | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). |

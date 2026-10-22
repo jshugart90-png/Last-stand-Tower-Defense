@@ -326,7 +326,7 @@ const ARENAS: ArenaMapDefinition[] = [
   {
     id: 'iron_widow',
     name: 'Iron Widow',
-    description: 'Industrial trench — long straights broken by sudden corners.',
+    description: 'A dark trench of long straights and sudden corners.',
     gridCols: 18,
     gridRows: 19,
     cellSize: 28,

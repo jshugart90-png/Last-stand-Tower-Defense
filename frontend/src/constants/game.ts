@@ -68,8 +68,8 @@ export const TOWER_UNLOCK_PRICES = {
 export const TOWERS = {
   machine_gun: {
     id: 'machine_gun',
-    name: 'Machine Gun',
-    description: 'Fast fire rate, moderate damage',
+    name: 'Archer',
+    description: 'Fast arrows, moderate damage',
     baseCost: 32,
     baseStats: {
       damage: 10,
@@ -83,8 +83,8 @@ export const TOWERS = {
   },
   sniper: {
     id: 'sniper',
-    name: 'Sniper',
-    description: 'Very long range, high damage, slow fire rate',
+    name: 'Ranger',
+    description: 'Very long range, heavy shots, slow to nock',
     baseCost: 65,
     baseStats: {
       damage: 50,
@@ -98,8 +98,8 @@ export const TOWERS = {
   },
   splash: {
     id: 'splash',
-    name: 'Splash',
-    description: 'Area damage against groups of enemies',
+    name: 'Alchemist',
+    description: 'Splashes a crowd with a bursting flask',
     baseCost: 78,
     baseStats: {
       damage: 25,
@@ -114,8 +114,8 @@ export const TOWERS = {
   },
   freeze: {
     id: 'freeze',
-    name: 'Freeze',
-    description: 'Slows enemies significantly',
+    name: 'Frost',
+    description: 'Slows enemies in a biting chill',
     baseCost: 52,
     baseStats: {
       damage: 5,
@@ -131,8 +131,8 @@ export const TOWERS = {
   },
   missile: {
     id: 'missile',
-    name: 'Missile',
-    description: 'High damage explosive rounds',
+    name: 'Fire Mage',
+    description: 'Hurls a heavy fireball',
     baseCost: 130,
     baseStats: {
       damage: 100,
@@ -147,8 +147,8 @@ export const TOWERS = {
   },
   laser: {
     id: 'laser',
-    name: 'Laser',
-    description: 'Continuous beam - damage increases while targeting same enemy',
+    name: 'Arcane',
+    description: 'A beam that grows while it holds one foe',
     baseCost: 195,
     baseStats: {
       damage: 5,              // Starting damage per tick
@@ -164,8 +164,8 @@ export const TOWERS = {
   },
   tesla: {
     id: 'tesla',
-    name: 'Tesla',
-    description: 'Chain lightning. Ground only — arcs to nearby enemies.',
+    name: 'Storm',
+    description: 'Chain lightning. Ground only — arcs to nearby foes.',
     baseCost: 90,
     baseStats: {
       damage: 18,
@@ -179,8 +179,8 @@ export const TOWERS = {
   },
   flak: {
     id: 'flak',
-    name: 'Flak',
-    description: 'Anti-air bursts. Weak against ground targets.',
+    name: 'Ballista',
+    description: 'Bolts built for the sky. Weak against ground targets.',
     baseCost: 110,
     baseStats: {
       damage: 28,
@@ -196,7 +196,7 @@ export const TOWERS = {
   cannon: {
     id: 'cannon',
     name: 'Cannon',
-    description: 'Slow armor-piercing shot. The answer to plated enemies.',
+    description: 'Slow dwarven shot. The answer to plated foes.',
     baseCost: 150,
     baseStats: {
       damage: 70,
@@ -216,7 +216,7 @@ export type TowerType = keyof typeof TOWERS;
 export const ENEMIES = {
   basic: {
     id: 'basic',
-    name: 'Basic',
+    name: 'Goblin',
     baseHealth: 30,
     baseSpeed: 0.8,
     coinReward: 1,      // Very slow
@@ -225,7 +225,7 @@ export const ENEMIES = {
   },
   fast: {
     id: 'fast',
-    name: 'Fast',
+    name: 'Wolf Rider',
     baseHealth: 20,
     baseSpeed: 1.5,
     coinReward: 1,      // Same as basic
@@ -234,7 +234,7 @@ export const ENEMIES = {
   },
   tank: {
     id: 'tank',
-    name: 'Tank',
+    name: 'Troll',
     baseHealth: 100,
     baseSpeed: 0.4,
     coinReward: 2,      // Slightly more
@@ -243,7 +243,7 @@ export const ENEMIES = {
   },
   boss: {
     id: 'boss',
-    name: 'Boss',
+    name: 'Warlord',
     baseHealth: 500,
     baseSpeed: 0.25,
     coinReward: 15,     // Reduced from 25
@@ -253,7 +253,7 @@ export const ENEMIES = {
   },
   shielded: {
     id: 'shielded',
-    name: 'Shielded',
+    name: 'Shield Orc',
     baseHealth: 180,
     baseSpeed: 0.6,
     coinReward: 3,
@@ -263,7 +263,7 @@ export const ENEMIES = {
   },
   healer: {
     id: 'healer',
-    name: 'Healer',
+    name: 'Shaman',
     baseHealth: 90,
     baseSpeed: 0.75,
     coinReward: 4,
@@ -274,7 +274,7 @@ export const ENEMIES = {
   },
   splitter: {
     id: 'splitter',
-    name: 'Splitter',
+    name: 'Ooze',
     baseHealth: 140,
     baseSpeed: 0.7,
     coinReward: 3,
@@ -286,7 +286,7 @@ export const ENEMIES = {
   },
   armored: {
     id: 'armored',
-    name: 'Armored',
+    name: 'Plate Orc',
     baseHealth: 220,
     baseSpeed: 0.5,
     coinReward: 4,
@@ -296,7 +296,7 @@ export const ENEMIES = {
   },
   flying: {
     id: 'flying',
-    name: 'Flying',
+    name: 'Wyvern',
     baseHealth: 48,
     baseSpeed: 1.35,
     coinReward: 2,
@@ -529,7 +529,7 @@ export const SKIN_COLORS: Record<string, string> = {
 export const COSMETIC_SKINS: { id: keyof typeof SKIN_COLORS; name: string; price: number }[] = [
   { id: 'default', name: 'Classic Slate', price: 0 },
   { id: 'neon', name: 'Neon Strike', price: 45 },
-  { id: 'military', name: 'OD Green', price: 35 },
+  { id: 'military', name: 'Mosswood', price: 35 },
   { id: 'ice', name: 'Frost', price: 40 },
   { id: 'gold', name: 'Champion Gold', price: 120 },
   { id: 'cyber', name: 'Cyber Magenta', price: 90 },

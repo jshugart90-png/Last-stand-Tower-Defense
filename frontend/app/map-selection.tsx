@@ -295,5 +295,5 @@ const styles = StyleSheet.create({
     gap: 8,
     minWidth: 180,
   },
-  startBtnText: { color: '#1a1208', fontFamily: 'KenneyFutureNarrow', fontWeight: '800', fontSize: 18 },
+  startBtnText: { color: '#1a1208', fontFamily: 'DisplayNarrow', fontWeight: '800', fontSize: 18 },
 });

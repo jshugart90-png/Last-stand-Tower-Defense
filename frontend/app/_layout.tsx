@@ -21,8 +21,8 @@ const queryClient = new QueryClient();
 export default function RootLayout() {
   const pathname = usePathname();
   const [fontsLoaded, fontError] = useFonts({
-    KenneyFuture: require('../assets/kenney/font/KenneyFuture.ttf'),
-    KenneyFutureNarrow: require('../assets/kenney/font/KenneyFutureNarrow.ttf'),
+    Display: require('../assets/kenney/font/KenneyFuture.ttf'),
+    DisplayNarrow: require('../assets/kenney/font/KenneyFutureNarrow.ttf'),
   });
   useEffect(() => {
     if (pathname === '/game') return;

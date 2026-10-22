@@ -242,6 +242,8 @@ export interface GameState {
 
   floatTexts: FloatText[];
   bursts: Burst[];
+  /** Increments when a boss takes damage, so the board can shake once. */
+  bossShake: number;
   runFlyingKills: number;
   runArmoredKills: number;
   runBossKills: number;
@@ -404,6 +406,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   towerPurchaseCount: mergeNumericRecord(undefined),
   floatTexts: [],
   bursts: [],
+      bossShake: 0,
   runFlyingKills: 0,
   runArmoredKills: 0,
   runBossKills: 0,
@@ -453,6 +456,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         laserBeams: [],
         floatTexts: [],
         bursts: [],
+      bossShake: 0,
         runFlyingKills: 0,
         runArmoredKills: 0,
         runBossKills: 0,
@@ -515,6 +519,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       laserBeams: [],
       floatTexts: [],
       bursts: [],
+      bossShake: 0,
       runFlyingKills: 0,
       runArmoredKills: 0,
       runBossKills: 0,
@@ -578,6 +583,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       laserBeams: [],
       floatTexts: [],
       bursts: [],
+      bossShake: 0,
       selectedPlacedTower: null,
     });
   },
@@ -1252,10 +1258,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     const allowFx = !usePlayerStore.getState().performanceMode && (usePlayerStore.getState().vfxQuality ?? 2) > 0;
     const nextFloats: FloatText[] = allowFx ? state.floatTexts.filter((f) => now - f.born < 700).slice(-12) : [];
-    const nextBursts: Burst[] = allowFx ? state.bursts.filter((b) => now - b.born < 520).slice(-16) : [];
+    const nextBursts: Burst[] = allowFx ? state.bursts.filter((b) => now - b.born < 640).slice(-16) : [];
     let flyingKills = 0;
     let armoredKills = 0;
     let bossKills = 0;
+    let bossHit = false;
 
     const finalEnemies = updatedEnemies
       .filter((e) => !exploding.has(e.id))
@@ -1272,7 +1279,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           slowedUntil = Math.max(slowedUntil, now + agg.slow.duration);
         }
 
-        if (allowFx && dealt >= 8 && nextFloats.length < 12) {
+        if (enemy.type === 'boss' && dealt > 0) bossHit = true;
+        if (allowFx && dealt >= 4 && nextFloats.length < 12) {
           nextFloats.push({
             id: generateId(),
             x: enemy.position.x,
@@ -1287,7 +1295,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           if (enemy.type === 'flying') flyingKills += 1;
           else if (enemy.type === 'armored') armoredKills += 1;
           else if (enemy.type === 'boss') bossKills += 1;
-          coinsEarned += scaleRunCoinsFromKill(enemy.coinReward);
+          const gained = scaleRunCoinsFromKill(enemy.coinReward);
+          coinsEarned += gained;
+          if (allowFx && nextFloats.length < 12) {
+            nextFloats.push({
+              id: generateId(),
+              x: enemy.position.x,
+              y: enemy.position.y - 0.35,
+              text: `+${gained}`,
+              born: now,
+            });
+          }
           if (allowFx && nextBursts.length < 16) {
             nextBursts.push({
               id: generateId(),
@@ -1379,6 +1397,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       selectedPlacedTower: nextSelected,
       floatTexts: nextFloats,
       bursts: nextBursts,
+      bossShake: bossHit ? state.bossShake + 1 : state.bossShake,
       runFlyingKills: state.runFlyingKills + flyingKills,
       runArmoredKills: state.runArmoredKills + armoredKills,
       runBossKills: state.runBossKills + bossKills,
@@ -1577,6 +1596,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         laserBeams: [],
         floatTexts: [],
         bursts: [],
+      bossShake: 0,
         gridCols: def.gridCols,
         gridRows: def.gridRows,
         cellSize: def.cellSize,
@@ -1634,6 +1654,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       laserBeams: [],
       floatTexts: [],
       bursts: [],
+      bossShake: 0,
       gridCols: savedGame.gridCols,
       gridRows: savedGame.gridRows,
       cellSize,

@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -49,6 +50,7 @@ import {
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { AdBanner } from '../src/components/AdBanner';
+import { TowerPicture, uiArt } from '../src/art/sprites';
 import { useRewardedGems } from '../src/hooks/useRewardedGems';
 interface Skin {
   id: string;
@@ -56,32 +58,6 @@ interface Skin {
   price: number;
   color: string;
 }
-
-// Tower icon helper
-const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) => {
-  switch (type) {
-    case 'machine_gun':
-      return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
-    case 'sniper':
-      return <MaterialCommunityIcons name="crosshairs-gps" size={size} color={color} />;
-    case 'splash':
-      return <MaterialCommunityIcons name="bomb" size={size} color={color} />;
-    case 'freeze':
-      return <MaterialCommunityIcons name="snowflake" size={size} color={color} />;
-    case 'missile':
-      return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
-    case 'laser':
-      return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
-    case 'tesla':
-      return <MaterialCommunityIcons name="flash" size={size} color={color} />;
-    case 'flak':
-      return <MaterialCommunityIcons name="airplane" size={size} color={color} />;
-    case 'cannon':
-      return <MaterialCommunityIcons name="bullseye" size={size} color={color} />;
-    default:
-      return <Ionicons name="help" size={size} color={color} />;
-  }
-};
 
 export default function ShopScreen() {
   const rewardedGems = useRewardedGems();
@@ -542,8 +518,8 @@ export default function ShopScreen() {
           highlightedTower === towerType && styles.towerCardHighlighted,
         ]}
       >
-        <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
-          {getTowerIcon(towerType, 28)}
+        <View style={styles.towerIconLarge}>
+          <TowerPicture type={towerType} level={Math.min(2, upgradeLevel)} size={56} />
         </View>
         
         <View style={styles.towerInfo}>
@@ -668,7 +644,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <ImageBackground source={uiArt.panel} resizeMode="stretch" style={styles.header} imageStyle={styles.headerImage}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -677,7 +653,7 @@ export default function ShopScreen() {
           <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
-      </View>
+      </ImageBackground>
 
       {/* Tabs */}
       <View style={styles.tabs}>
@@ -1140,9 +1116,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  headerImage: {
+    borderRadius: 0,
   },
   backButton: {
     padding: 4,
@@ -1375,11 +1353,11 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   towerIconLarge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
+    width: 56,
+    height: 64,
+    justifyContent: 'flex-end',
     alignItems: 'center',
+    overflow: 'visible',
   },
   towerInfo: {
     flex: 1,

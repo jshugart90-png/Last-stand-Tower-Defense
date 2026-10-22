@@ -31,7 +31,7 @@ import {
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
 import { TacticalTheme } from '../src/theme/colors';
-import { TowerPicture, uiArt } from '../src/art/sprites';
+import { TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -51,7 +51,7 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'flash',
       title: 'Different threats',
-      description: 'Fast runners, flying units, and armored plates need different towers. Flak owns the sky. Cannons crack armor.',
+      description: 'Wolf riders, wyverns, and plate orcs need different towers. Ballistas own the sky. Cannons crack plate.',
     },
     {
       icon: 'git-branch',
@@ -541,7 +541,9 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ImageBackground source={terrainArt.grass} resizeMode="cover" style={styles.container}>
+      <View style={styles.homeScrim} />
+    <SafeAreaView style={styles.homeSafe}>
       <StatusBar style="light" />
       {serverNote ? (
         <View style={styles.serverNote}>
@@ -577,7 +579,7 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>DEFENSE</Text>
         </View>
 
-        <View style={styles.dailyBonusCard}>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
             <Text style={styles.dailyBonusSub}>
@@ -591,9 +593,9 @@ export default function HomeScreen() {
           >
             <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
           </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
-        <View style={styles.dailyBonusCard}>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
           <View>
             <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
             <Text style={styles.dailyBonusSub}>
@@ -609,7 +611,7 @@ export default function HomeScreen() {
           >
             <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
           </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
         <TouchableOpacity
           style={styles.dailyMissionsPrimaryButton}
@@ -648,17 +650,23 @@ export default function HomeScreen() {
 
         {/* Quick actions */}
         <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleShopPress} activeOpacity={0.85}>
-            <Ionicons name="cart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Shop</Text>
+          <TouchableOpacity onPress={handleShopPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="cart-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Shop</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleSettingsPress} activeOpacity={0.85}>
-            <Ionicons name="settings-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Settings</Text>
+          <TouchableOpacity onPress={handleSettingsPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="settings-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Settings</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleProgressPress} activeOpacity={0.85}>
-            <Ionicons name="stats-chart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Progress</Text>
+          <TouchableOpacity onPress={handleProgressPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="stats-chart-outline" size={20} color="#f4ead8" />
+              <Text style={styles.quickActionText}>Progress</Text>
+            </ImageBackground>
           </TouchableOpacity>
         </View>
       </View>
@@ -702,6 +710,7 @@ export default function HomeScreen() {
         <TutorialOverlay onComplete={handleTutorialComplete} />
       )}
     </SafeAreaView>
+    </ImageBackground>
   );
 }
 
@@ -709,6 +718,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: TacticalTheme.bg,
+  },
+  homeScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(28, 16, 8, 0.62)',
+  },
+  homeSafe: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   splashContainer: {
     flex: 1,
@@ -883,27 +900,29 @@ const styles = StyleSheet.create({
   title: {
     color: '#fff',
     fontSize: 40,
-    fontFamily: 'KenneyFutureNarrow',
+    fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
     marginTop: 4,
   },
   subtitle: {
     color: '#f0d48a',
     fontSize: 22,
-    fontFamily: 'KenneyFutureNarrow',
+    fontFamily: 'DisplayNarrow',
     letterSpacing: 6,
   },
   dailyBonusCard: {
     width: '100%',
-    backgroundColor: TacticalTheme.surfaceDeep,
+    backgroundColor: 'transparent',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
     padding: 12,
     marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  woodCardImage: {
+    borderRadius: 12,
   },
   dailyBonusTitle: {
     color: TacticalTheme.text,
@@ -992,7 +1011,7 @@ const styles = StyleSheet.create({
   playButtonText: {
     color: '#1a1208',
     fontSize: 28,
-    fontFamily: 'KenneyFutureNarrow',
+    fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
   },
   quickActionsRow: {
@@ -1003,17 +1022,17 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  quickActionBtn: {
+  quickActionWrap: {
     flex: 1,
-    minHeight: 64,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    backgroundColor: TacticalTheme.panel,
+  },
+  quickActionBtn: {
+    minHeight: 72,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
     paddingHorizontal: 6,
+    paddingVertical: 8,
+    overflow: 'hidden',
   },
   quickActionText: {
     color: TacticalTheme.text,

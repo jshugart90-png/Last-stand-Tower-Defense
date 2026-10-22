@@ -1,7 +1,7 @@
 import React from 'react';
 import { Image, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 import type { EnemyType, TowerType } from '../constants/game';
-import { towerArtTier } from '../logic/artMap';
+import { PAD_DRAW_SCALE, TOWER_DRAW_SCALE, towerArtTier } from '../logic/artMap';
 
 /** Hand-painted fantasy art (original, generated for Last Stand). See docs/ART_MANIFEST.md. */
 const towerTiers: Record<TowerType, readonly [ImageSourcePropType, ImageSourcePropType, ImageSourcePropType]> = {
@@ -82,6 +82,9 @@ export const terrainArt = {
     require('../../assets/art/terrain/decor_bush.png'),
     require('../../assets/art/terrain/decor_pine.png'),
   ] as ImageSourcePropType[],
+  /** Grass texture, opaque at the top, fading out. Rotate for the other edges. */
+  edgeFade: require('../../assets/art/terrain/edge_fade.png') as ImageSourcePropType,
+  vignette: require('../../assets/art/terrain/vignette.png') as ImageSourcePropType,
 };
 
 const bases = [
@@ -119,9 +122,20 @@ export function TowerPicture({
   style?: StyleProp<ViewStyle>;
 }) {
   const tier = towerArtTier(level);
+  const pad = size * (PAD_DRAW_SCALE / TOWER_DRAW_SCALE);
   return (
     <View style={[{ width: size, height: size }, style]}>
-      <Image source={bases[tier]} style={{ width: size, height: size }} resizeMode="contain" />
+      <Image
+        source={bases[tier]}
+        style={{
+          position: 'absolute',
+          width: pad,
+          height: pad,
+          left: (size - pad) / 2,
+          bottom: size * 0.02,
+        }}
+        resizeMode="contain"
+      />
       <Image
         source={towerTiers[type][tier]}
         style={{ position: 'absolute', left: 0, top: 0, width: size, height: size }}
