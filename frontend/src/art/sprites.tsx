@@ -85,6 +85,8 @@ export const terrainArt = {
   /** Grass texture, opaque at the top, fading out. Rotate for the other edges. */
   edgeFade: require('../../assets/art/terrain/edge_fade.png') as ImageSourcePropType,
   vignette: require('../../assets/art/terrain/vignette.png') as ImageSourcePropType,
+  spawn: require('../../assets/art/terrain/spawn_portal.png') as ImageSourcePropType,
+  base: require('../../assets/art/terrain/base_gate.png') as ImageSourcePropType,
 };
 
 const bases = [

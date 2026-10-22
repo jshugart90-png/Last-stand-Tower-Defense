@@ -27,10 +27,11 @@ import {
   TOWER_DRAW_SCALE,
   burstArtFrame,
   burstFrameFromAge,
-  decorVariant,
+  decorSpot,
   enemyArtFrame,
   enemyFacesLeft,
   grassUsesAlt,
+  pathBlobs,
   projectileAngleDeg,
   towerArtTier,
 } from './artMap';
@@ -241,6 +242,22 @@ describe('art tiers', () => {
     assert.equal(enemyFacesLeft(3, 4), false);
     assert.ok(Math.abs(projectileAngleDeg(1, 0) - 45) < 0.01);
     assert.equal(typeof grassUsesAlt(1, 2), 'boolean');
-    assert.ok(decorVariant(0, 0) === null || decorVariant(0, 0)! <= 2);
+    const spot = decorSpot(3, 4);
+    const again = decorSpot(3, 4);
+    assert.deepEqual(spot, again);
+    const spots = [];
+    for (let row = 0; row < 14; row++) {
+      for (let col = 0; col < 10; col++) {
+        const placed = decorSpot(col, row);
+        if (placed) spots.push(placed);
+      }
+    }
+    assert.ok(spots.length > 3);
+    const offsets = new Set(spots.map((s) => s.dx.toFixed(2)));
+    assert.ok(offsets.size > 2);
+    const blobs = pathBlobs(4, 6);
+    assert.equal(blobs.length, 2);
+    assert.ok(Math.abs(blobs[0].rot) > 0.2 || Math.abs(blobs[1].rot) > 0.2);
+    assert.deepEqual(pathBlobs(4, 6), blobs);
   });
 });
