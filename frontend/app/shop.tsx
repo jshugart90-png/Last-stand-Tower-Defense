@@ -7,7 +7,6 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -50,7 +49,8 @@ import {
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { AdBanner } from '../src/components/AdBanner';
-import { TowerPicture, uiArt } from '../src/art/sprites';
+import { TowerPicture } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 import { useRewardedGems } from '../src/hooks/useRewardedGems';
 interface Skin {
   id: string;
@@ -644,7 +644,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <ImageBackground source={uiArt.panel} resizeMode="stretch" style={styles.header} imageStyle={styles.headerImage}>
+      <WoodPanel style={styles.header} cap={18}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -653,7 +653,7 @@ export default function ShopScreen() {
           <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
-      </ImageBackground>
+      </WoodPanel>
 
       {/* Tabs */}
       <View style={styles.tabs}>

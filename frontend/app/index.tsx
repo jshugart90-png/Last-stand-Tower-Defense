@@ -32,6 +32,7 @@ import {
 } from '../src/constants/sessionProgress';
 import { TacticalTheme } from '../src/theme/colors';
 import { TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -575,8 +576,10 @@ export default function HomeScreen() {
             <TowerPicture type="cannon" level={3} size={68} />
             <TowerPicture type="flak" level={2} size={54} />
           </View>
-          <Text style={styles.title}>LAST STAND</Text>
-          <Text style={styles.subtitle}>DEFENSE</Text>
+          <WoodPanel style={styles.titlePlaque} cap={14}>
+            <Text style={styles.title}>LAST STAND</Text>
+            <Text style={styles.subtitle}>DEFENSE</Text>
+          </WoodPanel>
         </View>
 
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
@@ -721,7 +724,7 @@ const styles = StyleSheet.create({
   },
   homeScrim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(28, 16, 8, 0.62)',
+    backgroundColor: 'rgba(28, 16, 8, 0.22)',
   },
   homeSafe: {
     flex: 1,
@@ -897,15 +900,23 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 4,
   },
+  titlePlaque: {
+    paddingHorizontal: 22,
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
   title: {
-    color: '#fff',
+    color: '#ffe7a3',
     fontSize: 40,
     fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
-    marginTop: 4,
+    textShadowColor: 'rgba(90, 48, 12, 0.85)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 2,
   },
   subtitle: {
-    color: '#f0d48a',
+    color: '#f0c14d',
     fontSize: 22,
     fontFamily: 'DisplayNarrow',
     letterSpacing: 6,

@@ -61,7 +61,7 @@ import { gameApi, analyticsApi, isServerBackedPlayerId } from '../src/hooks/useA
 import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx, playMusic } from '../src/services/audioService';
-import { getArenaMap, CLASSIC_MAP_ID, isCellOnArenaRoute } from '../src/constants/arenaMaps';
+import { isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
@@ -69,23 +69,25 @@ import {
 import { getMapById, promoteEnemyType } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
 import { mapBackgroundFor } from '../src/art/mapBackgrounds';
+import { WoodPanel } from '../src/art/nineSlice';
 import { BurstPicture, EnemyPicture, ShotPicture, TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
 import {
   BOSS_DRAW_SCALE,
   ENEMY_DRAW_SCALE,
   TOWER_DRAW_SCALE,
   burstFrameFromAge,
-  decorVariant,
+  cellUnit,
+  decorSpot,
   enemyArtFrame,
   enemyFacesLeft,
   grassUsesAlt,
+  pathBlobs,
   projectileAngleDeg,
 } from '../src/logic/artMap';
-import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 /** Pinch zoom limits (keep in sync with gameStore.setZoomLevel clamp) */
 const ZOOM_MIN = 0.8;
@@ -673,28 +675,19 @@ const GameMapCell = React.memo(
     col,
     row,
     scaledCellSize,
-    onPath,
-    isSpawn,
-    isBase,
     canPlace,
     hasTower,
     isPlacementPreview,
     onCellPress,
-    openEdges,
     painted,
   }: {
     col: number;
     row: number;
     scaledCellSize: number;
-    onPath: boolean;
-    isSpawn: boolean;
-    isBase: boolean;
     canPlace: boolean;
     hasTower: boolean;
     isPlacementPreview?: boolean;
     onCellPress: (x: number, y: number) => void;
-    /** Bits set when that side of a path cell meets grass: N=1 E=2 S=4 W=8. */
-    openEdges: number;
     /** A full-board painting is already drawn. Skip grass, path, and decor. */
     painted: boolean;
   }) {
@@ -725,40 +718,9 @@ const GameMapCell = React.memo(
         );
       }
     } else {
-    const ground = grassUsesAlt(col, row) ? terrainArt.grassAlt : terrainArt.grass;
-    const decor = !onPath && !isSpawn && !isBase && !hasTower ? decorVariant(col, row) : null;
-    const decorSize =
-      decor === 2 ? scaledCellSize * 1.35 : decor === 1 ? scaledCellSize * 0.82 : scaledCellSize * 0.7;
-    const fill = { position: 'absolute' as const, left: 0, top: 0, width: scaledCellSize, height: scaledCellSize };
-    art = (
-      <>
-        <Image source={ground} resizeMode="cover" style={fill} />
-        {onPath ? <Image source={terrainArt.path} resizeMode="cover" style={fill} /> : null}
-        {onPath && (openEdges & 1) !== 0 ? <Image source={terrainArt.edgeFade} resizeMode="stretch" style={fill} /> : null}
-        {onPath && (openEdges & 2) !== 0 ? (
-          <Image source={terrainArt.edgeFade} resizeMode="stretch" style={[fill, { transform: [{ rotate: '90deg' }] }]} />
-        ) : null}
-        {onPath && (openEdges & 4) !== 0 ? (
-          <Image source={terrainArt.edgeFade} resizeMode="stretch" style={[fill, { transform: [{ rotate: '180deg' }] }]} />
-        ) : null}
-        {onPath && (openEdges & 8) !== 0 ? (
-          <Image source={terrainArt.edgeFade} resizeMode="stretch" style={[fill, { transform: [{ rotate: '-90deg' }] }]} />
-        ) : null}
-        {decor !== null ? (
-          <Image
-            source={terrainArt.decorVariants[decor]}
-            resizeMode="contain"
-            style={{
-              position: 'absolute',
-              width: decorSize,
-              height: decorSize,
-              left: (scaledCellSize - decorSize) / 2,
-              top: decor === 2 ? scaledCellSize - decorSize : (scaledCellSize - decorSize) / 2,
-            }}
-          />
-        ) : null}
-      </>
-    );
+      const ground = grassUsesAlt(col, row) ? terrainArt.grassAlt : terrainArt.grass;
+      const fill = { position: 'absolute' as const, left: 0, top: 0, width: scaledCellSize, height: scaledCellSize };
+      art = <Image source={ground} resizeMode="cover" style={fill} />;
     }
 
     if (hasTower) {
@@ -1016,6 +978,8 @@ const GameTowerSprite = React.memo(function GameTowerSprite({
   );
 });
 
+const MARKER_DRAW = 1.7;
+
 const GameSpawnBaseMarkers = React.memo(function GameSpawnBaseMarkers({
   spawnPoint,
   basePosition,
@@ -1025,35 +989,20 @@ const GameSpawnBaseMarkers = React.memo(function GameSpawnBaseMarkers({
   basePosition: { x: number; y: number };
   scaledCellSize: number;
 }) {
+  const draw = scaledCellSize * MARKER_DRAW;
+  const place = (cell: { x: number; y: number }) => ({
+    left: cell.x * scaledCellSize + (scaledCellSize - draw) / 2,
+    top: cell.y * scaledCellSize + scaledCellSize - draw,
+    width: draw,
+    height: draw,
+  });
   return (
     <>
-      <View
-        pointerEvents="none"
-        style={[
-          styles.spawnPoint,
-          {
-            left: spawnPoint.x * scaledCellSize,
-            top: spawnPoint.y * scaledCellSize,
-            width: scaledCellSize,
-            height: scaledCellSize,
-          },
-        ]}
-      >
-        <MaterialCommunityIcons name="location-enter" size={scaledCellSize * 0.5} color="#E74C3C" />
+      <View pointerEvents="none" style={[styles.spawnPoint, place(spawnPoint)]}>
+        <Image source={terrainArt.spawn} resizeMode="contain" style={{ width: draw, height: draw }} />
       </View>
-      <View
-        pointerEvents="none"
-        style={[
-          styles.base,
-          {
-            left: basePosition.x * scaledCellSize,
-            top: basePosition.y * scaledCellSize,
-            width: scaledCellSize,
-            height: scaledCellSize,
-          },
-        ]}
-      >
-        <Ionicons name="home" size={scaledCellSize * 0.6} color="#FFD700" />
+      <View pointerEvents="none" style={[styles.base, place(basePosition)]}>
+        <Image source={terrainArt.base} resizeMode="contain" style={{ width: draw, height: draw }} />
       </View>
     </>
   );
@@ -1167,6 +1116,105 @@ const GameBoardStaticCells = React.memo(function GameBoardStaticCells({
     [gridRows, gridCols]
   );
 
+  const meadow = useMemo(() => {
+    if (mapArt) return null;
+    const buildStrip = new Set<string>();
+    for (const key of pathSet) {
+      const [x, y] = key.split(',').map(Number);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) buildStrip.add(`${x + dx},${y + dy}`);
+      }
+    }
+    const blobs: {
+      key: string;
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      rot: number;
+    }[] = [];
+    const fades: {
+      key: string;
+      left: number;
+      top: number;
+      size: number;
+      rot: number;
+    }[] = [];
+    const decor: {
+      key: string;
+      variant: 0 | 1 | 2;
+      left: number;
+      top: number;
+      size: number;
+    }[] = [];
+    const edgeDirs: { bit: number; ox: number; oy: number; rot: number }[] = [
+      { bit: 1, ox: 0, oy: -1, rot: 0 },
+      { bit: 2, ox: 1, oy: 0, rot: 90 },
+      { bit: 4, ox: 0, oy: 1, rot: 180 },
+      { bit: 8, ox: -1, oy: 0, rot: -90 },
+    ];
+    for (let row = 0; row < gridRows; row++) {
+      for (let col = 0; col < gridCols; col++) {
+        const key = `${col},${row}`;
+        if (pathSet.has(key)) {
+          let openEdges = 0;
+          if (row === 0 || !pathSet.has(`${col},${row - 1}`)) openEdges |= 1;
+          if (col === gridCols - 1 || !pathSet.has(`${col + 1},${row}`)) openEdges |= 2;
+          if (row === gridRows - 1 || !pathSet.has(`${col},${row + 1}`)) openEdges |= 4;
+          if (col === 0 || !pathSet.has(`${col - 1},${row}`)) openEdges |= 8;
+          pathBlobs(col, row).forEach((blob, index) => {
+            const width = scaledCellSize * blob.scale;
+            const height = width * 0.78;
+            blobs.push({
+              key: `${key}-b${index}`,
+              left: col * scaledCellSize + (scaledCellSize - width) / 2 + blob.dx * scaledCellSize,
+              top: row * scaledCellSize + (scaledCellSize - height) / 2 + blob.dy * scaledCellSize,
+              width,
+              height,
+              rot: blob.rot,
+            });
+          });
+          edgeDirs.forEach((dir) => {
+            if ((openEdges & dir.bit) === 0) return;
+            const wobble = cellUnit(col, row, 20 + dir.bit);
+            const size = scaledCellSize * (0.72 + wobble * 0.28);
+            // Keep the opaque grass on the meadow side so the dirt stays visible.
+            const outward = scaledCellSize * (0.38 + wobble * 0.12);
+            fades.push({
+              key: `${key}-e${dir.bit}`,
+              left:
+                col * scaledCellSize +
+                (scaledCellSize - size) / 2 +
+                dir.ox * outward +
+                (wobble - 0.5) * scaledCellSize * 0.18,
+              top:
+                row * scaledCellSize +
+                (scaledCellSize - size) / 2 +
+                dir.oy * outward +
+                (cellUnit(col, row, 30 + dir.bit) - 0.5) * scaledCellSize * 0.14,
+              size,
+              rot: dir.rot + (wobble - 0.5) * 14,
+            });
+          });
+          return;
+        }
+        if (buildStrip.has(key) || blockedCells.has(key)) return;
+        if (col === spawnPoint.x && row === spawnPoint.y) return;
+        if (col === basePosition.x && row === basePosition.y) return;
+        const spot = decorSpot(col, row);
+        if (!spot) return;
+        const size = scaledCellSize * spot.scale * (spot.variant === 2 ? 1.35 : 1);
+        const left = col * scaledCellSize + (scaledCellSize - size) / 2 + spot.dx * scaledCellSize;
+        const top =
+          spot.variant === 2
+            ? row * scaledCellSize + scaledCellSize - size + spot.dy * scaledCellSize * 0.35
+            : row * scaledCellSize + (scaledCellSize - size) / 2 + spot.dy * scaledCellSize;
+        decor.push({ key, variant: spot.variant, left, top, size });
+      }
+    }
+    return { blobs, fades, decor };
+  }, [mapArt, pathSet, gridCols, gridRows, scaledCellSize, blockedCells, spawnPoint.x, spawnPoint.y, basePosition.x, basePosition.y]);
+
   return (
     <>
       {mapArt ? (
@@ -1179,23 +1227,12 @@ const GameBoardStaticCells = React.memo(function GameBoardStaticCells({
         </View>
       ) : null}
       {gridCells.map(({ row, col }) => {
-        const isPath = pathSet.has(`${col},${row}`);
-        const isSpawn = col === spawnPoint.x && row === spawnPoint.y;
-        const isBase = col === basePosition.x && row === basePosition.y;
         const canPlace =
           !!placeableCellKeys &&
           !!selectedTowerType &&
           !selectedPlacedTower &&
           placeableCellKeys.has(`${col},${row}`);
         const hasTowerHere = blockedCells.has(`${col},${row}`);
-        let openEdges = 0;
-        if (isPath) {
-          if (row === 0 || !pathSet.has(`${col},${row - 1}`)) openEdges |= 1;
-          if (col === gridCols - 1 || !pathSet.has(`${col + 1},${row}`)) openEdges |= 2;
-          if (row === gridRows - 1 || !pathSet.has(`${col},${row + 1}`)) openEdges |= 4;
-          if (col === 0 || !pathSet.has(`${col - 1},${row}`)) openEdges |= 8;
-        }
-
         const isPreview =
           effectivePreview !== null &&
           effectivePreview.col === col &&
@@ -1207,18 +1244,65 @@ const GameBoardStaticCells = React.memo(function GameBoardStaticCells({
             col={col}
             row={row}
             scaledCellSize={scaledCellSize}
-            onPath={isPath}
-            isSpawn={isSpawn}
-            isBase={isBase}
             canPlace={canPlace}
             hasTower={hasTowerHere}
             isPlacementPreview={isPreview && canPlace}
             onCellPress={onCellPress}
-            openEdges={openEdges}
             painted={mapArt != null}
           />
         );
       })}
+      {meadow
+        ? meadow.blobs.map((blob) => (
+            <View
+              key={blob.key}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: blob.left,
+                top: blob.top,
+                width: blob.width,
+                height: blob.height,
+                borderRadius: blob.height / 2,
+                overflow: 'hidden',
+                transform: [{ rotate: `${blob.rot}deg` }],
+                zIndex: 3,
+              }}
+            >
+              <Image source={terrainArt.path} resizeMode="cover" style={{ width: blob.width, height: blob.height }} />
+            </View>
+          ))
+        : null}
+      {meadow
+        ? meadow.fades.map((fade) => (
+            <View key={fade.key} pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <Image
+                source={terrainArt.edgeFade}
+                resizeMode="stretch"
+                style={{
+                  position: 'absolute',
+                  left: fade.left,
+                  top: fade.top,
+                  width: fade.size,
+                  height: fade.size,
+                  transform: [{ rotate: `${fade.rot}deg` }],
+                  zIndex: 4,
+                }}
+              />
+            </View>
+          ))
+        : null}
+      {meadow
+        ? meadow.decor.map((item) => (
+            <View key={item.key} pointerEvents="none" style={{ position: 'absolute', left: item.left, top: item.top, width: item.size, height: item.size, zIndex: 5 }}>
+              <Image
+                source={terrainArt.decorVariants[item.variant]}
+                resizeMode="contain"
+                style={{ width: item.size, height: item.size }}
+              />
+            </View>
+          ))
+        : null}
     </>
   );
 });
@@ -1889,9 +1973,19 @@ const GameBoard = React.memo(
               />
               {paintedMap ? null : (
                 <>
-                  <View pointerEvents="none" style={styles.warmLight} />
-                  <View pointerEvents="none" style={styles.vignette}>
-                    <Image source={terrainArt.vignette} resizeMode="stretch" style={StyleSheet.absoluteFill} />
+                  <View
+                    pointerEvents="none"
+                    style={[styles.warmLight, { width: boardWidth, height: boardHeight }]}
+                  />
+                  <View
+                    pointerEvents="none"
+                    style={[styles.vignette, { width: boardWidth, height: boardHeight }]}
+                  >
+                    <Image
+                      source={terrainArt.vignette}
+                      resizeMode="stretch"
+                      style={{ width: boardWidth, height: boardHeight }}
+                    />
                   </View>
                 </>
               )}
@@ -2289,10 +2383,9 @@ export default function GameScreen() {
     getSellValue,
     setGameSpeed,
     getCurrentCoins,
-    lastWaveBonus,
-    showBonusPopup,
-    runGemsFromWavePart,
-  } = useGameStore(
+      lastWaveBonus,
+      showBonusPopup,
+    } = useGameStore(
     useShallow((s) => ({
       isPlaying: s.isPlaying,
       isPaused: s.isPaused,
@@ -2340,7 +2433,6 @@ export default function GameScreen() {
       getCurrentCoins: s.getCurrentCoins,
       lastWaveBonus: s.lastWaveBonus,
       showBonusPopup: s.showBonusPopup,
-      runGemsFromWavePart: s.runGemsFromWavePart,
     }))
   );
 
@@ -2379,12 +2471,6 @@ export default function GameScreen() {
       runStartBestWaveRef.current = playerStore.bestWave;
     }
   }, [isPlaying, currentWave, playerStore.bestWave]);
-
-  const currentMapId = useGameStore((s) => s.currentMapId);
-  const arenaLabel = useMemo(() => {
-    if (currentMapId === CLASSIC_MAP_ID) return 'Classic grid';
-    return getArenaMap(currentMapId)?.name ?? 'Arena';
-  }, [currentMapId]);
 
   const sessionSlaughterTriumphs = usePlayerStore((s) => s.sessionSlaughterTriumphs);
 
@@ -2432,15 +2518,6 @@ export default function GameScreen() {
     if (enemiesKilled < SESSION_SLAUGHTER_WIN_KILLS) slaughterHapticSentRef.current = false;
   }, [enemiesKilled]);
 
-  const playerGems = usePlayerStore((s) => s.gems);
-  const gemsHudDisplay = useMemo(() => {
-    if (isGameOver) return playerGems;
-    if (isServerBackedPlayerId(playerStore.playerId)) {
-      return playerGems + runGemsFromWavePart;
-    }
-    return playerGems;
-  }, [isGameOver, playerGems, runGemsFromWavePart, playerStore.playerId]);
-
   useEffect(() => {
     if (isGameOver) setGameOverStep(reviveOfferRef.current ? 'revive' : 'over');
   }, [isGameOver]);
@@ -2454,11 +2531,8 @@ export default function GameScreen() {
   );
 
   const boardWidth = gridCols * cellSize;
-  const boardHeight = gridRows * cellSize;
-  const scale = Math.min(
-    (SCREEN_WIDTH - 20) / boardWidth,
-    (SCREEN_HEIGHT - 380) / boardHeight
-  );
+  // Fill the phone width. A taller route scrolls inside the board instead of shrinking into the HUD.
+  const scale = SCREEN_WIDTH / boardWidth;
 
   // Initialize game on mount - check for saved game
   useEffect(() => {
@@ -3181,20 +3255,6 @@ export default function GameScreen() {
     [coinIncomeUpgradeLevel]
   );
 
-  const missionNudge = useMemo(() => {
-    const unfinished = dailyMissions
-      .filter((m) => !m.completed)
-      .map((m) => ({ ...m, remaining: Math.max(0, m.target - m.progress) }))
-      .sort((a, b) => a.remaining - b.remaining);
-    if (unfinished.length === 0) return null as null | { text: string; oneMoreRun: boolean };
-    const m = unfinished[0];
-    if (m.remaining > Math.max(5, Math.floor(m.target * 0.4))) return null;
-    return {
-      text: `${m.remaining} left: ${m.label} (+${m.rewardGems} gems)`,
-      oneMoreRun: m.remaining <= 2,
-    };
-  }, [dailyMissions]);
-
   return (
     <GameRuntimeErrorBoundary
       onRecover={() => {
@@ -3203,46 +3263,32 @@ export default function GameScreen() {
       }}
     >
       <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <ImageBackground source={uiArt.panel} resizeMode="stretch" style={styles.header} imageStyle={styles.woodPanelImage}>
-        <TouchableOpacity onPress={handleExitAttempt} style={styles.headerButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+      <WoodPanel style={styles.header} cap={12}>
+        <TouchableOpacity onPress={handleExitAttempt} style={styles.headerButton} accessibilityLabel="Back">
+          <Ionicons name="arrow-back" size={18} color="#f4ead8" />
         </TouchableOpacity>
-        
         <View style={styles.statsRow}>
-          <View style={styles.playerHudBadge}>
-            <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={20} />
-            <Text style={styles.playerHudName} numberOfLines={1}>
-              {playerStore.nickname}
-            </Text>
-          </View>
           <View style={styles.stat}>
-            <Ionicons name="heart" size={16} color="#E74C3C" />
+            <Ionicons name="heart" size={14} color="#E74C3C" />
             <Text style={styles.statValue}>{baseHealth}</Text>
           </View>
           <View style={styles.stat}>
-            <FontAwesome5 name="coins" size={14} color="#FFD700" />
+            <FontAwesome5 name="coins" size={12} color="#FFD700" />
             <Text style={styles.statValue}>{coins}</Text>
           </View>
-          {!isGameOver && (
-            <View style={styles.stat}>
-              <MaterialCommunityIcons name="diamond-stone" size={15} color={TacticalTheme.gem} />
-              <Text style={[styles.statValue, styles.gemStatValue]}>{gemsHudDisplay}</Text>
-            </View>
-          )}
           <View style={styles.stat}>
-            <MaterialCommunityIcons name="waves" size={16} color={TacticalTheme.accent} />
+            <MaterialCommunityIcons name="waves" size={14} color={TacticalTheme.accent} />
             <Text style={styles.statValue}>{currentWave}</Text>
           </View>
         </View>
-
-        <TouchableOpacity 
-          onPress={isPaused ? resumeGame : pauseGame} 
+        <TouchableOpacity
+          onPress={isPaused ? resumeGame : pauseGame}
           style={styles.headerButton}
+          accessibilityLabel={isPaused ? 'Resume' : 'Pause'}
         >
-          <Ionicons name={isPaused ? 'play' : 'pause'} size={24} color="#fff" />
+          <Ionicons name={isPaused ? 'play' : 'pause'} size={18} color="#f4ead8" />
         </TouchableOpacity>
-      </ImageBackground>
+      </WoodPanel>
 
       {!playerStore.fieldBriefingSeen && !isGameOver ? (
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodPanelImage} style={styles.briefingCard}>
@@ -3256,47 +3302,39 @@ export default function GameScreen() {
         </ImageBackground>
       ) : null}
 
-      <View style={styles.coinMultHint}>
-        <FontAwesome5 name="coins" size={11} color="#b8a045" />
-        <Text style={styles.coinMultHintText}>
-          Income ×{battleCoinIncomeMult.toFixed(2)}
-        </Text>
-      </View>
-
-      {!isGameOver && isPlaying && (
-        <View style={styles.carnageBar}>
-          <View style={styles.carnageBarLeft}>
-            <Text style={styles.enemiesRemainingLabel}>Enemies remaining</Text>
-            <View style={styles.enemiesRemainingRow}>
-              <MaterialCommunityIcons name="target" size={20} color="#FF6B4A" />
-              <Text style={styles.enemiesRemainingValue}>
-                {waveEnemiesRemaining === null ? '—' : waveEnemiesRemaining}
-              </Text>
-            </View>
-            <Text style={styles.enemiesRemainingHint}>
-              {waveInProgress && currentWave > 0
-                ? `Wave ${currentWave} · on map + still arriving`
-                : 'Start a wave to see the count'}
-            </Text>
-          </View>
-          <View style={styles.carnageBarRight}>
-            <MaterialCommunityIcons name="star-four-points" size={14} color="#f1c40f" />
-            <Text style={styles.carnageBarStars}>
+      {!isGameOver && isPlaying ? (
+        <View style={styles.hudStrip}>
+          <Text style={styles.hudStripText} numberOfLines={1}>
+            {waveInProgress && waveEnemiesRemaining !== null
+              ? `${waveEnemiesRemaining} left`
+              : currentWave === 0
+                ? 'Place towers'
+                : `Wave ${currentWave} done`}
+          </Text>
+          <Text style={styles.hudStripText}>×{battleCoinIncomeMult.toFixed(2)}</Text>
+          <SpeedControls
+            currentSpeed={gameSpeed}
+            onSpeedChange={applyGameSpeed}
+            unlockedSpeeds={unlockedSpeeds}
+            onPurchaseSpeed={handlePurchaseSpeed}
+            gems={playerStore.gems}
+          />
+          {!waveInProgress ? (
+            <TouchableOpacity onPress={handleStartWave} activeOpacity={0.85}>
+              <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.startWaveButton}>
+                <Text style={styles.startWaveText} numberOfLines={1}>
+                  Start {currentWave + 1}
+                  {autoWaveTimer > 0 && currentWave > 0 ? ` ${formatTimer(autoWaveTimer)}` : ''}
+                </Text>
+              </ImageBackground>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.hudStripText}>
               {sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED}
             </Text>
-            <Text style={styles.carnageBarStarsHint}>bounty stars</Text>
-          </View>
+          )}
         </View>
-      )}
-
-      {/* Speed Controls */}
-      <SpeedControls
-        currentSpeed={gameSpeed}
-        onSpeedChange={applyGameSpeed}
-        unlockedSpeeds={unlockedSpeeds}
-        onPurchaseSpeed={handlePurchaseSpeed}
-        gems={playerStore.gems}
-      />
+      ) : null}
 
       {/* Bonus popup notification */}
       {showBonusPopup && lastWaveBonus > 0 && waveInProgress === false && (
@@ -3325,36 +3363,6 @@ export default function GameScreen() {
           onRegisterClearPlacementPreview={registerClearBoardPlacementPreview}
           onRegisterBoardScreenSync={registerBoardScreenSync}
         />
-        {/* Overlay so inter-wave UI does not shrink the board viewport (avoids scroll re-center / map jump). */}
-        {!waveInProgress && !isGameOver && isPlaying && (
-          <View style={styles.waveInfoBarOverlay} pointerEvents="box-none">
-            <View style={styles.waveInfoBar} pointerEvents="auto">
-              <View>
-                <Text style={styles.waveInfoText}>
-                  {currentWave === 0 ? 'Place towers to start!' : `Wave ${currentWave} complete!`}
-                </Text>
-                <Text style={styles.mapInfoText}>Arena: {arenaLabel}</Text>
-                <Text style={styles.challengeInfoText}>
-                  Daily Challenge: {dailyChallenge.name}
-                </Text>
-                {showBonusPopup && lastWaveBonus > 0 && (
-                  <Text style={styles.bonusText}>+{lastWaveBonus} bonus coins!</Text>
-                )}
-                {missionNudge && (
-                  <Text style={styles.missionNudgeText}>{missionNudge.text}</Text>
-                )}
-              </View>
-              <TouchableOpacity onPress={handleStartWave} activeOpacity={0.85}>
-                <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.startWaveButton}>
-                  <Text style={styles.startWaveText}>
-                    Start Wave {currentWave + 1}{' '}
-                    {autoWaveTimer > 0 && currentWave > 0 ? `(${formatTimer(autoWaveTimer)})` : ''}
-                  </Text>
-                </ImageBackground>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
       </View>
 
       <TowerDragGhostOverlay
@@ -3527,28 +3535,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    minHeight: 36,
     backgroundColor: 'transparent',
-    overflow: 'hidden',
   },
   headerButton: {
     padding: 6,
+    minWidth: 32,
+    alignItems: 'center',
   },
   statsRow: {
+    flex: 1,
     flexDirection: 'row',
-    gap: 12,
-  },
-  playerHudBadge: {
-    flexDirection: 'row',
+    justifyContent: 'space-evenly',
     alignItems: 'center',
-    gap: 6,
-    maxWidth: 140,
-  },
-  playerHudName: {
-    color: TacticalTheme.text,
-    fontSize: 12,
-    fontWeight: '700',
   },
   stat: {
     flexDirection: 'row',
@@ -3556,12 +3557,24 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   statValue: {
-    color: TacticalTheme.text,
+    color: '#f6e7c1',
     fontSize: 14,
     fontWeight: 'bold',
   },
-  gemStatValue: {
-    color: TacticalTheme.textMuted,
+  hudStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#24180f',
+    minHeight: 36,
+  },
+  hudStripText: {
+    color: '#f0d48a',
+    fontSize: 12,
+    fontWeight: '700',
   },
   coinMultHint: {
     flexDirection: 'row',
@@ -3632,19 +3645,15 @@ const styles = StyleSheet.create({
   },
   speedControls: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 6,
-    backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    alignItems: 'center',
+    gap: 3,
   },
   speedButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
     borderRadius: 4,
-    backgroundColor: TacticalTheme.panelAlt,
-    minWidth: 48,
+    backgroundColor: '#3a2818',
+    minWidth: 30,
     alignItems: 'center',
   },
   speedButtonActive: {
@@ -3705,14 +3714,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   startWaveButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: 84,
     alignItems: 'center',
     justifyContent: 'center',
   },
   startWaveText: {
     color: '#1a1208',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
   },
   bonusText: {
@@ -3783,8 +3793,9 @@ const styles = StyleSheet.create({
   boardContainer: {
     flex: 1,
     position: 'relative',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     alignItems: 'center',
+    overflow: 'hidden',
   },
   boardScrollContainer: {
     flex: 1,
@@ -3811,12 +3822,16 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   warmLight: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 186, 90, 0.09)',
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    backgroundColor: 'rgba(255, 186, 90, 0.06)',
     zIndex: 5,
   },
   vignette: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    top: 0,
     zIndex: 6,
   },
   woodChip: {

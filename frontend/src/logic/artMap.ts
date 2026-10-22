@@ -36,13 +36,64 @@ export function grassUsesAlt(col: number, row: number): boolean {
   return (col * 17 + row * 31) % 7 === 0;
 }
 
-/** 0 rock, 1 bush, 2 pine, or null. Stable for a cell. */
-export function decorVariant(col: number, row: number): 0 | 1 | 2 | null {
-  const n = (col * 17 + row * 13) % 13;
-  if (n === 0) return 2;
-  if (n === 4) return 0;
-  if (n === 8) return 1;
-  return null;
+/** Stable 0..1 value. Same cell and salt always return the same number. */
+export function cellUnit(col: number, row: number, salt: number): number {
+  let n =
+    Math.imul(col + 19, 374761393) ^
+    Math.imul(row + 7, 668265263) ^
+    Math.imul(salt + 3, 1442695041);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  n = n ^ (n >>> 16);
+  return (n >>> 0) / 4294967296;
+}
+
+export type DecorSpot = {
+  /** 0 rock, 1 bush, 2 pine */
+  variant: 0 | 1 | 2;
+  /** Offset from the cell center, in cell widths. */
+  dx: number;
+  dy: number;
+  scale: number;
+};
+
+/**
+ * A few props in the open meadow. Null on most cells so they do not line up
+ * in columns. Callers still skip the path and the cells beside it.
+ */
+export function decorSpot(col: number, row: number): DecorSpot | null {
+  if (cellUnit(col, row, 11) > 0.28) return null;
+  const variant = Math.floor(cellUnit(col, row, 12) * 3) as 0 | 1 | 2;
+  const pine = variant === 2;
+  return {
+    variant,
+    dx: (cellUnit(col, row, 13) - 0.5) * 0.9,
+    dy: (cellUnit(col, row, 14) - 0.5) * 0.9,
+    scale: pine ? 0.95 + cellUnit(col, row, 15) * 0.5 : 0.42 + cellUnit(col, row, 15) * 0.58,
+  };
+}
+
+export type PathBlob = {
+  dx: number;
+  dy: number;
+  scale: number;
+  rot: number;
+};
+
+/** Overlapping dirt blobs so a straight route does not read as a tile strip. */
+export function pathBlobs(col: number, row: number): PathBlob[] {
+  const main: PathBlob = {
+    dx: (cellUnit(col, row, 1) - 0.5) * 0.42,
+    dy: (cellUnit(col, row, 2) - 0.5) * 0.34,
+    scale: 1.32 + cellUnit(col, row, 3) * 0.62,
+    rot: (cellUnit(col, row, 4) - 0.5) * 32,
+  };
+  const side: PathBlob = {
+    dx: (cellUnit(col, row, 5) - 0.5) * 0.95,
+    dy: (cellUnit(col, row, 6) - 0.5) * 0.95,
+    scale: 0.7 + cellUnit(col, row, 7) * 0.55,
+    rot: (cellUnit(col, row, 8) - 0.5) * 70,
+  };
+  return [main, side];
 }
 
 /** Ground sprites face right. Flip when the next path step is to the left. */
