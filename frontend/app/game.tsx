@@ -85,6 +85,7 @@ import {
   projectileAngleDeg,
 } from '../src/logic/artMap';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
+import { readProofMapId, seedProofBattle } from '../src/logic/proofBattle';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -2538,6 +2539,12 @@ export default function GameScreen() {
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
+
+    const proofMapId = readProofMapId();
+    if (proofMapId) {
+      seedProofBattle(proofMapId);
+      return;
+    }
 
     const savedGame = playerStore.getSavedGame();
     
