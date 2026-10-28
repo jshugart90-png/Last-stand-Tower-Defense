@@ -48,7 +48,6 @@ import {
 } from '../src/constants/storeMessages';
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { AdBanner } from '../src/components/AdBanner';
 import { TowerPicture } from '../src/art/sprites';
 import { WoodPanel } from '../src/art/nineSlice';
 interface Skin {
@@ -1065,9 +1064,6 @@ export default function ShopScreen() {
 
         {selectedTab === 'logos' && renderLogoCard()}
       </ScrollView>
-
-      {/* Bottom banner ad (hidden for premium / ad-free players) */}
-      <AdBanner placement="shop" />
     </SafeAreaView>
   );
 }
