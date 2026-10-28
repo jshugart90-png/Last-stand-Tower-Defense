@@ -22,6 +22,7 @@ import {
   BackHandler,
   Image,
   ImageBackground,
+  ScrollView as TrayScroll,
 } from 'react-native';
 import { Gesture, GestureDetector, ScrollView } from 'react-native-gesture-handler';
 import Animated, {
@@ -311,7 +312,9 @@ const TowerPanelItem = React.memo(
         Gesture.Pan()
           .maxPointers(1)
           .minPointers(1)
-          .minDistance(6)
+          // Drag up onto the map. A sideways swipe fails this gesture so the tray can scroll.
+          .activeOffsetY(-12)
+          .failOffsetX([-18, 18])
           .shouldCancelWhenOutside(false)
           .onStart((e) => {
             'worklet';
@@ -442,8 +445,9 @@ const TowerPanel = ({
   );
 
   return (
-    <ImageBackground source={uiArt.panel} resizeMode="stretch" style={styles.towerPanel} imageStyle={styles.woodPanelImage}>
-    <ScrollView
+    <View style={styles.towerPanel}>
+      <Image source={uiArt.panel} resizeMode="stretch" style={styles.towerPanelWood} />
+    <TrayScroll
       horizontal
       scrollEnabled={scrollEnabled}
       showsHorizontalScrollIndicator={false}
@@ -476,8 +480,8 @@ const TowerPanel = ({
           />
         );
       })}
-    </ScrollView>
-    </ImageBackground>
+    </TrayScroll>
+    </View>
   );
 };
 
@@ -1961,7 +1965,7 @@ const GameBoard = React.memo(
                 {
                   width: boardWidth,
                   height: boardHeight,
-                  backgroundColor: '#2f6a34',
+                  backgroundColor: paintedMap ? '#140e09' : '#2f6a34',
                 },
                 pinchAnimatedStyle,
               ]}
@@ -1997,11 +2001,13 @@ const GameBoard = React.memo(
                 vfxQuality={vfxQuality}
               />
 
-              <GameSpawnBaseMarkers
-                spawnPoint={spawnPoint}
-                basePosition={basePosition}
-                scaledCellSize={scaledCellSize}
-              />
+              {paintedMap ? null : (
+                <GameSpawnBaseMarkers
+                  spawnPoint={spawnPoint}
+                  basePosition={basePosition}
+                  scaledCellSize={scaledCellSize}
+                />
+              )}
               </Animated.View>
             </Animated.View>
           </GestureDetector>
@@ -2524,6 +2530,8 @@ export default function GameScreen() {
   }, [isGameOver]);
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [battleBox, setBattleBox] = useState({ w: 0, h: 0 });
+  const battleMapId = useGameStore((s) => s.currentMapId);
 
   const waveChallengeKey = useMemo(
     () =>
@@ -2532,8 +2540,14 @@ export default function GameScreen() {
   );
 
   const boardWidth = gridCols * cellSize;
-  // Fill the phone width. A taller route scrolls inside the board instead of shrinking into the HUD.
-  const scale = SCREEN_WIDTH / boardWidth;
+  const boardHeight = gridRows * cellSize;
+  const boxW = battleBox.w > 0 ? battleBox.w : SCREEN_WIDTH;
+  const widthFit = boardWidth > 0 ? boxW / boardWidth : 1;
+  const heightFit = battleBox.h > 0 && boardHeight > 0 ? battleBox.h / boardHeight : 0;
+  // Painted maps cover the battle area so a square painting does not leave a black band.
+  // Free Play stays width-fit. Overflow scrolls; hit tests use the measured board rect.
+  const scale =
+    mapBackgroundFor(battleMapId) != null && heightFit > 0 ? Math.max(widthFit, heightFit) : widthFit;
 
   // Initialize game on mount - check for saved game
   useEffect(() => {
@@ -3358,7 +3372,13 @@ export default function GameScreen() {
       )}
 
       {/* Game board — pinch with two fingers to zoom */}
-      <View style={styles.boardContainer}>
+      <View
+        style={styles.boardContainer}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setBattleBox((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
+        }}
+      >
         <GameBoard
           onCellPress={handleCellPress}
           scale={scale}
@@ -3806,6 +3826,7 @@ const styles = StyleSheet.create({
   },
   boardScrollContainer: {
     flex: 1,
+    width: '100%',
   },
   boardScrollContent: {
     flexGrow: 1,
@@ -3973,14 +3994,21 @@ const styles = StyleSheet.create({
     zIndex: 18,
   },
   towerPanel: {
-    maxHeight: 112,
+    width: '100%',
+    maxHeight: 118,
     backgroundColor: 'transparent',
     overflow: 'hidden',
   },
+  towerPanelWood: {
+    ...StyleSheet.absoluteFillObject,
+  },
   towerPanelScroll: {
+    width: '100%',
     backgroundColor: 'transparent',
   },
   towerPanelContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 6,
     gap: 6,
