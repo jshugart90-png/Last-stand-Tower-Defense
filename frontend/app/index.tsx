@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   AppState,
+  Image,
   ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -542,7 +543,8 @@ export default function HomeScreen() {
   }
 
   return (
-    <ImageBackground source={terrainArt.grass} resizeMode="cover" style={styles.container}>
+    <View style={styles.container}>
+      <Image source={terrainArt.grass} resizeMode="cover" style={styles.homeGrass} />
       <View style={styles.homeScrim} />
     <SafeAreaView style={styles.homeSafe}>
       <StatusBar style="light" />
@@ -583,7 +585,7 @@ export default function HomeScreen() {
         </View>
 
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
-          <View>
+          <View style={styles.dailyBonusText}>
             <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
             <Text style={styles.dailyBonusSub}>
               Streak: {playerStore.loginStreak} day{playerStore.loginStreak === 1 ? '' : 's'}
@@ -599,9 +601,9 @@ export default function HomeScreen() {
         </ImageBackground>
 
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
-          <View>
+          <View style={styles.dailyBonusText}>
             <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
-            <Text style={styles.dailyBonusSub}>
+            <Text style={styles.dailyBonusSub} numberOfLines={3}>
               Kills this session: {playerStore.sessionEnemiesKilledTotal} • Slaughter stars{' '}
               {playerStore.sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED} (
               {SESSION_SLAUGHTER_WIN_KILLS}+ kills / run)
@@ -645,10 +647,13 @@ export default function HomeScreen() {
 
         {/* Play button */}
         <TouchableOpacity onPress={handlePlayPress} activeOpacity={0.85} style={styles.playWrap}>
-          <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButton}>
-            <Ionicons name="play" size={26} color="#1a1208" />
-            <Text style={styles.playButtonText}>PLAY</Text>
-          </ImageBackground>
+          <View style={styles.playButton}>
+            <Image source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButtonArt} />
+            <View style={styles.playLabel}>
+              <Ionicons name="play" size={22} color="#1a1208" />
+              <Text style={styles.playButtonText}>PLAY</Text>
+            </View>
+          </View>
         </TouchableOpacity>
 
         {/* Quick actions */}
@@ -713,14 +718,24 @@ export default function HomeScreen() {
         <TutorialOverlay onComplete={handleTutorialComplete} />
       )}
     </SafeAreaView>
-    </ImageBackground>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: TacticalTheme.bg,
+    backgroundColor: '#2f6a34',
+    position: 'relative',
+  },
+  homeGrass: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
   },
   homeScrim: {
     ...StyleSheet.absoluteFillObject,
@@ -806,8 +821,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   playerLevel: {
-    color: TacticalTheme.accent,
+    color: '#fff6d0',
     fontSize: 14,
+    fontWeight: '700',
+    textShadowColor: 'rgba(20, 10, 4, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   currencyContainer: {
     flexDirection: 'row',
@@ -930,7 +949,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 10,
     overflow: 'hidden',
+  },
+  dailyBonusText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
   },
   woodCardImage: {
     borderRadius: 12,
@@ -946,6 +971,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   dailyBonusButton: {
+    flexShrink: 0,
     backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -1011,19 +1037,33 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   playButton: {
+    minWidth: 240,
+    height: 84,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playButtonArt: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  playLabel: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 240,
-    paddingVertical: 16,
-    paddingHorizontal: 36,
-    gap: 10,
+    gap: 8,
+    paddingTop: 8,
   },
   playButtonText: {
     color: '#1a1208',
-    fontSize: 28,
+    fontSize: 22,
     fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
+    lineHeight: 26,
   },
   quickActionsRow: {
     width: '100%',

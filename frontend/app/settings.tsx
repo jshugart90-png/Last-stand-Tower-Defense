@@ -26,7 +26,6 @@ import {
 } from '../src/hooks/useApi';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { showPrivacyOptions, useAdsStatus } from '../src/services/adsService';
 
 const appVersionLabel =
   Constants.expoConfig?.version != null && String(Constants.expoConfig.version).length > 0
@@ -34,7 +33,6 @@ const appVersionLabel =
     : 'Last Stand Tower Defense';
 
 export default function SettingsScreen() {
-  const adPrivacyOptionsAvailable = useAdsStatus((st) => st.privacyOptionsAvailable);
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [changeNameOpen, setChangeNameOpen] = useState(false);
@@ -386,15 +384,6 @@ export default function SettingsScreen() {
             <Text style={styles.actionButtonText}>Support</Text>
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
-
-          {/* Shown only where GDPR/UMP consent applies (EEA/UK/Switzerland). */}
-          {adPrivacyOptionsAvailable && (
-            <TouchableOpacity style={styles.actionButton} onPress={() => { void showPrivacyOptions(); }}>
-              <Ionicons name="options" size={24} color="#9B59B6" />
-              <Text style={styles.actionButtonText}>Ad Privacy Options</Text>
-              <Ionicons name="chevron-forward" size={20} color="#666" />
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Danger Zone */}

@@ -2036,9 +2036,9 @@ const GameOverFlowModal = ({
   onSeeResults,
   onHome,
   onPlayAgain,
-  rewarded,
   onReviveWatch,
   onReviveDecline,
+  onOpenShop,
   reviveBusy,
 }: {
   visible: boolean;
@@ -2062,17 +2062,8 @@ const GameOverFlowModal = ({
   onPlayAgain: () => void;
   onReviveWatch: () => void;
   onReviveDecline: () => void;
+  onOpenShop: () => void;
   reviveBusy: boolean;
-  /** Rewarded-video bonus (hidden when ads are unavailable). */
-  rewarded: {
-    visible: boolean;
-    available: boolean;
-    busy: boolean;
-    cooldownSeconds: number;
-    gemsPerAd: number;
-    claimed: boolean;
-    onWatch: () => void;
-  };
 }) => {
   const gemsNow = usePlayerStore((s) => s.gems);
   if (!visible) return null;
@@ -2085,21 +2076,28 @@ const GameOverFlowModal = ({
             <MaterialCommunityIcons name="heart-flash" size={44} color={TacticalTheme.accent} />
             <Text style={styles.gameOverTitle}>Base destroyed!</Text>
             <Text style={styles.reviveSubtitle}>
-              Spend {REVIVE_GEM_COST} gems to restore half your base health and keep this run. One continue per run.
+              {gemsNow < REVIVE_GEM_COST
+                ? `A continue costs ${REVIVE_GEM_COST} gems. You have ${gemsNow}.`
+                : `Spend ${REVIVE_GEM_COST} gems to restore half your base health and keep this run. One continue per run.`}
             </Text>
             <Text style={styles.reviveStatsLine}>Wave {wave} • {enemiesKilled} kills so far</Text>
-            <TouchableOpacity
-              style={[styles.reviveButton, (reviveBusy || gemsNow < REVIVE_GEM_COST) && styles.reviveButtonDisabled]}
-              onPress={onReviveWatch}
-              disabled={reviveBusy || gemsNow < REVIVE_GEM_COST}
-              accessibilityRole="button"
-              accessibilityLabel={`Spend ${REVIVE_GEM_COST} gems to revive`}
-            >
-              <FontAwesome5 name="gem" size={16} color={TacticalTheme.white} />
-              <Text style={styles.reviveButtonText}>
-                {gemsNow < REVIVE_GEM_COST ? `Need ${REVIVE_GEM_COST} gems` : `Revive · ${REVIVE_GEM_COST} gems`}
-              </Text>
-            </TouchableOpacity>
+            {gemsNow < REVIVE_GEM_COST ? (
+              <TouchableOpacity style={styles.reviveButton} onPress={onOpenShop} accessibilityRole="button" accessibilityLabel="Open the shop">
+                <FontAwesome5 name="gem" size={16} color={TacticalTheme.white} />
+                <Text style={styles.reviveButtonText}>Open Shop</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.reviveButton, reviveBusy && styles.reviveButtonDisabled]}
+                onPress={onReviveWatch}
+                disabled={reviveBusy}
+                accessibilityRole="button"
+                accessibilityLabel={`Spend ${REVIVE_GEM_COST} gems to revive`}
+              >
+                <FontAwesome5 name="gem" size={16} color={TacticalTheme.white} />
+                <Text style={styles.reviveButtonText}>Revive · {REVIVE_GEM_COST} gems</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.playAgainSecondary} onPress={onReviveDecline} disabled={reviveBusy}>
               <Text style={styles.playAgainSecondaryText}>Give up</Text>
             </TouchableOpacity>
@@ -2181,27 +2179,6 @@ const GameOverFlowModal = ({
               <Text style={styles.rewardSummaryText}>+{rewardSummary.xpEarned} XP</Text>
               <Text style={styles.rewardSummaryText}>+{rewardSummary.gemsEarned} gems</Text>
             </View>
-
-            {rewarded.visible && !rewarded.claimed && (
-              <TouchableOpacity
-                style={[styles.rewardedBonusButton, !rewarded.available && styles.rewardedBonusButtonDisabled]}
-                onPress={rewarded.onWatch}
-                disabled={!rewarded.available}
-                accessibilityRole="button"
-                accessibilityLabel={`Watch a video for ${rewarded.gemsPerAd} bonus gems`}
-              >
-                <Ionicons name="play-circle" size={20} color={TacticalTheme.white} />
-                <Text style={styles.rewardedBonusText}>
-                  {rewarded.busy
-                    ? 'Loading video…'
-                    : rewarded.cooldownSeconds > 0
-                      ? `Bonus video in ${rewarded.cooldownSeconds}s`
-                      : rewarded.available
-                        ? `Watch a video: +${rewarded.gemsPerAd} bonus gems`
-                        : 'Bonus video loading…'}
-                </Text>
-              </TouchableOpacity>
-            )}
 
             <TouchableOpacity onPress={onHome}>
               <ImageBackground source={uiArt.buttonBlue} resizeMode="stretch" style={styles.woodBtn}>
@@ -3351,7 +3328,7 @@ export default function GameScreen() {
             </TouchableOpacity>
           ) : (
             <Text style={styles.hudStripText}>
-              {sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED}
+              ★ {sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED}
             </Text>
           )}
         </View>
@@ -3461,16 +3438,8 @@ export default function GameScreen() {
         onPlayAgain={handleRestart}
         onReviveWatch={handleReviveWatch}
         onReviveDecline={handleReviveDecline}
+        onOpenShop={handleGoToShop}
         reviveBusy={reviveBusy}
-        rewarded={{
-          visible: false,
-          available: false,
-          busy: false,
-          cooldownSeconds: 0,
-          gemsPerAd: 0,
-          claimed: true,
-          onWatch: () => {},
-        }}
       />
 
       {/* Exit warning modal */}
@@ -4486,25 +4455,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 17,
     fontWeight: '800',
-  },
-  rewardedBonusButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: TacticalTheme.accent,
-    paddingVertical: 13,
-    borderRadius: 12,
-    width: '100%',
-    marginBottom: 10,
-  },
-  rewardedBonusButtonDisabled: {
-    opacity: 0.55,
-  },
-  rewardedBonusText: {
-    color: TacticalTheme.white,
-    fontSize: 15,
-    fontWeight: '700',
   },
   playAgainSecondary: {
     paddingVertical: 12,

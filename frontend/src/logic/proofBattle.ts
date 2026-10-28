@@ -17,8 +17,11 @@ const NEIGHBORS: [number, number][] = [
   [-1, -1],
 ];
 
-/** `?proof=<mapId>` on web. Ignored unless that id is a fixed-path arena. */
+/** `?proof=<mapId>` for local captures. Dev builds, or EXPO_PUBLIC_PROOF_BATTLE=1. */
 export function readProofMapId(): string | null {
+  const dev = typeof __DEV__ !== 'undefined' && __DEV__;
+  const flagged = process.env.EXPO_PUBLIC_PROOF_BATTLE === '1';
+  if (!dev && !flagged) return null;
   if (typeof window === 'undefined') return null;
   const id = new URLSearchParams(window.location.search).get('proof');
   if (!id) return null;

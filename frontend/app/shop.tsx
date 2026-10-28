@@ -51,7 +51,6 @@ import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
 import { AdBanner } from '../src/components/AdBanner';
 import { TowerPicture } from '../src/art/sprites';
 import { WoodPanel } from '../src/art/nineSlice';
-import { useRewardedGems } from '../src/hooks/useRewardedGems';
 interface Skin {
   id: string;
   name: string;
@@ -60,7 +59,6 @@ interface Skin {
 }
 
 export default function ShopScreen() {
-  const rewardedGems = useRewardedGems();
   const router = useRouter();
   const params = useLocalSearchParams<{ highlightTower?: string }>();
   const playerStore = usePlayerStore();
@@ -353,7 +351,7 @@ export default function ShopScreen() {
   };
 
 
-  // Handle Premium Bundle (removes ads permanently) — real money via IAP
+  // Commander Bundle — real money via IAP. Product id stays the same.
   const handlePurchasePremium = async () => {
     if (playerStore.premium) {
       Alert.alert('Already a Commander', 'The coin bonus and Champion Gold skin are already on this account.');
@@ -387,7 +385,7 @@ export default function ShopScreen() {
                     playerStore.setPremium(true);
                     await completePurchase(result.purchase, IAP_PRODUCTS.PREMIUM_BUNDLE);
                   } catch {
-                    playerStore.setPremium(true); // store purchase succeeded; never keep showing ads
+                    playerStore.setPremium(true);
                     Alert.alert(
                       'Purchase Recorded',
                       'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
@@ -845,7 +843,7 @@ export default function ShopScreen() {
               Purchase gems to unlock towers, upgrades, and more
             </Text>
 
-            {/* Premium: remove ads (hidden once owned) */}
+            {/* Commander Bundle — same product id as before. */}
             {!playerStore.premium && (
               <TouchableOpacity
                 style={styles.premiumCard}
@@ -865,37 +863,6 @@ export default function ShopScreen() {
                 </View>
                 <View style={styles.premiumPriceTag}>
                   <Text style={styles.premiumPriceText}>$4.99</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
-            {/* Free gems: rewarded video */}
-            {rewardedGems.adsReady && (
-              <TouchableOpacity
-                style={[styles.rewardedCard, !rewardedGems.available && styles.rewardedCardDisabled]}
-                onPress={() => { void rewardedGems.watch(); }}
-                disabled={!rewardedGems.available}
-                accessibilityRole="button"
-                accessibilityLabel={`Watch a video for ${rewardedGems.gemsPerAd} gems`}
-              >
-                <View style={styles.rewardedIconWrap}>
-                  <Ionicons name="play-circle" size={28} color={TacticalTheme.accent} />
-                </View>
-                <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Watch a video</Text>
-                  <Text style={styles.rewardedSubtitle}>
-                    {rewardedGems.busy
-                      ? 'Loading video…'
-                      : rewardedGems.cooldownSeconds > 0
-                        ? `Next free gems in ${rewardedGems.cooldownSeconds}s`
-                        : rewardedGems.available
-                          ? `Earn ${rewardedGems.gemsPerAd} free gems`
-                          : 'Video loading — try again in a moment'}
-                  </Text>
-                </View>
-                <View style={styles.rewardedGemTag}>
-                  <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
-                  <Text style={styles.rewardedGemText}>+{rewardedGems.gemsPerAd}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -1205,30 +1172,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
-  rewardedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: TacticalTheme.panel,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: TacticalTheme.accent,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-    gap: 12,
-  },
-  rewardedCardDisabled: {
-    opacity: 0.55,
-    borderColor: TacticalTheme.border,
-  },
-  rewardedIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: TacticalTheme.panelAlt,
-  },
   rewardedTextWrap: { flex: 1 },
   rewardedTitle: {
     color: TacticalTheme.white,
@@ -1239,20 +1182,6 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
-  },
-  rewardedGemTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: TacticalTheme.panelAlt,
-  },
-  rewardedGemText: {
-    color: TacticalTheme.gem,
-    fontWeight: '800',
-    fontSize: 13,
   },
   sectionTitle: {
     color: TacticalTheme.text,
@@ -1298,6 +1227,10 @@ const styles = StyleSheet.create({
   startingCoinsBuy: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-end',
+    marginLeft: 'auto',
+    minWidth: 72,
     gap: 6,
     backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
