@@ -87,4 +87,33 @@ Tier files: `_t0` = level 0, `_t1` = levels 1-2, `_t2` = level 3+ (see `towerArt
 | `frontend/assets/images/adaptive-icon.png` | 512×512 | Android adaptive foreground 512x512 (full-bleed) |
 | `frontend/assets/images/favicon.png` | 48×48 | Web favicon 48x48 |
 
+
+## Map backgrounds (fixed-path arenas)
+
+One hand-painted background per fixed-path arena map (`ARENA_MAP_LIST` in `frontend/src/constants/arenaMaps.ts`). Free Play (`classic`) has a dynamic path and no painted background; keep the tiled terrain there.
+
+Rendering contract:
+
+- Each image is exactly **64 px per grid cell**: width = `gridCols × 64`, height = `gridRows × 64`. Its aspect ratio is therefore exactly `gridCols : gridRows`, the same as the board (`gridCols × cellSize` by `gridRows × cellSize`, times the zoom scale).
+- Draw it as the bottom layer of the board, filling the board exactly: `<Image source={...} style={{ position: 'absolute', left: 0, top: 0, width: boardWidth, height: boardHeight }} resizeMode="stretch" />`. Because the aspects match, `stretch` and `cover` give the same result; no cropping or letterboxing.
+- Grid cell `(x, y)` (column x, row y, origin top-left, same as `route` / `spawnPoint` / `basePosition`) covers image pixels `[x·64, (x+1)·64) × [y·64, (y+1)·64)`, i.e. on screen `[x·s, (x+1)·s) × [y·s, (y+1)·s)` with `s = scaledCellSize`.
+- The painted road covers every cell in that map's `route`; every other cell is open ground with no trees, boulders or other tall objects, so towers can sit on any of them. When the background is shown, the per-cell floor/path fills (`mapTheme.floor` / `path`) should be transparent; keep the placement preview, range rings and spawn/base markers on top.
+- Where a route ends on a board edge the road runs off that edge. The road may be slightly narrower than a full cell, with soft edges; enemies still walk the cell centres.
+- Images are baked for the current routes. If a route in `arenaMaps.ts` changes, its background must be regenerated.
+
+| File | Size (px) | Grid | Depicts |
+| --- | --- | --- | --- |
+| `frontend/assets/art/maps/ash_pass.jpg` | 1024×1280 | 16×20 | Ash Pass: Cinder fields: cobble-and-dirt road, olive grass with grey ash drifts and ember cracks |
+| `frontend/assets/art/maps/sunken_mire.jpg` | 896×1408 | 14×22 | Sunken Mire: Swamp: muddy plank road over mossy teal-green marsh grass with small puddles (composited fallback) |
+| `frontend/assets/art/maps/obsidian_spiral.jpg` | 1152×1152 | 18×18 | Obsidian Spiral: Pale flagstone spiral road, mossy grass with small obsidian shards |
+| `frontend/assets/art/maps/grave_circuit.jpg` | 1088×1216 | 17×19 | Grave Circuit: Old graveyard field: grey cobblestone road, misty moonlit grass, fallen leaves, scattered bones |
+| `frontend/assets/art/maps/raven_choke.jpg` | 960×1344 | 15×21 | Raven Choke: Raven forest: dirt road with stone kerbs, forest grass with autumn leaves and raven feathers |
+| `frontend/assets/art/maps/crypt_serpent.jpg` | 1024×1408 | 16×22 | Crypt Serpent: Crypt grounds: bone-white flagstone road, dark moss grass, teal moonlight and mist |
+| `frontend/assets/art/maps/shadow_fen.jpg` | 1088×1280 | 17×20 | Shadow Fen: Dark marsh: mud road with boardwalk planks, olive fen grass, low fog |
+| `frontend/assets/art/maps/void_switchback.jpg` | 960×1472 | 15×23 | Void Switchback: Frozen highland: snow-rimmed cobble road, blue-green grass with snow patches |
+| `frontend/assets/art/maps/iron_widow.jpg` | 1152×1216 | 18×19 | Iron Widow: Mining trench: iron-grey cobble road with riveted plates, rust-red soil and grass |
+| `frontend/assets/art/maps/dusk_causeway.jpg` | 1024×1344 | 16×21 | Dusk Causeway: Desert causeway: sandstone slab road, golden sand and cracked earth |
+| `frontend/assets/art/maps/cinder_ridge.jpg` | 1024×1152 | 16×18 | Cinder Ridge: Burnt ridge: grey cobblestone road, scorched grass with charred ember patches |
+| `frontend/assets/art/maps/gale_bastion.jpg` | 896×1280 | 14×20 | Gale Bastion: Windswept meadow: pebbled dirt road, lush green grass with wildflowers |
+
 Sources and processing scripts live outside the repo (generation sheets, background removal with rembg `isnet-general-use`, trimming, seamless tiling).
