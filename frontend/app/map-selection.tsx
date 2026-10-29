@@ -13,6 +13,7 @@ import {
 import { TacticalTheme } from '../src/theme/colors';
 import { DIFFICULTY_MODES, getDifficultyModifiers } from '../src/logic/difficulty';
 import { uiArt } from '../src/art/sprites';
+import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
 
 const MapCard = ({
   map,
@@ -77,6 +78,9 @@ export default function MapSelectionScreen() {
     syncMapUnlocksFromWaveProgress,
     difficultyMode,
     setDifficultyMode,
+    arenaExpansions,
+    selectedArenaSize,
+    setSelectedArenaSize,
   } = usePlayerStore();
 
   const unlockedMapIds = usePlayerStore((s) => s.unlockedMapIds);
@@ -169,6 +173,14 @@ export default function MapSelectionScreen() {
         })}
       </View>
       <Text style={styles.diffBlurb}>{getDifficultyModifiers(difficultyMode).blurb}</Text>
+      <View style={styles.arenaPicker}>
+        <Text style={styles.arenaPickerTitle}>Free Play size</Text>
+        <ArenaSizePicker
+          owned={arenaExpansions}
+          selected={selectedArenaSize}
+          onSelect={setSelectedArenaSize}
+        />
+      </View>
 
       <FlatList
         data={GAME_MAPS}
@@ -226,6 +238,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  arenaPicker: { paddingHorizontal: 16, paddingBottom: 4 },
+  arenaPickerTitle: {
+    color: TacticalTheme.text,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   title: { color: TacticalTheme.text, fontSize: 20, fontWeight: '800' },
   gemWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },

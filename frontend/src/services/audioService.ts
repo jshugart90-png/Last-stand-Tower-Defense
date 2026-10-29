@@ -1,5 +1,6 @@
 /**
- * Original procedural SFX and music (see docs/ASSETS.md).
+ * Original procedural SFX and music, plus two Kenney CC0 UI taps.
+ * Sources and licenses: frontend/assets/audio/LICENSES.md.
  *
  * iOS silent switch: playsInSilentModeIOS is true, so the game is audible with
  * the ringer off. The in-game mute and sliders are the controls. Music pauses
@@ -14,7 +15,7 @@ import { usePlayerStore } from '../stores/playerStore';
 import { mixEqualPower, musicGain, sfxGain } from '../logic/audioMix';
 
 export type SfxName = 'mission' | 'combo' | 'chest' | 'record';
-export type MusicTrack = 'menu' | 'battle' | 'boss' | 'defeat';
+export type MusicTrack = 'menu' | 'battle' | 'battle2' | 'boss' | 'defeat';
 
 const SAMPLE_RATE = 22050;
 const BYTES_PER_SAMPLE = 2;
@@ -113,24 +114,38 @@ function noiseBurst(ms: number, freq: number, amount: number): Float32Array {
   return out;
 }
 
+function sweep(fromHz: number, toHz: number, ms: number, noiseAmt: number): Float32Array {
+  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i / Math.max(1, n - 1);
+    const freq = fromHz + (toHz - fromHz) * p;
+    const env = Math.sin(Math.PI * p) * (1 - p * 0.25);
+    out[i] = Math.sin(2 * Math.PI * freq * (i / SAMPLE_RATE)) * 0.55 * env + noise() * noiseAmt * env;
+  }
+  return out;
+}
+
 function buildShot(kind: 'mg' | 'sniper' | 'splash' | 'freeze' | 'missile' | 'laser' | 'tesla' | 'flak' | 'cannon'): Float32Array {
   switch (kind) {
     case 'sniper':
-      return noiseBurst(180, 980, 0.28);
-    case 'splash':
-    case 'missile':
+      return noiseBurst(180, 980, 0.22);
     case 'cannon':
-      return noiseBurst(220, kind === 'cannon' ? 140 : 220, 0.45);
+      return noiseBurst(280, 70, 0.55);
+    case 'missile':
+      return sweep(180, 740, 220, 0.18);
+    case 'splash':
+      return noiseBurst(200, 160, 0.5);
     case 'freeze':
-      return tone(880, 90, true);
+      return sweep(1400, 520, 140, 0.04);
     case 'laser':
       return tone(1480, 70, true);
     case 'tesla':
-      return noiseBurst(90, 640, 0.35);
+      return noiseBurst(90, 1800, 0.22);
     case 'flak':
-      return noiseBurst(120, 420, 0.4);
+      return noiseBurst(70, 1100, 0.32);
     default:
-      return noiseBurst(60, 520, 0.3);
+      return noiseBurst(55, 620, 0.22);
   }
 }
 
@@ -139,7 +154,15 @@ function buildImpact(): Float32Array {
 }
 
 function buildDeath(): Float32Array {
-  return noiseBurst(160, 180, 0.4);
+  return noiseBurst(160, 140, 0.42);
+}
+
+function buildDeathPop(): Float32Array {
+  return tone(520, 90, true);
+}
+
+function buildDeathCrunch(): Float32Array {
+  return noiseBurst(120, 90, 0.62);
 }
 
 function buildBuild(): Float32Array {
@@ -155,84 +178,144 @@ function buildUpgrade(): Float32Array {
   return out;
 }
 
-function buildWave(): Float32Array {
-  const notes = [392, 494, 587];
-  const n = Math.floor(SAMPLE_RATE * 0.7);
-  const out = new Float32Array(n);
-  notes.forEach((f, idx) => {
-    const start = Math.floor(idx * 0.18 * SAMPLE_RATE);
-    const len = Math.floor(0.28 * SAMPLE_RATE);
-    for (let i = 0; i < len && start + i < n; i++) {
-      const env = Math.sin((Math.PI * i) / len);
-      out[start + i] += Math.sin((2 * Math.PI * f * i) / SAMPLE_RATE) * 0.4 * env;
+function brass(out: Float32Array, start: number, len: number, freq: number, amp: number) {
+  for (let i = 0; i < len && start + i < out.length; i++) {
+    const t = i / SAMPLE_RATE;
+    const env = Math.sin(Math.PI * Math.min(1, i / (len * 0.2))) * Math.pow(1 - i / len, 0.45);
+    let s = 0;
+    const weights = [1, 0.55, 0.32, 0.18, 0.1];
+    for (let h = 0; h < weights.length; h++) {
+      s += Math.sin(2 * Math.PI * freq * (h + 1) * t) * weights[h];
     }
-  });
+    out[start + i] += s * env * amp;
+  }
+}
+
+function buildWave(): Float32Array {
+  const n = Math.floor(SAMPLE_RATE * 0.95);
+  const out = new Float32Array(n);
+  brass(out, 0, Math.floor(SAMPLE_RATE * 0.42), 349.23, 0.22);
+  brass(out, Math.floor(SAMPLE_RATE * 0.08), Math.floor(SAMPLE_RATE * 0.5), 523.25, 0.16);
+  brass(out, Math.floor(SAMPLE_RATE * 0.48), Math.floor(SAMPLE_RATE * 0.4), 659.25, 0.14);
   return out;
 }
 
 function buildWin(): Float32Array {
-  const notes = [523, 659, 784, 1046];
-  const n = Math.floor(SAMPLE_RATE * 0.9);
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  const n = Math.floor(SAMPLE_RATE * 1.15);
   const out = new Float32Array(n);
   notes.forEach((f, idx) => {
-    const start = Math.floor(idx * 0.16 * SAMPLE_RATE);
-    const len = Math.floor(0.28 * SAMPLE_RATE);
-    for (let i = 0; i < len && start + i < n; i++) {
-      const env = Math.sin((Math.PI * i) / len);
-      out[start + i] += Math.sin((2 * Math.PI * f * i) / SAMPLE_RATE) * 0.35 * env;
-    }
+    brass(out, Math.floor(idx * 0.16 * SAMPLE_RATE), Math.floor(0.34 * SAMPLE_RATE), f, 0.16);
   });
+  const chord = Math.floor(0.62 * SAMPLE_RATE);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 523.25, 0.12);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 659.25, 0.1);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 783.99, 0.1);
   return out;
 }
 
 function buildLose(): Float32Array {
-  const notes = [392, 349, 294, 220];
-  const n = Math.floor(SAMPLE_RATE * 1.1);
+  const n = Math.floor(SAMPLE_RATE * 1.25);
   const out = new Float32Array(n);
+  brass(out, 0, Math.floor(0.22 * SAMPLE_RATE), 90, 0.2);
+  const notes = [392, 349.23, 293.66, 220];
   notes.forEach((f, idx) => {
-    const start = Math.floor(idx * 0.2 * SAMPLE_RATE);
-    const len = Math.floor(0.32 * SAMPLE_RATE);
-    for (let i = 0; i < len && start + i < n; i++) {
-      const env = Math.pow(1 - i / len, 0.6);
-      out[start + i] += Math.sin((2 * Math.PI * f * i) / SAMPLE_RATE) * 0.4 * env;
-    }
+    brass(out, Math.floor(idx * 0.22 * SAMPLE_RATE), Math.floor(0.36 * SAMPLE_RATE), f, 0.14);
   });
   return out;
 }
 
-function buildMusic(track: 'menu' | 'battle' | 'boss' | 'defeat'): Float32Array {
-  const seconds = track === 'defeat' ? 3.2 : 8;
+function loopSeam(out: Float32Array) {
+  const fade = Math.floor(SAMPLE_RATE * 0.06);
+  const n = out.length;
+  for (let i = 0; i < fade && i < n; i++) {
+    const w = i / fade;
+    const tail = out[n - fade + i];
+    out[i] = out[i] * w + tail * (1 - w);
+  }
+}
+
+/** Four looping beds plus a short defeat sting. All original synthesis, no samples on disk. */
+function buildMusic(track: MusicTrack): Float32Array {
+  const seconds = track === 'defeat' ? 4 : 8;
   const n = Math.floor(SAMPLE_RATE * seconds);
   const out = new Float32Array(n);
-  const scale =
-    track === 'boss'
-      ? [110, 130.81, 146.83, 174.61]
-      : track === 'battle'
-        ? [146.83, 174.61, 196, 233.08]
-        : track === 'defeat'
-          ? [196, 174.61, 146.83, 130.81]
-          : [220, 246.94, 293.66, 329.63];
-  const step = track === 'boss' ? 0.45 : track === 'battle' ? 0.34 : track === 'defeat' ? 0.55 : 0.5;
-  const root = scale[0] / 2;
-  for (let i = 0; i < n; i++) {
-    const t = i / SAMPLE_RATE;
-    out[i] += Math.sin(2 * Math.PI * root * t) * 0.16;
-    out[i] += Math.sin(2 * Math.PI * root * 2 * t) * 0.04;
-    const note = scale[Math.floor(t / step) % scale.length];
-    const local = (t % step) / step;
-    const env = Math.sin(Math.PI * Math.min(1, local)) * (1 - local * 0.35);
-    out[i] += Math.sin(2 * Math.PI * note * t) * 0.2 * env;
-    out[i] += Math.sin(2 * Math.PI * note * 2 * t) * 0.05 * env;
-    if (track !== 'menu' && local < 0.03) out[i] += noise() * 0.03;
-  }
-  if (track !== 'defeat') {
-    const fade = Math.floor(SAMPLE_RATE * 0.04);
-    for (let i = 0; i < fade; i++) {
-      const w = i / fade;
-      const tail = out[n - fade + i];
-      out[i] = out[i] * w + tail * (1 - w);
+
+  if (track === 'menu') {
+    // Heroic home theme in D major. Slow horn fifths, no percussion.
+    const melody = [293.66, 369.99, 440, 587.33, 493.88, 440, 369.99, 293.66];
+    for (let i = 0; i < n; i++) {
+      const t = i / SAMPLE_RATE;
+      out[i] += Math.sin(2 * Math.PI * 73.42 * t) * 0.14;
+      out[i] += Math.sin(2 * Math.PI * 110 * t) * 0.06;
     }
+    melody.forEach((freq, idx) => {
+      const start = Math.floor(idx * SAMPLE_RATE);
+      brass(out, start, Math.floor(SAMPLE_RATE * 0.95), freq, 0.11);
+      brass(out, start, Math.floor(SAMPLE_RATE * 0.95), freq * (2 / 3), 0.05);
+    });
+    loopSeam(out);
+    return out;
   }
+
+  if (track === 'battle') {
+    // Driving A minor ostinato.
+    const ostinato = [220, 261.63, 329.63, 392, 329.63, 261.63, 246.94, 220];
+    for (let i = 0; i < n; i++) {
+      const t = i / SAMPLE_RATE;
+      const pulse = Math.pow(Math.max(0, Math.sin(2 * Math.PI * 2.5 * t)), 8);
+      out[i] += Math.sin(2 * Math.PI * 55 * t) * (0.12 + pulse * 0.08);
+      if (t % 0.4 < 0.02) out[i] += noise() * 0.05;
+    }
+    const step = 0.25;
+    for (let idx = 0; idx < seconds / step; idx++) {
+      const freq = ostinato[idx % ostinato.length];
+      brass(out, Math.floor(idx * step * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.22), freq, 0.08);
+    }
+    loopSeam(out);
+    return out;
+  }
+
+  if (track === 'battle2') {
+    // Brighter march in E mixolydian. Different tempo and register from battle.
+    const melody = [329.63, 369.99, 415.3, 493.88, 440, 369.99, 329.63, 246.94];
+    for (let i = 0; i < n; i++) {
+      const t = i / SAMPLE_RATE;
+      out[i] += Math.sin(2 * Math.PI * 82.41 * t) * 0.12;
+      const beat = t % 0.556;
+      if (beat > 0.26 && beat < 0.3) out[i] += noise() * 0.07;
+    }
+    melody.forEach((freq, idx) => {
+      const start = Math.floor(idx * SAMPLE_RATE);
+      brass(out, start, Math.floor(SAMPLE_RATE * 0.85), freq, 0.1);
+      brass(out, start, Math.floor(SAMPLE_RATE * 0.4), freq * 1.5, 0.04);
+    });
+    loopSeam(out);
+    return out;
+  }
+
+  if (track === 'boss') {
+    // Low drone, tritone, and a slow heartbeat.
+    for (let i = 0; i < n; i++) {
+      const t = i / SAMPLE_RATE;
+      out[i] += Math.sin(2 * Math.PI * 55 * t) * 0.16;
+      out[i] += Math.sin(2 * Math.PI * 77.78 * t) * 0.1;
+      out[i] += Math.sin(2 * Math.PI * 82.41 * t) * 0.04;
+      const beat = t % 0.75;
+      if (beat < 0.05 || (beat > 0.16 && beat < 0.2)) out[i] += noise() * 0.12;
+    }
+    const stabs = [369.99, 349.23, 311.13, 369.99];
+    stabs.forEach((freq, idx) => {
+      brass(out, Math.floor((0.4 + idx * 1.8) * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.35), freq, 0.07);
+    });
+    loopSeam(out);
+    return out;
+  }
+
+  const fall = [196, 174.61, 146.83, 130.81, 110];
+  fall.forEach((freq, idx) => {
+    brass(out, Math.floor(idx * 0.7 * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.8), freq, 0.12);
+  });
   return out;
 }
 
@@ -240,10 +323,12 @@ function samplesFor(key: string): Float32Array {
   const hit = sampleCache.get(key);
   if (hit) return hit;
   let built: Float32Array;
-  if (key.startsWith('music_')) built = buildMusic(key.slice(6) as 'menu' | 'battle' | 'boss' | 'defeat');
+  if (key.startsWith('music_')) built = buildMusic(key.slice(6) as MusicTrack);
   else if (key.startsWith('shot_')) built = buildShot(key.slice(5) as 'mg');
   else if (key === 'impact') built = buildImpact();
   else if (key === 'death') built = buildDeath();
+  else if (key === 'death_b') built = buildDeathPop();
+  else if (key === 'death_c') built = buildDeathCrunch();
   else if (key === 'build') built = buildBuild();
   else if (key === 'upgrade') built = buildUpgrade();
   else if (key === 'wave') built = buildWave();
@@ -573,11 +658,12 @@ export function playProjectileImpact(proj: { towerType: TowerType }): void {
 
 export function playEnemyDeathBurst(killCount: number): void {
   if (!gameplaySfxArmed || killCount <= 0 || playerAudio().sfx <= 0.001) return;
+  const key = killCount % 3 === 1 ? 'death_b' : killCount % 3 === 2 ? 'death_c' : 'death';
   const layers = Math.min(2, killCount);
   for (let i = 0; i < layers; i++) {
     setTimeout(() => {
       if (!gameplaySfxArmed) return;
-      void replayKey('death', 0.75, true);
+      void replayKey(i === 0 ? key : 'death', 0.75, true);
     }, i * 50);
   }
 }

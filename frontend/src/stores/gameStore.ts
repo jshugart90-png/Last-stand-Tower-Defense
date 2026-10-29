@@ -30,6 +30,7 @@ import {
   CLASSIC_MAP_ID,
   type ArenaMapTheme,
 } from '../constants/arenaMaps';
+import { gridForArenaSize } from '../logic/arenaSize';
 import {
   playWeaponFireSound,
   playProjectileImpact,
@@ -429,7 +430,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   startGame: (unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions, mapId) => {
     const def = getArenaMap(mapId);
     const useArena = def && def.route.length >= 2;
-    const baseConfig = GAME_CONFIG;
     const coinBonus =
       usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
 
@@ -488,9 +488,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return;
     }
 
-    const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
-    const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
-    const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    const grid = gridForArenaSize(arenaExpansions);
+    const gridCols = grid.cols;
+    const gridRows = grid.rows;
+    const cellSize = grid.cell;
 
     const spawnPoint = { x: 0, y: 0 };
     const basePosition = {
@@ -1562,7 +1563,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   
   // Resume from saved game
   resumeFromSavedGame: (savedGame, playerData) => {
-    const baseConfig = GAME_CONFIG;
     const restoredTowers: PlacedTower[] = savedGame.towers.map((t) => ({
       ...t,
       path: normalizeTowerPath(t.path),
@@ -1625,8 +1625,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return;
     }
 
-    const cellSize =
-      savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    const cellSize = gridForArenaSize(savedGame.arenaExpansions).cell;
 
     const spawnPoint = { x: 0, y: 0 };
     const basePosition = {

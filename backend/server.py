@@ -832,6 +832,22 @@ async def claim_reward(reward: RewardClaim):
         logger.error(f"Error claiming reward: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+# Non-consumable arena tiers. The legacy consumable id still adds one size.
+ARENA_TIER_BY_PRODUCT = {
+    "com.horseshoeroundme.laststandtowerdefense.arena1": 1,
+    "com.horseshoeroundme.laststandtowerdefense.arena2": 2,
+    "com.horseshoeroundme.laststandtowerdefense.arena3": 3,
+}
+
+
+def arena_owned_after_purchase(current: int, item_id: Optional[str]) -> int:
+    owned = max(0, int(current or 0))
+    tier = ARENA_TIER_BY_PRODUCT.get(item_id or "")
+    if tier:
+        return max(owned, tier)
+    return owned + 1
+
+
 # ==================== Purchase Routes ====================
 
 @api_router.post("/purchases", response_model=dict)
@@ -884,7 +900,10 @@ async def process_purchase(purchase: PurchaseRequest):
         if purchase.item_type == "premium":
             update_data["premium"] = True
         elif purchase.item_type == "arena_expansion":
-            update_data["arena_expansions"] = int(player.get("arena_expansions", 0) or 0) + 1
+            update_data["arena_expansions"] = arena_owned_after_purchase(
+                int(player.get("arena_expansions", 0) or 0),
+                purchase.item_id,
+            )
         elif purchase.item_type == "gems" and purchase.gems_amount:
             # IAP gem pack purchase - add gems to balance
             new_gems = player.get("gems", 0) + purchase.gems_amount

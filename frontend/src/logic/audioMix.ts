@@ -22,3 +22,19 @@ export function sfxGain(enabled: boolean, volume: number): number {
   if (!enabled) return 0;
   return clamp01(volume);
 }
+
+export type BattleMusicId = 'battle' | 'battle2' | 'boss';
+
+/** Boss bed only while a boss wave is running. Otherwise two battle tracks alternate by map and wave. */
+export function selectBattleTrack(
+  wave: number,
+  mapId: string | null | undefined,
+  waveInProgress: boolean
+): BattleMusicId {
+  if (waveInProgress && wave > 0 && wave % 10 === 0) return 'boss';
+  let salt = 0;
+  const id = mapId ?? '';
+  for (let i = 0; i < id.length; i++) salt += id.charCodeAt(i);
+  const step = salt + Math.max(0, Math.floor(wave));
+  return step % 2 === 0 ? 'battle' : 'battle2';
+}

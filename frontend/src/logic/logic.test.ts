@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mixEqualPower, musicGain, sfxGain } from './audioMix';
+import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix';
+import {
+  ARENA_TIER_PRODUCT_IDS,
+  LEGACY_ARENA_PRODUCT_ID,
+  applyArenaProduct,
+  changeArenaSizeDuringSavedRun,
+  clampSelectedArenaSize,
+  gridForArenaSize,
+  ownedAfterRestore,
+  selectedAfterUnlock,
+  shouldApplyPendingArenaPurchase,
+} from './arenaSize';
 import {
   computeHitDamage,
   nearestOtherIds,
@@ -36,6 +47,61 @@ import {
   towerArtTier,
 } from './artMap';
 
+describe('arena size', () => {
+  it('buys a tier up to that size and ignores unknown products', () => {
+    assert.equal(applyArenaProduct(0, ARENA_TIER_PRODUCT_IDS[1]), 1);
+    assert.equal(applyArenaProduct(1, ARENA_TIER_PRODUCT_IDS[3]), 3);
+    assert.equal(applyArenaProduct(3, ARENA_TIER_PRODUCT_IDS[1]), 3);
+    assert.equal(applyArenaProduct(2, LEGACY_ARENA_PRODUCT_ID), 3);
+    assert.equal(applyArenaProduct(0, 'com.laststanddefense.premium_bundle'), null);
+    assert.equal(selectedAfterUnlock(0, 0, 2), 2);
+    assert.equal(selectedAfterUnlock(1, 3, 3), 1);
+  });
+
+  it('restores the highest non-consumable tier and keeps a save', () => {
+    assert.equal(
+      ownedAfterRestore(0, [ARENA_TIER_PRODUCT_IDS[2], ARENA_TIER_PRODUCT_IDS[1]]),
+      2
+    );
+    assert.equal(ownedAfterRestore(3, [ARENA_TIER_PRODUCT_IDS[1]]), 3);
+    assert.equal(ownedAfterRestore(1, [LEGACY_ARENA_PRODUCT_ID]), 1);
+    assert.equal(ownedAfterRestore(0, [LEGACY_ARENA_PRODUCT_ID, 'com.laststanddefense.premium_bundle']), 0);
+  });
+
+  it('keeps an old expansion level when the selected size was never stored', () => {
+    assert.equal(clampSelectedArenaSize(undefined, 2), 2);
+    assert.equal(clampSelectedArenaSize(null, 2), 2);
+    assert.equal(clampSelectedArenaSize(1, 2), 1);
+    assert.equal(clampSelectedArenaSize(5, 2), 2);
+    assert.deepEqual(gridForArenaSize(0), { cols: 10, rows: 14, cell: 32 });
+    assert.deepEqual(gridForArenaSize(3), { cols: 16, rows: 20, cell: 30 });
+  });
+
+  it('changes the next field without rewriting a saved run', () => {
+    const saved = { gridCols: 14, gridRows: 18, arenaExpansions: 2, coins: 40, towers: [{ id: 'a' }] };
+    const smaller = changeArenaSizeDuringSavedRun(saved, 0, 3);
+    assert.equal(smaller.selected, 0);
+    assert.equal(smaller.saved.gridCols, 14);
+    assert.equal(smaller.saved.gridRows, 18);
+    assert.equal(smaller.saved.arenaExpansions, 2);
+    assert.equal(smaller.saved.coins, 40);
+    assert.equal(smaller.saved.towers, saved.towers);
+    assert.notEqual(smaller.saved, saved);
+    assert.equal(saved.gridCols, 14);
+    const clamped = changeArenaSizeDuringSavedRun(saved, 9, 1);
+    assert.equal(clamped.selected, 1);
+    assert.equal(clamped.saved.arenaExpansions, 2);
+  });
+
+  it('grants a pending consumable once per transaction', () => {
+    assert.equal(shouldApplyPendingArenaPurchase(LEGACY_ARENA_PRODUCT_ID, 'tx1', []), true);
+    assert.equal(shouldApplyPendingArenaPurchase(LEGACY_ARENA_PRODUCT_ID, 'tx1', ['tx1']), false);
+    assert.equal(shouldApplyPendingArenaPurchase(ARENA_TIER_PRODUCT_IDS[2], 'tx2', []), true);
+    assert.equal(shouldApplyPendingArenaPurchase('com.laststanddefense.gems_100', 'tx', []), false);
+    assert.equal(shouldApplyPendingArenaPurchase(LEGACY_ARENA_PRODUCT_ID, '  ', []), false);
+  });
+});
+
 describe('audio mix', () => {
   it('crossfades from outgoing to incoming', () => {
     const start = mixEqualPower(0);
@@ -51,6 +117,16 @@ describe('audio mix', () => {
     assert.equal(musicGain(false, 1), 0);
     assert.equal(sfxGain(true, 2), 1);
     assert.equal(sfxGain(true, -1), 0);
+  });
+
+  it('rotates battle tracks and saves the boss bed for a live boss wave', () => {
+    const first = selectBattleTrack(1, 'classic', false);
+    const second = selectBattleTrack(2, 'classic', false);
+    assert.notEqual(first, second);
+    assert.notEqual(first, 'boss');
+    assert.equal(selectBattleTrack(10, 'classic', true), 'boss');
+    assert.notEqual(selectBattleTrack(10, 'classic', false), 'boss');
+    assert.equal(selectBattleTrack(3, 'obsidian_spiral', true), selectBattleTrack(3, 'obsidian_spiral', false));
   });
 });
 

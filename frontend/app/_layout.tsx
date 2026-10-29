@@ -38,7 +38,10 @@ export default function RootLayout() {
           // audio is optional; never crash launch
         }
         try {
-          const { initializeIAP } = await import('../src/services/iapService');
+          const { initializeIAP, setPendingPurchaseHandler } = await import('../src/services/iapService');
+          setPendingPurchaseHandler((purchase) => {
+            void import('../src/services/arenaPurchase').then((mod) => mod.grantPendingArenaPurchase(purchase));
+          });
           await initializeIAP();
         } catch {
           // IAP optional; never crash launch

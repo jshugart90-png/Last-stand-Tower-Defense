@@ -11,7 +11,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
+import { usePlayerStore } from '../src/stores/playerStore';
+import {
+  ARENA_TIER_COUNT,
+  ARENA_TIER_PRICE_USD,
+  arenaTierProductId,
+  gridForArenaSize,
+  tierFromArenaProductId,
+  type ArenaTier,
+} from '../src/logic/arenaSize';
+import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
 import { isBackendConfigured, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { syncPurchaseWithBackend } from '../src/utils/iapBackend';
 import {
@@ -294,54 +303,65 @@ export default function ShopScreen() {
     }
   };
 
-  // Handle arena expansion (real money via IAP)
-  const handlePurchaseArenaExpansion = async () => {
+  const handlePurchaseArenaTier = async (tier: ArenaTier) => {
+    if (playerStore.arenaExpansions >= tier) {
+      playerStore.setSelectedArenaSize(tier);
+      return;
+    }
+    const productId = arenaTierProductId(tier);
+    const price = ARENA_TIER_PRICE_USD.toFixed(2);
+    const grid = gridForArenaSize(tier);
     Alert.alert(
-      'Arena Expansion - $2.99',
-      `Purchase arena expansion for $${ARENA_EXPANSION_PRICE_USD}?\n\nThis will add 1 row of cells to each side of your battlefield.\n\nCurrent expansions: ${playerStore.arenaExpansions}`,
+      `Arena Size ${tier} — $${price}`,
+      `Unlocks Free Play fields from the original up to ${grid.cols}×${grid.rows}. You can switch back to a smaller field any time.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: `Buy for $${ARENA_EXPANSION_PRICE_USD}`,
+          text: `Buy for $${price}`,
           onPress: async () => {
-            if (isIAPAvailable() && isIAPInitialized()) {
-              // Real IAP flow
-              setPurchaseLoading(true);
-              try {
-                const result = await requestPurchase(IAP_PRODUCTS.ARENA_EXPANSION);
-                if (result.success && result.purchase) {
-                  const playerId = playerStore.playerId;
-                  try {
-                    if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
-                      await syncPurchaseWithBackend({
-                        playerId,
-                        itemType: 'arena_expansion',
-                        itemId: IAP_PRODUCTS.ARENA_EXPANSION,
-                        receipt: result.receipt,
-                        purchaseToken: result.purchaseToken,
-                        transactionId: result.transactionId,
-                      });
-                    }
-                    playerStore.addArenaExpansion();
-                    await completePurchase(result.purchase, IAP_PRODUCTS.ARENA_EXPANSION);
-                  } catch {
-                    Alert.alert(
-                      'Purchase Recorded',
-                      'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
-                    );
-                    return;
-                  }
-                  Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
-                } else if (result.error && result.error !== 'Purchase cancelled') {
-                  Alert.alert('Purchase Failed', result.error);
-                }
-              } catch {
-                Alert.alert('Error', 'Purchase failed. Please try again.');
-              } finally {
-                setPurchaseLoading(false);
-              }
-            } else {
+            if (!(isIAPAvailable() && isIAPInitialized())) {
               Alert.alert(STORE_UNAVAILABLE_TITLE, STORE_UNAVAILABLE_BODY);
+              return;
+            }
+            setPurchaseLoading(true);
+            try {
+              const result = await requestPurchase(productId);
+              if (result.success && result.purchase) {
+                const playerId = playerStore.playerId;
+                let synced = true;
+                try {
+                  if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+                    await syncPurchaseWithBackend({
+                      playerId,
+                      itemType: 'arena_expansion',
+                      itemId: productId,
+                      receipt: result.receipt,
+                      purchaseToken: result.purchaseToken,
+                      transactionId: result.transactionId,
+                    });
+                  }
+                } catch {
+                  synced = false;
+                }
+                playerStore.unlockArenaTier(tier);
+                if (result.transactionId) playerStore.rememberIapTransaction(result.transactionId);
+                await completePurchase(result.purchase, productId);
+                if (!synced) {
+                  Alert.alert(
+                    'Purchase Recorded',
+                    'The field size is unlocked on this device. Server sync failed — use Restore Purchases if you reinstall.',
+                  );
+                } else {
+                  const ownedGrid = gridForArenaSize(usePlayerStore.getState().selectedArenaSize);
+                  Alert.alert('Unlocked', `Free Play can use a ${ownedGrid.cols}×${ownedGrid.rows} field.`);
+                }
+              } else if (result.error && result.error !== 'Purchase cancelled') {
+                Alert.alert('Purchase Failed', result.error);
+              }
+            } catch {
+              Alert.alert('Error', 'Purchase failed. Please try again.');
+            } finally {
+              setPurchaseLoading(false);
             }
           },
         },
@@ -416,14 +436,51 @@ export default function ShopScreen() {
       try {
         const purchases = await restorePurchases();
         let restoredSomething = false;
+        const productIds = purchases
+          .map((purchase: { productId?: string; id?: string }) => String(purchase.productId || purchase.id || ''))
+          .filter((id: string) => id.length > 0);
+        const ownedBefore = playerStore.arenaExpansions;
+        const owned = playerStore.restoreArenaProducts(productIds);
+        if (owned > ownedBefore) restoredSomething = true;
 
         for (const purchase of purchases) {
-          if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
-            playerStore.addArenaExpansion();
-            restoredSomething = true;
-          } else if (purchase.productId === IAP_PRODUCTS.PREMIUM_BUNDLE) {
+          const productId = String(purchase.productId || purchase.id || '');
+          if (productId === IAP_PRODUCTS.PREMIUM_BUNDLE) {
+            if (!playerStore.premium) restoredSomething = true;
             playerStore.setPremium(true);
-            restoredSomething = true;
+          }
+          const tier = tierFromArenaProductId(productId);
+          const legacy = productId === IAP_PRODUCTS.ARENA_EXPANSION;
+          if (!tier && !legacy && productId !== IAP_PRODUCTS.PREMIUM_BUNDLE) continue;
+          const playerId = playerStore.playerId;
+          if ((tier || productId === IAP_PRODUCTS.PREMIUM_BUNDLE) && playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+            try {
+              await syncPurchaseWithBackend({
+                playerId,
+                itemType: tier ? 'arena_expansion' : 'premium',
+                itemId: productId,
+                receipt: purchase.transactionReceipt,
+                purchaseToken: purchase.purchaseToken,
+                transactionId: purchase.transactionId,
+              });
+            } catch {
+              // Local unlock already applied. The next restore can retry the server.
+            }
+          }
+          if (legacy) {
+            const tx = String(purchase.transactionId || purchase.originalTransactionIdentifierIOS || purchase.purchaseToken || '');
+            if (tx && !playerStore.hasProcessedIapTransaction(tx)) {
+              playerStore.addArenaExpansion();
+              playerStore.rememberIapTransaction(tx);
+              restoredSomething = true;
+            }
+          }
+          if (tier || legacy) {
+            try {
+              await completePurchase(purchase, productId);
+            } catch {
+              // Finish is best-effort. The unlock is already stored.
+            }
           }
         }
 
@@ -976,34 +1033,49 @@ export default function ShopScreen() {
         {/* Arena Tab */}
         {selectedTab === 'arena' && (
           <View>
-            <Text style={styles.sectionTitle}>Arena Expansion</Text>
+            <Text style={styles.sectionTitle}>Arena Size</Text>
             <Text style={styles.sectionSubtitle}>
-              Expand your battlefield for more tower placement options
+              Buy a size once, then pick any field from the original up to the largest you own.
             </Text>
-            
-            <View style={styles.arenaCard}>
+
+            <View style={styles.arenaCard} testID="arena-picker">
               <View style={styles.arenaInfo}>
                 <MaterialCommunityIcons name="arrow-expand-all" size={48} color="#9B59B6" />
                 <View style={styles.arenaDetails}>
-                  <Text style={styles.arenaTitle}>Expand Arena</Text>
+                  <Text style={styles.arenaTitle}>Free Play field</Text>
                   <Text style={styles.arenaDesc}>
-                    Current expansions: {playerStore.arenaExpansions}
+                    Owned: {playerStore.arenaExpansions === 0 ? 'Original' : `up to Size ${playerStore.arenaExpansions}`}
                   </Text>
                   <Text style={styles.arenaDesc}>
-                    Grid size: {10 + playerStore.arenaExpansions * 2} x {14 + playerStore.arenaExpansions * 2}
+                    Selected: {gridForArenaSize(playerStore.selectedArenaSize).cols}×{gridForArenaSize(playerStore.selectedArenaSize).rows}
                   </Text>
                 </View>
               </View>
-              
-              <TouchableOpacity
-                style={styles.arenaButton}
-                onPress={handlePurchaseArenaExpansion}
-              >
-                <Text style={styles.arenaPriceText}>${ARENA_EXPANSION_PRICE_USD}</Text>
-              </TouchableOpacity>
-              
+              <ArenaSizePicker
+                owned={playerStore.arenaExpansions}
+                selected={playerStore.selectedArenaSize}
+                onSelect={(size) => playerStore.setSelectedArenaSize(size)}
+              />
+              {Array.from({ length: ARENA_TIER_COUNT }, (_, i) => (i + 1) as ArenaTier)
+                .filter((tier) => playerStore.arenaExpansions < tier)
+                .map((tier) => {
+                  const grid = gridForArenaSize(tier);
+                  return (
+                    <TouchableOpacity
+                      key={tier}
+                      testID={`arena-buy-${tier}`}
+                      style={styles.arenaButton}
+                      onPress={() => handlePurchaseArenaTier(tier)}
+                      disabled={purchaseLoading}
+                    >
+                      <Text style={styles.arenaPriceText}>
+                        Arena Size {tier} · {grid.cols}×{grid.rows} · ${ARENA_TIER_PRICE_USD.toFixed(2)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               <Text style={styles.realMoneyNote}>
-                * Real money purchase (In-App Purchase)
+                Each size is a one-time purchase. Restore brings them back.
               </Text>
             </View>
             
@@ -1427,8 +1499,10 @@ const styles = StyleSheet.create({
   arenaButton: {
     backgroundColor: '#2ECC71',
     paddingVertical: 14,
+    paddingHorizontal: 10,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 8,
   },
   arenaPriceText: {
     color: '#fff',

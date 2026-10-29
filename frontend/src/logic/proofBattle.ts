@@ -56,7 +56,7 @@ export function seedProofBattle(mapId: string): void {
     [1, 2, 3, 5],
     live.towerUpgradeLevels,
     live.equippedSkins,
-    live.arenaExpansions,
+    live.selectedArenaSize,
     mapId
   );
   useGameStore.setState({ coins: 8000, currentWave: 9, baseHealth: 80 });

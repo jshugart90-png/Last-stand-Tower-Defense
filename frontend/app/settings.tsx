@@ -26,6 +26,7 @@ import {
 } from '../src/hooks/useApi';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
+import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
 
 const appVersionLabel =
   Constants.expoConfig?.version != null && String(Constants.expoConfig.version).length > 0
@@ -323,9 +324,16 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Arena Expansions</Text>
-            <Text style={styles.infoValue}>{playerStore.arenaExpansions}</Text>
+            <Text style={styles.infoLabel}>Arena sizes owned</Text>
+            <Text style={styles.infoValue}>
+              {playerStore.arenaExpansions === 0 ? 'Original' : `Up to Size ${playerStore.arenaExpansions}`}
+            </Text>
           </View>
+          <ArenaSizePicker
+            owned={playerStore.arenaExpansions}
+            selected={playerStore.selectedArenaSize}
+            onSelect={(size) => playerStore.setSelectedArenaSize(size)}
+          />
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Unlocked Towers</Text>

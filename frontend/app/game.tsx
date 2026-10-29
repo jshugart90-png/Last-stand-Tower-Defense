@@ -62,6 +62,7 @@ import { gameApi, analyticsApi, isServerBackedPlayerId } from '../src/hooks/useA
 import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx, playMusic } from '../src/services/audioService';
+import { selectBattleTrack } from '../src/logic/audioMix';
 import { isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
@@ -2549,7 +2550,7 @@ export default function GameScreen() {
         playerStore.unlockedSpeeds,
         playerStore.towerUpgradeLevels,
         playerStore.equippedSkins,
-        playerStore.arenaExpansions,
+        playerStore.selectedArenaSize,
         playerStore.currentMapId
       );
       registerRunStarted();
@@ -2598,7 +2599,7 @@ export default function GameScreen() {
       playerStore.unlockedSpeeds,
       playerStore.towerUpgradeLevels,
       playerStore.equippedSkins,
-      playerStore.arenaExpansions,
+      playerStore.selectedArenaSize,
       playerStore.currentMapId
     );
     registerRunStarted();
@@ -3172,12 +3173,8 @@ export default function GameScreen() {
 
   useEffect(() => {
     if (!isPlaying || isGameOver) return;
-    if (waveInProgress && currentWave > 0 && currentWave % 10 === 0) {
-      void playMusic('boss');
-      return;
-    }
-    void playMusic('battle');
-  }, [isPlaying, isGameOver, waveInProgress, currentWave]);
+    void playMusic(selectBattleTrack(currentWave, battleMapId, waveInProgress));
+  }, [isPlaying, isGameOver, waveInProgress, currentWave, battleMapId]);
 
   useEffect(() => {
     if (!isPlaying || isGameOver || playerStore.fieldBriefingSeen) return;

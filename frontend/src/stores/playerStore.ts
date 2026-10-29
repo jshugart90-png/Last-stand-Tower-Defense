@@ -48,6 +48,16 @@ import {
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../constants/sessionProgress';
 import { DEFAULT_PLAYER_LOGO_ID } from '../constants/logos';
+import {
+  applyArenaProduct,
+  arenaTierProductId,
+  changeArenaSizeDuringSavedRun,
+  clampSelectedArenaSize,
+  ownedAfterRestore,
+  ownedArenaTier,
+  selectedAfterUnlock,
+  type ArenaTier,
+} from '../logic/arenaSize';
 
 // Arena expansion is REAL MONEY - $2.99 per expansion
 export const ARENA_EXPANSION_PRICE_USD = 2.99;
@@ -162,7 +172,12 @@ interface PlayerState {
   
   // Purchases
   premium: boolean;
+  /** Highest arena size owned. Legacy saves stored this as the only size. */
   arenaExpansions: number;
+  /** Free Play size actually used. Always 0..arenaExpansions. */
+  selectedArenaSize: number;
+  /** Store transaction ids already granted, so a retried consumable cannot stack. */
+  processedIapTransactionIds: string[];
   
   // Settings
   soundEnabled: boolean;
@@ -285,6 +300,11 @@ interface PlayerActions {
   
   // Arena expansion (real money)
   addArenaExpansion: () => void;
+  unlockArenaTier: (tier: ArenaTier) => void;
+  setSelectedArenaSize: (size: number) => void;
+  restoreArenaProducts: (productIds: string[]) => number;
+  hasProcessedIapTransaction: (transactionId: string) => boolean;
+  rememberIapTransaction: (transactionId: string) => void;
 
   setCurrentMapId: (mapId: string) => void;
   isMapUnlocked: (mapId: string) => boolean;
@@ -394,6 +414,8 @@ const initialState: PlayerState = {
   equippedSkins: {},
   premium: false,
   arenaExpansions: 0,
+  selectedArenaSize: 0,
+  processedIapTransactionIds: [],
   soundEnabled: true,
   audioPrefsRevision: 1,
   sfxVolume: 0.9,
@@ -456,6 +478,8 @@ const playerPersistKeys = [
   'equippedSkins',
   'premium',
   'arenaExpansions',
+  'selectedArenaSize',
+  'processedIapTransactionIds',
   'soundEnabled',
   'audioPrefsRevision',
   'sfxVolume',
@@ -1074,9 +1098,52 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
 
     // Arena expansion (real money IAP)
     addArenaExpansion: () => {
-      set(state => ({
-        arenaExpansions: state.arenaExpansions + 1,
+      const ownedBefore = ownedArenaTier(get().arenaExpansions);
+      const next = applyArenaProduct(get().arenaExpansions, 'com.laststanddefense.arena_expansion');
+      if (next == null) return;
+      set({
+        arenaExpansions: next,
+        selectedArenaSize: selectedAfterUnlock(get().selectedArenaSize, ownedBefore, next),
+      });
+    },
+    unlockArenaTier: (tier) => {
+      const ownedBefore = ownedArenaTier(get().arenaExpansions);
+      const next = applyArenaProduct(get().arenaExpansions, arenaTierProductId(tier));
+      if (next == null) return;
+      set({
+        arenaExpansions: next,
+        selectedArenaSize: selectedAfterUnlock(get().selectedArenaSize, ownedBefore, next),
+      });
+    },
+    setSelectedArenaSize: (size) => {
+      const state = get();
+      if (state.savedGame) {
+        const next = changeArenaSizeDuringSavedRun(state.savedGame, size, state.arenaExpansions);
+        set({ selectedArenaSize: next.selected, savedGame: next.saved });
+        return;
+      }
+      set({ selectedArenaSize: clampSelectedArenaSize(size, state.arenaExpansions) });
+    },
+    restoreArenaProducts: (productIds) => {
+      const owned = ownedAfterRestore(get().arenaExpansions, productIds);
+      set((state) => ({
+        arenaExpansions: owned,
+        selectedArenaSize: clampSelectedArenaSize(state.selectedArenaSize, owned),
       }));
+      return owned;
+    },
+    hasProcessedIapTransaction: (transactionId) => {
+      const tx = transactionId.trim();
+      if (!tx) return false;
+      return get().processedIapTransactionIds.includes(tx);
+    },
+    rememberIapTransaction: (transactionId) => {
+      const tx = transactionId.trim();
+      if (!tx) return;
+      set((state) => {
+        if (state.processedIapTransactionIds.includes(tx)) return state;
+        return { processedIapTransactionIds: [...state.processedIapTransactionIds, tx].slice(-40) };
+      });
     },
 
     setCurrentMapId: (mapId) => set({ currentMapId: mapId }),
@@ -1209,6 +1276,17 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           typeof data.lifetimeEnemiesKilled === 'number'
             ? data.lifetimeEnemiesKilled
             : state.lifetimeEnemiesKilled,
+        arenaExpansions: Math.max(
+          ownedArenaTier(state.arenaExpansions),
+          ownedArenaTier(typeof data.arenaExpansions === 'number' ? data.arenaExpansions : 0)
+        ),
+        selectedArenaSize: clampSelectedArenaSize(
+          state.selectedArenaSize,
+          Math.max(
+            ownedArenaTier(state.arenaExpansions),
+            ownedArenaTier(typeof data.arenaExpansions === 'number' ? data.arenaExpansions : 0)
+          )
+        ),
       }));
     },
 
@@ -1283,6 +1361,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
             ? Math.min(COIN_INCOME_UPGRADE_MAX, Math.max(0, p.coinIncomeUpgradeLevel))
             : 0,
         currentMapId: p?.currentMapId ?? DEFAULT_MAP_ID,
+        arenaExpansions: ownedArenaTier(typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0),
+        selectedArenaSize: clampSelectedArenaSize(
+          p?.selectedArenaSize,
+          ownedArenaTier(typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0)
+        ),
+        processedIapTransactionIds: Array.isArray(p?.processedIapTransactionIds)
+          ? p.processedIapTransactionIds.filter((id) => typeof id === 'string' && id.length > 0).slice(-40)
+          : [],
         unlockedMapIds:
           Array.isArray(p?.unlockedMapIds) && p.unlockedMapIds.length > 0
             ? Array.from(new Set([DEFAULT_MAP_ID, ...p.unlockedMapIds]))
