@@ -7,6 +7,7 @@ name: iOS TestFlight
 #   APP_STORE_CONNECT_ISSUER_ID
 #   APP_STORE_CONNECT_API_KEY_BASE64   (.p8, base64)
 #   APPLE_TEAM_ID
+#   EXPO_PUBLIC_BACKEND_URL            (inlined into the release bundle)
 #
 # With those four, fastlane creates or fetches the Apple Distribution certificate
 # and the App Store provisioning profile (get_certificates / get_provisioning_profile)
@@ -35,6 +36,7 @@ jobs:
       PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
       PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      EXPO_PUBLIC_BACKEND_URL: ${{ secrets.EXPO_PUBLIC_BACKEND_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,6 +63,7 @@ jobs:
           check APP_STORE_CONNECT_ISSUER_ID "$ASC_ISSUER_ID" required
           check APP_STORE_CONNECT_API_KEY_BASE64 "$ASC_KEY_B64" required
           check APPLE_TEAM_ID "$APPLE_TEAM_ID" required
+          check EXPO_PUBLIC_BACKEND_URL "$EXPO_PUBLIC_BACKEND_URL" required
           echo "Optional override:"
           check IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64 "$P12_B64" optional
           check IOS_DISTRIBUTION_CERTIFICATE_PASSWORD "$P12_PASSWORD" optional
@@ -107,9 +110,21 @@ jobs:
           app.expo.ios = app.expo.ios || {};
           app.expo.ios.buildNumber = build;
           if (app.expo.android) app.expo.android.versionCode = 23000 + run;
+          const backend = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+          app.expo.extra = app.expo.extra || {};
+          app.expo.extra.EXPO_PUBLIC_BACKEND_URL = backend;
           fs.writeFileSync(path, JSON.stringify(app, null, 2) + '\n');
           console.log('ios buildNumber', build);
+          console.log('backend url', backend ? 'set' : 'empty');
           NODE
+
+      - name: Write the release backend URL
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'EXPO_PUBLIC_BACKEND_URL=%s\n' "$EXPO_PUBLIC_BACKEND_URL" > .env
+          echo "Wrote frontend/.env for the Metro release bundle."
 
       - name: Prebuild the iOS project
         working-directory: frontend
