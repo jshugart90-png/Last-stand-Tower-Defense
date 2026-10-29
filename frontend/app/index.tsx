@@ -11,8 +11,10 @@ import {
   AppState,
   Image,
   ImageBackground,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -269,6 +271,13 @@ export default function HomeScreen() {
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
+  const insets = useSafeAreaInsets();
+  const [homeFrame, setHomeFrame] = useState({ header: 0, xp: 0 });
+  const windowHeight = Dimensions.get('window').height;
+  const menuHeight = Math.max(
+    160,
+    windowHeight - insets.top - insets.bottom - homeFrame.header - homeFrame.xp
+  );
   const dailyChallenge = React.useMemo(() => getDailyChallenge(), []);
   const completedDailyMissions = playerStore.dailyMissions.filter((m) => m.completed).length;
   const xpProgress = getXpProgress(playerStore.xp);
@@ -554,7 +563,13 @@ export default function HomeScreen() {
       ) : null}
       
       {/* Header with player stats */}
-      <View style={styles.header}>
+      <View
+        style={styles.header}
+        onLayout={(event) => {
+          const header = event.nativeEvent.layout.height;
+          setHomeFrame((prev) => (prev.header === header ? prev : { ...prev, header }));
+        }}
+      >
         <View style={styles.playerInfo}>
           <View style={styles.playerNameRow}>
             <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={22} />
@@ -568,14 +583,18 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Main content */}
-      <View style={styles.content}>
+      {/* Main content — scrolls above the pinned XP bar */}
+      <ScrollView
+        style={{ height: menuHeight }}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Game title */}
         <View style={styles.titleContainer}>
           <View style={styles.heroRow}>
-            <TowerPicture type="machine_gun" level={2} size={54} />
-            <TowerPicture type="cannon" level={3} size={68} />
-            <TowerPicture type="flak" level={2} size={54} />
+            <TowerPicture type="machine_gun" level={2} size={42} />
+            <TowerPicture type="cannon" level={3} size={52} />
+            <TowerPicture type="flak" level={2} size={42} />
           </View>
           <WoodPanel style={styles.titlePlaque} cap={14}>
             <Text style={styles.title}>LAST STAND</Text>
@@ -588,9 +607,11 @@ export default function HomeScreen() {
             <View style={styles.dailyBonusText}>
               <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
               <Text style={styles.dailyBonusSub}>
-                {playerStore.loginStreak <= 0
+                {!canClaimDailyBonus()
                   ? 'Come back tomorrow to build a streak'
-                  : `Day streak: ${playerStore.loginStreak}`}
+                  : playerStore.loginStreak <= 0
+                    ? "Claim today's reward"
+                    : `Day ${playerStore.loginStreak} streak`}
               </Text>
             </View>
             <TouchableOpacity
@@ -681,10 +702,16 @@ export default function HomeScreen() {
             </ImageBackground>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
 
       {/* XP Progress bar */}
-      <View style={styles.xpContainer}>
+      <View
+        style={styles.xpContainer}
+        onLayout={(event) => {
+          const xp = event.nativeEvent.layout.height;
+          setHomeFrame((prev) => (prev.xp === xp ? prev : { ...prev, xp }));
+        }}
+      >
         <View style={styles.xpBar}>
           <View
             style={[
@@ -744,6 +771,7 @@ const styles = StyleSheet.create({
   },
   homeSafe: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: 'transparent',
   },
   splashContainer: {
@@ -805,8 +833,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   playerInfo: {
     flex: 1,
@@ -843,15 +871,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  content: {
+  contentScroll: {
     flex: 1,
-    justifyContent: 'center',
+    minHeight: 0,
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 2,
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 6,
   },
   arenaSectionLabel: {
     alignSelf: 'flex-start',
@@ -892,7 +926,7 @@ const styles = StyleSheet.create({
   arenaSwatch: {
     height: 4,
     borderRadius: 2,
-    marginBottom: 8,
+    marginBottom: 6,
     opacity: 0.95,
   },
   arenaName: {
@@ -906,7 +940,7 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     fontSize: 11,
     lineHeight: 15,
-    marginBottom: 8,
+    marginBottom: 6,
     minHeight: 48,
   },
   arenaMeta: {
@@ -921,33 +955,32 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   titlePlaque: {
-    paddingHorizontal: 22,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 2,
     alignItems: 'center',
-    marginTop: 4,
   },
   title: {
     color: '#ffe7a3',
-    fontSize: 40,
+    fontSize: 32,
     fontFamily: 'DisplayNarrow',
-    letterSpacing: 2,
+    letterSpacing: 1,
     textShadowColor: 'rgba(90, 48, 12, 0.85)',
-    textShadowOffset: { width: 0, height: 2 },
+    textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
   subtitle: {
     color: '#f0c14d',
-    fontSize: 22,
+    fontSize: 16,
     fontFamily: 'DisplayNarrow',
-    letterSpacing: 6,
+    letterSpacing: 4,
   },
   dailyBonusCard: {
     width: '100%',
     backgroundColor: 'transparent',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 18,
-    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 6,
     overflow: 'hidden',
   },
   woodInset: {
@@ -1005,9 +1038,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: TacticalTheme.border,
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 14,
-    marginBottom: 12,
+    marginBottom: 6,
   },
   dailyChallengeTextWrap: { flex: 1 },
   dailyChallengeTitle: {
@@ -1024,9 +1057,9 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: TacticalTheme.accent,
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    marginBottom: 18,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: TacticalTheme.borderStrong,
     flexDirection: 'row',
@@ -1045,11 +1078,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   playWrap: {
-    marginBottom: 28,
+    marginBottom: 6,
   },
   playButton: {
-    minWidth: 240,
-    height: 84,
+    minWidth: 220,
+    height: 56,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1092,13 +1125,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   quickActionBtn: {
-    minHeight: 86,
+    minHeight: 60,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingTop: 18,
-    paddingBottom: 16,
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 8,
     overflow: 'hidden',
   },
   quickActionText: {
@@ -1111,9 +1144,9 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   xpContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 8,
     borderTopWidth: 1,
     borderTopColor: TacticalTheme.border,
     backgroundColor: TacticalTheme.bgElevated,
@@ -1123,7 +1156,7 @@ const styles = StyleSheet.create({
     backgroundColor: TacticalTheme.panel,
     borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   xpFill: {
     height: '100%',
