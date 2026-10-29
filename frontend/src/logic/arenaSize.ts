@@ -43,6 +43,28 @@ export function ownedAfterTierUnlock(owned: number, tier: ArenaTier): number {
   return Math.max(ownedArenaTier(owned), tier);
 }
 
+/** The only tier the shop may sell. Higher tiers stay locked until this one is owned. */
+export function nextArenaTierForSale(owned: number): ArenaTier | null {
+  const next = ownedArenaTier(owned) + 1;
+  if (next === 1 || next === 2 || next === 3) return next;
+  return null;
+}
+
+export function arenaTierShopState(owned: number, tier: ArenaTier): 'owned' | 'for_sale' | 'locked' {
+  const have = ownedArenaTier(owned);
+  if (have >= tier) return 'owned';
+  if (nextArenaTierForSale(have) === tier) return 'for_sale';
+  return 'locked';
+}
+
+/** Locked rows name the size that has to be bought first. */
+export function arenaTierLockMessage(owned: number, tier: ArenaTier): string | null {
+  if (arenaTierShopState(owned, tier) !== 'locked') return null;
+  const next = nextArenaTierForSale(owned);
+  if (!next) return null;
+  return `Unlock Size ${next} first`;
+}
+
 /** Buying a larger tier selects it. Buying a tier you already own leaves the choice alone. */
 export function selectedAfterUnlock(selected: number, ownedBefore: number, ownedAfter: number): number {
   const before = ownedArenaTier(ownedBefore);

@@ -1,5 +1,5 @@
 /**
- * Original procedural SFX and music, plus two Kenney CC0 UI taps.
+ * CC0 music files plus original procedural SFX and two Kenney CC0 UI taps.
  * Sources and licenses: frontend/assets/audio/LICENSES.md.
  *
  * iOS silent switch: playsInSilentModeIOS is true, so the game is audible with
@@ -225,93 +225,11 @@ function buildLose(): Float32Array {
   return out;
 }
 
-function loopSeam(out: Float32Array) {
-  const fade = Math.floor(SAMPLE_RATE * 0.06);
-  const n = out.length;
-  for (let i = 0; i < fade && i < n; i++) {
-    const w = i / fade;
-    const tail = out[n - fade + i];
-    out[i] = out[i] * w + tail * (1 - w);
-  }
-}
-
-/** Four looping beds plus a short defeat sting. All original synthesis, no samples on disk. */
+/** Defeat sting only. The four looping beds are CC0 recordings. */
 function buildMusic(track: MusicTrack): Float32Array {
-  const seconds = track === 'defeat' ? 4 : 8;
-  const n = Math.floor(SAMPLE_RATE * seconds);
+  const n = Math.floor(SAMPLE_RATE * (track === 'defeat' ? 4 : 0.2));
   const out = new Float32Array(n);
-
-  if (track === 'menu') {
-    // Heroic home theme in D major. Slow horn fifths, no percussion.
-    const melody = [293.66, 369.99, 440, 587.33, 493.88, 440, 369.99, 293.66];
-    for (let i = 0; i < n; i++) {
-      const t = i / SAMPLE_RATE;
-      out[i] += Math.sin(2 * Math.PI * 73.42 * t) * 0.14;
-      out[i] += Math.sin(2 * Math.PI * 110 * t) * 0.06;
-    }
-    melody.forEach((freq, idx) => {
-      const start = Math.floor(idx * SAMPLE_RATE);
-      brass(out, start, Math.floor(SAMPLE_RATE * 0.95), freq, 0.11);
-      brass(out, start, Math.floor(SAMPLE_RATE * 0.95), freq * (2 / 3), 0.05);
-    });
-    loopSeam(out);
-    return out;
-  }
-
-  if (track === 'battle') {
-    // Driving A minor ostinato.
-    const ostinato = [220, 261.63, 329.63, 392, 329.63, 261.63, 246.94, 220];
-    for (let i = 0; i < n; i++) {
-      const t = i / SAMPLE_RATE;
-      const pulse = Math.pow(Math.max(0, Math.sin(2 * Math.PI * 2.5 * t)), 8);
-      out[i] += Math.sin(2 * Math.PI * 55 * t) * (0.12 + pulse * 0.08);
-      if (t % 0.4 < 0.02) out[i] += noise() * 0.05;
-    }
-    const step = 0.25;
-    for (let idx = 0; idx < seconds / step; idx++) {
-      const freq = ostinato[idx % ostinato.length];
-      brass(out, Math.floor(idx * step * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.22), freq, 0.08);
-    }
-    loopSeam(out);
-    return out;
-  }
-
-  if (track === 'battle2') {
-    // Brighter march in E mixolydian. Different tempo and register from battle.
-    const melody = [329.63, 369.99, 415.3, 493.88, 440, 369.99, 329.63, 246.94];
-    for (let i = 0; i < n; i++) {
-      const t = i / SAMPLE_RATE;
-      out[i] += Math.sin(2 * Math.PI * 82.41 * t) * 0.12;
-      const beat = t % 0.556;
-      if (beat > 0.26 && beat < 0.3) out[i] += noise() * 0.07;
-    }
-    melody.forEach((freq, idx) => {
-      const start = Math.floor(idx * SAMPLE_RATE);
-      brass(out, start, Math.floor(SAMPLE_RATE * 0.85), freq, 0.1);
-      brass(out, start, Math.floor(SAMPLE_RATE * 0.4), freq * 1.5, 0.04);
-    });
-    loopSeam(out);
-    return out;
-  }
-
-  if (track === 'boss') {
-    // Low drone, tritone, and a slow heartbeat.
-    for (let i = 0; i < n; i++) {
-      const t = i / SAMPLE_RATE;
-      out[i] += Math.sin(2 * Math.PI * 55 * t) * 0.16;
-      out[i] += Math.sin(2 * Math.PI * 77.78 * t) * 0.1;
-      out[i] += Math.sin(2 * Math.PI * 82.41 * t) * 0.04;
-      const beat = t % 0.75;
-      if (beat < 0.05 || (beat > 0.16 && beat < 0.2)) out[i] += noise() * 0.12;
-    }
-    const stabs = [369.99, 349.23, 311.13, 369.99];
-    stabs.forEach((freq, idx) => {
-      brass(out, Math.floor((0.4 + idx * 1.8) * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.35), freq, 0.07);
-    });
-    loopSeam(out);
-    return out;
-  }
-
+  if (track !== 'defeat') return out;
   const fall = [196, 174.61, 146.83, 130.81, 110];
   fall.forEach((freq, idx) => {
     brass(out, Math.floor(idx * 0.7 * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.8), freq, 0.12);
@@ -351,10 +269,24 @@ const FILE_SFX: Record<string, number> = {
   upgrade: require('../../assets/kenney/sfx/tap.wav'),
 };
 
+const FILE_MUSIC: Partial<Record<MusicTrack, number>> = {
+  menu: require('../../assets/audio/menu.m4a'),
+  battle: require('../../assets/audio/battle.m4a'),
+  battle2: require('../../assets/audio/battle2.m4a'),
+  boss: require('../../assets/audio/boss.m4a'),
+};
+
+function bundledAudio(key: string): number | undefined {
+  const sfx = FILE_SFX[key];
+  if (sfx) return sfx;
+  if (key.startsWith('music_')) return FILE_MUSIC[key.slice(6) as MusicTrack];
+  return undefined;
+}
+
 async function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
   const existing = cache.get(key);
   if (existing && !loop) return existing;
-  const file = FILE_SFX[key];
+  const file = bundledAudio(key);
   if (file) {
     try {
       const { sound } = await Audio.Sound.createAsync(file, {
@@ -365,7 +297,7 @@ async function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null
       if (!loop) cache.set(key, sound);
       return sound;
     } catch {
-      /* generated tone below */
+      if (key.startsWith('music_')) return null;
     }
   }
   try {

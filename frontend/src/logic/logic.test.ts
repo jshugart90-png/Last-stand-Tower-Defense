@@ -5,9 +5,12 @@ import {
   ARENA_TIER_PRODUCT_IDS,
   LEGACY_ARENA_PRODUCT_ID,
   applyArenaProduct,
+  arenaTierLockMessage,
+  arenaTierShopState,
   changeArenaSizeDuringSavedRun,
   clampSelectedArenaSize,
   gridForArenaSize,
+  nextArenaTierForSale,
   ownedAfterRestore,
   selectedAfterUnlock,
   shouldApplyPendingArenaPurchase,
@@ -91,6 +94,24 @@ describe('arena size', () => {
     const clamped = changeArenaSizeDuringSavedRun(saved, 9, 1);
     assert.equal(clamped.selected, 1);
     assert.equal(clamped.saved.arenaExpansions, 2);
+  });
+
+  it('sells only the next tier and keeps a restored higher tier', () => {
+    assert.equal(nextArenaTierForSale(0), 1);
+    assert.equal(nextArenaTierForSale(1), 2);
+    assert.equal(nextArenaTierForSale(2), 3);
+    assert.equal(nextArenaTierForSale(3), null);
+    assert.equal(arenaTierShopState(0, 1), 'for_sale');
+    assert.equal(arenaTierShopState(0, 2), 'locked');
+    assert.equal(arenaTierShopState(0, 3), 'locked');
+    assert.equal(arenaTierLockMessage(0, 2), 'Unlock Size 1 first');
+    assert.equal(arenaTierLockMessage(0, 3), 'Unlock Size 1 first');
+    assert.equal(arenaTierLockMessage(1, 3), 'Unlock Size 2 first');
+    assert.equal(arenaTierShopState(1, 2), 'for_sale');
+    assert.equal(arenaTierShopState(3, 1), 'owned');
+    assert.equal(arenaTierLockMessage(3, 1), null);
+    assert.equal(ownedAfterRestore(0, [ARENA_TIER_PRODUCT_IDS[3]]), 3);
+    assert.equal(applyArenaProduct(0, ARENA_TIER_PRODUCT_IDS[3]), 3);
   });
 
   it('grants a pending consumable once per transaction', () => {

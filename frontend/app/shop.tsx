@@ -13,9 +13,10 @@ import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-ico
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePlayerStore } from '../src/stores/playerStore';
 import {
-  ARENA_TIER_COUNT,
   ARENA_TIER_PRICE_USD,
+  arenaTierLockMessage,
   arenaTierProductId,
+  arenaTierShopState,
   gridForArenaSize,
   tierFromArenaProductId,
   type ArenaTier,
@@ -304,8 +305,13 @@ export default function ShopScreen() {
   };
 
   const handlePurchaseArenaTier = async (tier: ArenaTier) => {
-    if (playerStore.arenaExpansions >= tier) {
+    const sale = arenaTierShopState(playerStore.arenaExpansions, tier);
+    if (sale === 'owned') {
       playerStore.setSelectedArenaSize(tier);
+      return;
+    }
+    if (sale === 'locked') {
+      Alert.alert('Locked', arenaTierLockMessage(playerStore.arenaExpansions, tier) ?? 'Unlock the previous size first');
       return;
     }
     const productId = arenaTierProductId(tier);
@@ -1035,7 +1041,7 @@ export default function ShopScreen() {
           <View>
             <Text style={styles.sectionTitle}>Arena Size</Text>
             <Text style={styles.sectionSubtitle}>
-              Buy a size once, then pick any field from the original up to the largest you own.
+              Buy the next size. It unlocks that field and every smaller one.
             </Text>
 
             <View style={styles.arenaCard} testID="arena-picker">
@@ -1056,24 +1062,33 @@ export default function ShopScreen() {
                 selected={playerStore.selectedArenaSize}
                 onSelect={(size) => playerStore.setSelectedArenaSize(size)}
               />
-              {Array.from({ length: ARENA_TIER_COUNT }, (_, i) => (i + 1) as ArenaTier)
-                .filter((tier) => playerStore.arenaExpansions < tier)
-                .map((tier) => {
-                  const grid = gridForArenaSize(tier);
+              {([1, 2, 3] as ArenaTier[]).map((tier) => {
+                const sale = arenaTierShopState(playerStore.arenaExpansions, tier);
+                if (sale === 'owned') return null;
+                const grid = gridForArenaSize(tier);
+                if (sale === 'locked') {
                   return (
-                    <TouchableOpacity
-                      key={tier}
-                      testID={`arena-buy-${tier}`}
-                      style={styles.arenaButton}
-                      onPress={() => handlePurchaseArenaTier(tier)}
-                      disabled={purchaseLoading}
-                    >
-                      <Text style={styles.arenaPriceText}>
-                        Arena Size {tier} · {grid.cols}×{grid.rows} · ${ARENA_TIER_PRICE_USD.toFixed(2)}
+                    <View key={tier} testID={`arena-locked-${tier}`} style={styles.arenaLocked}>
+                      <Text style={styles.arenaLockedText}>
+                        Arena Size {tier} · {arenaTierLockMessage(playerStore.arenaExpansions, tier)}
                       </Text>
-                    </TouchableOpacity>
+                    </View>
                   );
-                })}
+                }
+                return (
+                  <TouchableOpacity
+                    key={tier}
+                    testID={`arena-buy-${tier}`}
+                    style={styles.arenaButton}
+                    onPress={() => handlePurchaseArenaTier(tier)}
+                    disabled={purchaseLoading}
+                  >
+                    <Text style={styles.arenaPriceText}>
+                      Arena Size {tier} · {grid.cols}×{grid.rows} · ${ARENA_TIER_PRICE_USD.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
               <Text style={styles.realMoneyNote}>
                 Each size is a one-time purchase. Restore brings them back.
               </Text>
@@ -1506,8 +1521,23 @@ const styles = StyleSheet.create({
   },
   arenaPriceText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  arenaLocked: {
+    backgroundColor: '#3a2a22',
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  arenaLockedText: {
+    color: '#b7a08a',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   realMoneyNote: {
     color: '#888',
