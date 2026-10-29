@@ -519,10 +519,10 @@ export default function HomeScreen() {
     } else {
       Alert.alert(
         'Session Quest',
-        `Earn ${SESSION_BOUNTY_TRIUMPHS_NEEDED} slaughter stars by getting ${SESSION_SLAUGHTER_WIN_KILLS}+ kills in a single run (each counts once). Open the chest when ready.`
+        `Get ${SESSION_SLAUGHTER_WIN_KILLS} kills in one run (${playerStore.sessionSlaughterTriumphs}/${SESSION_BOUNTY_TRIUMPHS_NEEDED} stars). Open the chest when you are ready.`
       );
     }
-  }, [claimSessionQuest]);
+  }, [claimSessionQuest, playerStore.sessionSlaughterTriumphs]);
 
   if (loading) {
     return (
@@ -584,37 +584,42 @@ export default function HomeScreen() {
         </View>
 
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
-          <View style={styles.dailyBonusText}>
-            <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
-            <Text style={styles.dailyBonusSub}>
-              Streak: {playerStore.loginStreak} day{playerStore.loginStreak === 1 ? '' : 's'}
-            </Text>
+          <View style={styles.woodInset}>
+            <View style={styles.dailyBonusText}>
+              <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
+              <Text style={styles.dailyBonusSub}>
+                {playerStore.loginStreak <= 0
+                  ? 'Come back tomorrow to build a streak'
+                  : `Day streak: ${playerStore.loginStreak}`}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.dailyBonusButton, !canClaimDailyBonus() && styles.dailyBonusButtonDisabled]}
+              onPress={handleClaimDailyBonus}
+              disabled={!canClaimDailyBonus()}
+            >
+              <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.dailyBonusButton, !canClaimDailyBonus() && styles.dailyBonusButtonDisabled]}
-            onPress={handleClaimDailyBonus}
-            disabled={!canClaimDailyBonus()}
-          >
-            <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
-          </TouchableOpacity>
         </ImageBackground>
 
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
-          <View style={styles.dailyBonusText}>
-            <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
-            <Text style={styles.dailyBonusSub} numberOfLines={3}>
-              Kills this session: {playerStore.sessionEnemiesKilledTotal} • Slaughter stars{' '}
-              {playerStore.sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED} (
-              {SESSION_SLAUGHTER_WIN_KILLS}+ kills / run)
-            </Text>
+          <View style={styles.woodInset}>
+            <View style={styles.dailyBonusText}>
+              <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
+              <Text style={styles.dailyBonusSub}>Get {SESSION_SLAUGHTER_WIN_KILLS} kills in one run</Text>
+              <Text style={styles.dailyBonusSub}>
+                Progress: {playerStore.sessionEnemiesKilledTotal}/{SESSION_SLAUGHTER_WIN_KILLS}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
+              onPress={handleClaimSessionQuest}
+              disabled={!canClaimSessionQuest()}
+            >
+              <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
-            onPress={handleClaimSessionQuest}
-            disabled={!canClaimSessionQuest()}
-          >
-            <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
-          </TouchableOpacity>
         </ImageBackground>
 
         <TouchableOpacity
@@ -649,7 +654,7 @@ export default function HomeScreen() {
           <View style={styles.playButton}>
             <Image source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButtonArt} />
             <View style={styles.playLabel}>
-              <Ionicons name="play" size={22} color="#1a1208" />
+              <Ionicons name="play" size={22} color="#F5E6C8" />
               <Text style={styles.playButtonText}>PLAY</Text>
             </View>
           </View>
@@ -659,19 +664,19 @@ export default function HomeScreen() {
         <View style={styles.quickActionsRow}>
           <TouchableOpacity onPress={handleShopPress} activeOpacity={0.85} style={styles.quickActionWrap}>
             <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
-              <Ionicons name="cart-outline" size={20} color="#f4ead8" />
+              <Ionicons name="cart-outline" size={20} color="#F5E6C8" />
               <Text style={styles.quickActionText}>Shop</Text>
             </ImageBackground>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleSettingsPress} activeOpacity={0.85} style={styles.quickActionWrap}>
             <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
-              <Ionicons name="settings-outline" size={20} color="#f4ead8" />
+              <Ionicons name="settings-outline" size={20} color="#F5E6C8" />
               <Text style={styles.quickActionText}>Settings</Text>
             </ImageBackground>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleProgressPress} activeOpacity={0.85} style={styles.quickActionWrap}>
             <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
-              <Ionicons name="stats-chart-outline" size={20} color="#f4ead8" />
+              <Ionicons name="stats-chart-outline" size={20} color="#F5E6C8" />
               <Text style={styles.quickActionText}>Progress</Text>
             </ImageBackground>
           </TouchableOpacity>
@@ -940,13 +945,19 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: 'transparent',
     borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  woodInset: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
-    overflow: 'hidden',
+    backgroundColor: 'rgba(20, 12, 6, 0.72)',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   dailyBonusText: {
     flex: 1,
@@ -957,13 +968,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   dailyBonusTitle: {
-    color: TacticalTheme.text,
-    fontSize: 14,
-    fontWeight: 'bold',
+    color: '#F5E6C8',
+    fontSize: 15,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   dailyBonusSub: {
-    color: TacticalTheme.textMuted,
-    fontSize: 12,
+    color: '#E8D2A8',
+    fontSize: 13,
+    lineHeight: 18,
     marginTop: 2,
   },
   dailyBonusButton: {
@@ -1055,11 +1070,15 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   playButtonText: {
-    color: '#1a1208',
+    color: '#F5E6C8',
     fontSize: 22,
+    fontWeight: '800',
     fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
     lineHeight: 26,
+    textShadowColor: '#1a0c04',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   quickActionsRow: {
     width: '100%',
@@ -1073,19 +1092,23 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   quickActionBtn: {
-    minHeight: 72,
+    minHeight: 86,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingTop: 18,
+    paddingBottom: 16,
     overflow: 'hidden',
   },
   quickActionText: {
-    color: TacticalTheme.text,
-    fontSize: 11,
+    color: '#F5E6C8',
+    fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   xpContainer: {
     paddingHorizontal: 20,

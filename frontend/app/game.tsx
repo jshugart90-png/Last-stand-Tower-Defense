@@ -3290,13 +3290,15 @@ export default function GameScreen() {
 
       {!playerStore.fieldBriefingSeen && !isGameOver ? (
         <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodPanelImage} style={styles.briefingCard}>
-          <Text style={styles.briefingTitle}>First deployment</Text>
-          <Text style={styles.briefingBody}>
-            Tap Archer, then a tile beside the path. Press Start Wave. Wyverns laugh at a cannon on the ground — bring a ballista or a ranger. Plate shrugs off small arrows.
-          </Text>
-          <TouchableOpacity onPress={() => playerStore.completeFieldBriefing()}>
-            <Text style={styles.briefingDismiss}>Got it</Text>
-          </TouchableOpacity>
+          <View style={styles.briefingInset}>
+            <Text style={styles.briefingTitle}>First deployment</Text>
+            <Text style={styles.briefingBody}>
+              Tap Archer, then a tile beside the path. Press Start Wave. Wyverns laugh at a cannon on the ground — bring a ballista or a ranger. Plate shrugs off small arrows.
+            </Text>
+            <TouchableOpacity onPress={() => playerStore.completeFieldBriefing()}>
+              <Text style={styles.briefingDismiss}>Got it</Text>
+            </TouchableOpacity>
+          </View>
         </ImageBackground>
       ) : null}
 
@@ -3717,9 +3719,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   startWaveText: {
-    color: '#1a1208',
+    color: '#F5E6C8',
     fontSize: 13,
     fontWeight: 'bold',
+    textShadowColor: '#1a0c04',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   bonusText: {
     color: '#2ECC71',
@@ -4155,16 +4160,26 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: 'transparent',
     borderRadius: 12,
-    padding: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
     overflow: 'hidden',
   },
+  briefingInset: {
+    backgroundColor: 'rgba(20, 12, 6, 0.72)',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
   briefingTitle: {
-    color: '#fff',
+    color: '#F5E6C8',
     fontWeight: '800',
     marginBottom: 4,
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   briefingBody: {
-    color: '#d5dde6',
+    color: '#E8D2A8',
     fontSize: 13,
     lineHeight: 18,
   },
@@ -4242,10 +4257,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   woodBtnText: {
-    color: '#1a1208',
+    color: '#F5E6C8',
     fontSize: 18,
     fontFamily: 'DisplayNarrow',
     fontWeight: '700',
+    textShadowColor: '#1a0c04',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   gameOverTitle: {
     color: TacticalTheme.accent,

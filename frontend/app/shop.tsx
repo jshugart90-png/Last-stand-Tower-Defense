@@ -1089,9 +1089,12 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   headerTitle: {
-    color: TacticalTheme.text,
+    color: '#F5E6C8',
     fontSize: 20,
     fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   coinsDisplay: {
     flexDirection: 'row',
