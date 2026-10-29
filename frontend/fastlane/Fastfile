@@ -56,14 +56,12 @@ platform :ios do
         app_identifier: BUNDLE_ID,
         team_id: team_id,
         platform: "ios",
-        development: false,
-        adhoc: false,
         skip_install: false,
         # Renew so the profile includes the certificate installed in this keychain.
         force: true,
         include_all_certificates: true
       )
-      profile_name = ENV["SIGH_NAME"].to_s.strip
+      profile_name = (lane_context[SharedValues::SIGH_NAME] || ENV["SIGH_NAME"]).to_s.strip
       UI.user_error!("get_provisioning_profile did not return a profile name") if profile_name.empty?
     end
 
