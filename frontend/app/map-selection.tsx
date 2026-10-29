@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, ImageBackground, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -11,6 +11,8 @@ import {
   type MapDefinition,
 } from '../src/constants/maps';
 import { TacticalTheme } from '../src/theme/colors';
+import { DIFFICULTY_MODES, getDifficultyModifiers } from '../src/logic/difficulty';
+import { uiArt } from '../src/art/sprites';
 
 const MapCard = ({
   map,
@@ -73,6 +75,8 @@ export default function MapSelectionScreen() {
     setCurrentMapId,
     unlockMapWithGems,
     syncMapUnlocksFromWaveProgress,
+    difficultyMode,
+    setDifficultyMode,
   } = usePlayerStore();
 
   const unlockedMapIds = usePlayerStore((s) => s.unlockedMapIds);
@@ -149,6 +153,23 @@ export default function MapSelectionScreen() {
         </View>
       </View>
 
+      <View style={styles.diffRow}>
+        {DIFFICULTY_MODES.map((mode) => {
+          const info = getDifficultyModifiers(mode);
+          const selected = difficultyMode === mode;
+          return (
+            <TouchableOpacity
+              key={mode}
+              style={[styles.diffChip, selected && styles.diffChipOn]}
+              onPress={() => setDifficultyMode(mode)}
+            >
+              <Text style={[styles.diffChipText, selected && styles.diffChipTextOn]}>{info.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={styles.diffBlurb}>{getDifficultyModifiers(difficultyMode).blurb}</Text>
+
       <FlatList
         data={GAME_MAPS}
         keyExtractor={(item) => item.id}
@@ -157,9 +178,11 @@ export default function MapSelectionScreen() {
       />
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.startBtn} onPress={startSelectedMap}>
-          <Ionicons name="play" size={20} color={TacticalTheme.white} />
-          <Text style={styles.startBtnText}>Play</Text>
+        <TouchableOpacity onPress={startSelectedMap}>
+          <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.startBtn}>
+            <Ionicons name="play" size={20} color="#1a1208" />
+            <Text style={styles.startBtnText}>Play</Text>
+          </ImageBackground>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -178,6 +201,32 @@ const styles = StyleSheet.create({
     borderBottomColor: TacticalTheme.border,
   },
   headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  diffRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  diffChip: {
+    borderWidth: 1,
+    borderColor: TacticalTheme.border,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  diffChipOn: {
+    backgroundColor: TacticalTheme.accent,
+    borderColor: TacticalTheme.accent,
+  },
+  diffChipText: { color: TacticalTheme.textMuted, fontSize: 12, fontWeight: '700' },
+  diffChipTextOn: { color: '#fff' },
+  diffBlurb: {
+    color: TacticalTheme.textSubtle,
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
   title: { color: TacticalTheme.text, fontSize: 20, fontWeight: '800' },
   gemWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   gemText: { color: TacticalTheme.gem, fontWeight: '700' },
@@ -238,13 +287,13 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
   },
   startBtn: {
-    backgroundColor: TacticalTheme.accent,
-    borderRadius: 10,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
+    minWidth: 180,
   },
-  startBtnText: { color: TacticalTheme.white, fontWeight: '800', fontSize: 16 },
+  startBtnText: { color: '#1a1208', fontFamily: 'DisplayNarrow', fontWeight: '800', fontSize: 18 },
 });

@@ -9,8 +9,12 @@ import {
   Alert,
   ActivityIndicator,
   AppState,
+  Image,
+  ImageBackground,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -18,17 +22,19 @@ import { useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { getXpProgress, usePlayerStore } from '../src/stores/playerStore';
 import { isBackendConfigured, isServerBackedPlayerId, playerApi } from '../src/hooks/useApi';
+import { loginStatusMessage, OFFLINE_NEW_PROFILE_NOTE, OFFLINE_SAVE_NOTE } from '../src/logic/login';
 import * as Crypto from 'expo-crypto';
 import { playSfx, canPlayUiSfx } from '../src/services/audioService';
 import { getDailyChallenge } from '../src/constants/challenges';
 import { DailyMissionsModal } from '../src/components/DailyMissionsModal';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { AdBanner } from '../src/components/AdBanner';
 import {
   SESSION_SLAUGHTER_WIN_KILLS,
   SESSION_BOUNTY_TRIUMPHS_NEEDED,
 } from '../src/constants/sessionProgress';
 import { TacticalTheme } from '../src/theme/colors';
+import { TowerPicture, terrainArt, uiArt } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 
 // Tutorial overlay component
 const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
@@ -38,17 +44,27 @@ const TutorialOverlay = ({ onComplete }: { onComplete: () => void }) => {
     {
       icon: 'finger-print',
       title: 'Place Towers',
-      description: 'Select a tower, then tap or drag on the field to place it',
+      description: 'Pick a tower, then tap a tile beside the path. You cannot build on the road.',
     },
     {
       icon: 'shield-checkmark',
       title: 'Defend Your Base',
-      description: 'Stop enemies from reaching your base',
+      description: 'Press Start Wave. Stop enemies before they walk into your base.',
     },
     {
-      icon: 'trending-up',
-      title: 'Upgrade & Survive',
-      description: 'Earn gems to upgrade towers and survive longer',
+      icon: 'flash',
+      title: 'Different threats',
+      description: 'Wolf riders, wyverns, and plate orcs need different towers. Ballistas own the sky. Cannons crack plate.',
+    },
+    {
+      icon: 'git-branch',
+      title: 'Upgrade paths',
+      description: 'The third upgrade on a tower asks you to specialize. That choice stays on the tower.',
+    },
+    {
+      icon: 'volume-high',
+      title: 'Sound',
+      description: 'Music and effects are on. The iPhone silent switch does not mute the game. Use Settings if you want quiet.',
     },
   ];
 
@@ -250,9 +266,18 @@ export default function HomeScreen() {
   const claimSessionQuest = usePlayerStore((s) => s.claimSessionQuest);
   const claimDailyMission = usePlayerStore((s) => s.claimDailyMission);
   const [loading, setLoading] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(loginStatusMessage(1));
+  const [serverNote, setServerNote] = useState<string | null>(null);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
+  const insets = useSafeAreaInsets();
+  const [homeFrame, setHomeFrame] = useState({ header: 0, xp: 0 });
+  const windowHeight = Dimensions.get('window').height;
+  const menuHeight = Math.max(
+    160,
+    windowHeight - insets.top - insets.bottom - homeFrame.header - homeFrame.xp
+  );
   const dailyChallenge = React.useMemo(() => getDailyChallenge(), []);
   const completedDailyMissions = playerStore.dailyMissions.filter((m) => m.completed).length;
   const xpProgress = getXpProgress(playerStore.xp);
@@ -291,80 +316,66 @@ export default function HomeScreen() {
         store.setDeviceId(deviceId);
       }
 
-      // If we already have a local-only profile, skip the server
-      if (store.playerId && !isServerBackedPlayerId(store.playerId)) {
-        setLoading(false);
-        return;
-      }
+      setLoading(false);
+      if (!isBackendConfigured()) return;
 
-      // Had a server account in memory but no API URL (misconfig) — keep session without re-fetching
-      if (store.playerId && isServerBackedPlayerId(store.playerId) && !isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
+      const applyServerPlayer = (data: {
+        _id?: string;
+        nickname?: string;
+        xp?: number;
+        level?: number;
+        gems?: number;
+        total_waves_survived?: number;
+        games_played?: number;
+        best_wave?: number;
+        lifetime_enemies_killed?: number;
+        unlocked_towers?: string[];
+        unlocked_skins?: string[];
+        equipped_skins?: Record<string, string>;
+        premium?: boolean;
+        arena_expansions?: number;
+      }) => {
+        const live = usePlayerStore.getState();
+        if (data._id) live.setPlayer(data._id, data.nickname || live.nickname);
+        live.syncFromServer({
+          xp: data.xp,
+          level: data.level,
+          gems: data.gems ?? 0,
+          totalWavesSurvived: data.total_waves_survived,
+          gamesPlayed: data.games_played,
+          bestWave: data.best_wave,
+          lifetimeEnemiesKilled:
+            typeof data.lifetime_enemies_killed === 'number' ? data.lifetime_enemies_killed : undefined,
+          unlockedTowers: data.unlocked_towers as never,
+          unlockedSkins: data.unlocked_skins,
+          equippedSkins: data.equipped_skins,
+          premium: data.premium,
+          arenaExpansions: data.arena_expansions || 0,
+        });
+        setServerNote(null);
+        setShowNicknameModal(false);
+      };
 
-      // If we already have a player ID in local storage, use that
-      if (store.playerId && isBackendConfigured()) {
+      const hadServerId = Boolean(store.playerId && isServerBackedPlayerId(store.playerId));
+      void (async () => {
         try {
-          const response = await playerApi.getById(store.playerId);
-          if (response.data) {
-            store.syncFromServer({
-              xp: response.data.xp,
-              level: response.data.level,
-              gems: response.data.gems,
-              totalWavesSurvived: response.data.total_waves_survived,
-              gamesPlayed: response.data.games_played,
-              bestWave: response.data.best_wave,
-              lifetimeEnemiesKilled:
-                typeof response.data.lifetime_enemies_killed === 'number'
-                  ? response.data.lifetime_enemies_killed
-                  : undefined,
-              unlockedTowers: response.data.unlocked_towers,
-              unlockedSkins: response.data.unlocked_skins,
-              equippedSkins: response.data.equipped_skins,
-              premium: response.data.premium,
-              arenaExpansions: response.data.arena_expansions || 0,
+          if (hadServerId && store.playerId) {
+            const response = await playerApi.getById(store.playerId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
             });
-            setLoading(false);
+            if (response.data) applyServerPlayer(response.data);
             return;
           }
+          if (!store.playerId) {
+            const response = await playerApi.getByDevice(deviceId, {
+              onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+            });
+            if (response.data) applyServerPlayer(response.data);
+          }
         } catch {
+          if (hadServerId) setServerNote(OFFLINE_SAVE_NOTE);
         }
-      }
-
-      if (!isBackendConfigured()) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const response = await playerApi.getByDevice(deviceId);
-        if (response.data) {
-          store.setPlayer(response.data._id, response.data.nickname);
-          store.syncFromServer({
-            xp: response.data.xp,
-            level: response.data.level,
-            gems: response.data.gems ?? 0,
-            totalWavesSurvived: response.data.total_waves_survived,
-            gamesPlayed: response.data.games_played,
-            bestWave: response.data.best_wave,
-            lifetimeEnemiesKilled:
-              typeof response.data.lifetime_enemies_killed === 'number'
-                ? response.data.lifetime_enemies_killed
-                : undefined,
-            unlockedTowers: response.data.unlocked_towers,
-            unlockedSkins: response.data.unlocked_skins,
-            equippedSkins: response.data.equipped_skins,
-            premium: response.data.premium,
-            arenaExpansions: response.data.arena_expansions || 0,
-          });
-          setLoading(false);
-          return;
-        }
-      } catch {
-      }
-
-      setLoading(false);
+      })();
     } catch {
       setLoading(false);
     }
@@ -410,6 +421,7 @@ export default function HomeScreen() {
   const handleNicknameSubmit = async (nickname: string) => {
     try {
       setLoading(true);
+      setLoadingDetail(loginStatusMessage(1));
 
       if (!isBackendConfigured()) {
         await registerLocalPlayer(nickname);
@@ -421,7 +433,9 @@ export default function HomeScreen() {
       }
 
       try {
-        const response = await playerApi.create(nickname, playerStore.deviceId);
+        const response = await playerApi.create(nickname, playerStore.deviceId, {
+          onAttempt: (n) => setLoadingDetail(loginStatusMessage(n)),
+        });
         if (response.data?._id) {
           playerStore.setPlayer(response.data._id, response.data.nickname);
           playerStore.syncFromServer({
@@ -435,8 +449,8 @@ export default function HomeScreen() {
           await registerLocalPlayer(nickname);
         }
       } catch {
-        // Soft-fail: continue locally without a blocking "server error" alert (App Review 2.1a).
         await registerLocalPlayer(nickname);
+        setServerNote(OFFLINE_NEW_PROFILE_NOTE);
       }
 
       setShowNicknameModal(false);
@@ -444,7 +458,8 @@ export default function HomeScreen() {
         setShowTutorial(true);
       }
     } catch {
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      setServerNote(OFFLINE_NEW_PROFILE_NOTE);
+      setShowNicknameModal(false);
     } finally {
       setLoading(false);
     }
@@ -453,6 +468,7 @@ export default function HomeScreen() {
   const handleTutorialComplete = () => {
     playerStore.completeTutorial();
     setShowTutorial(false);
+    router.push('/map-selection');
   };
 
   const handlePlayPress = useCallback(() => {
@@ -512,10 +528,10 @@ export default function HomeScreen() {
     } else {
       Alert.alert(
         'Session Quest',
-        `Earn ${SESSION_BOUNTY_TRIUMPHS_NEEDED} slaughter stars by getting ${SESSION_SLAUGHTER_WIN_KILLS}+ kills in a single run (each counts once). Open the chest when ready.`
+        `Get ${SESSION_SLAUGHTER_WIN_KILLS} kills in one run (${playerStore.sessionSlaughterTriumphs}/${SESSION_BOUNTY_TRIUMPHS_NEEDED} stars). Open the chest when you are ready.`
       );
     }
-  }, [claimSessionQuest]);
+  }, [claimSessionQuest, playerStore.sessionSlaughterTriumphs]);
 
   if (loading) {
     return (
@@ -527,7 +543,7 @@ export default function HomeScreen() {
           <Text style={styles.splashSubtitle}>DEFENSE</Text>
           <View style={styles.splashLoader}>
             <ActivityIndicator size="large" color={TacticalTheme.accent} />
-            <Text style={styles.splashLoadingText}>Loading...</Text>
+            <Text style={styles.splashLoadingText}>{loadingDetail}</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -535,11 +551,25 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <Image source={terrainArt.grass} resizeMode="cover" style={styles.homeGrass} />
+      <View style={styles.homeScrim} />
+    <SafeAreaView style={styles.homeSafe}>
       <StatusBar style="light" />
+      {serverNote ? (
+        <View style={styles.serverNote}>
+          <Text style={styles.serverNoteText}>{serverNote}</Text>
+        </View>
+      ) : null}
       
       {/* Header with player stats */}
-      <View style={styles.header}>
+      <View
+        style={styles.header}
+        onLayout={(event) => {
+          const header = event.nativeEvent.layout.height;
+          setHomeFrame((prev) => (prev.header === header ? prev : { ...prev, header }));
+        }}
+      >
         <View style={styles.playerInfo}>
           <View style={styles.playerNameRow}>
             <PlayerLogoBadge logoId={playerStore.selectedLogoId} size={22} />
@@ -553,48 +583,65 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Main content */}
-      <View style={styles.content}>
+      {/* Main content — scrolls above the pinned XP bar */}
+      <ScrollView
+        style={{ height: menuHeight }}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Game title */}
         <View style={styles.titleContainer}>
-          <MaterialCommunityIcons name="shield-sword" size={64} color={TacticalTheme.accent} />
-          <Text style={styles.title}>LAST STAND</Text>
-          <Text style={styles.subtitle}>DEFENSE</Text>
+          <View style={styles.heroRow}>
+            <TowerPicture type="machine_gun" level={2} size={42} />
+            <TowerPicture type="cannon" level={3} size={52} />
+            <TowerPicture type="flak" level={2} size={42} />
+          </View>
+          <WoodPanel style={styles.titlePlaque} cap={14}>
+            <Text style={styles.title}>LAST STAND</Text>
+            <Text style={styles.subtitle}>DEFENSE</Text>
+          </WoodPanel>
         </View>
 
-        <View style={styles.dailyBonusCard}>
-          <View>
-            <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
-            <Text style={styles.dailyBonusSub}>
-              Streak: {playerStore.loginStreak} day{playerStore.loginStreak === 1 ? '' : 's'}
-            </Text>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
+          <View style={styles.woodInset}>
+            <View style={styles.dailyBonusText}>
+              <Text style={styles.dailyBonusTitle}>Daily Login Bonus</Text>
+              <Text style={styles.dailyBonusSub}>
+                {!canClaimDailyBonus()
+                  ? 'Come back tomorrow to build a streak'
+                  : playerStore.loginStreak <= 0
+                    ? "Claim today's reward"
+                    : `Day ${playerStore.loginStreak} streak`}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.dailyBonusButton, !canClaimDailyBonus() && styles.dailyBonusButtonDisabled]}
+              onPress={handleClaimDailyBonus}
+              disabled={!canClaimDailyBonus()}
+            >
+              <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.dailyBonusButton, !canClaimDailyBonus() && styles.dailyBonusButtonDisabled]}
-            onPress={handleClaimDailyBonus}
-            disabled={!canClaimDailyBonus()}
-          >
-            <Text style={styles.dailyBonusButtonText}>{canClaimDailyBonus() ? 'Claim' : 'Claimed'}</Text>
-          </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
-        <View style={styles.dailyBonusCard}>
-          <View>
-            <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
-            <Text style={styles.dailyBonusSub}>
-              Kills this session: {playerStore.sessionEnemiesKilledTotal} • Slaughter stars{' '}
-              {playerStore.sessionSlaughterTriumphs}/{SESSION_BOUNTY_TRIUMPHS_NEEDED} (
-              {SESSION_SLAUGHTER_WIN_KILLS}+ kills / run)
-            </Text>
+        <ImageBackground source={uiArt.panel} resizeMode="stretch" imageStyle={styles.woodCardImage} style={styles.dailyBonusCard}>
+          <View style={styles.woodInset}>
+            <View style={styles.dailyBonusText}>
+              <Text style={styles.dailyBonusTitle}>Session Quest Chest</Text>
+              <Text style={styles.dailyBonusSub}>Get {SESSION_SLAUGHTER_WIN_KILLS} kills in one run</Text>
+              <Text style={styles.dailyBonusSub}>
+                Progress: {playerStore.sessionEnemiesKilledTotal}/{SESSION_SLAUGHTER_WIN_KILLS}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
+              onPress={handleClaimSessionQuest}
+              disabled={!canClaimSessionQuest()}
+            >
+              <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.dailyBonusButton, !canClaimSessionQuest() && styles.dailyBonusButtonDisabled]}
-            onPress={handleClaimSessionQuest}
-            disabled={!canClaimSessionQuest()}
-          >
-            <Text style={styles.dailyBonusButtonText}>{canClaimSessionQuest() ? 'Open' : 'Locked'}</Text>
-          </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
         <TouchableOpacity
           style={styles.dailyMissionsPrimaryButton}
@@ -624,34 +671,47 @@ export default function HomeScreen() {
         </View>
 
         {/* Play button */}
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={handlePlayPress}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="play" size={32} color="#fff" />
-          <Text style={styles.playButtonText}>PLAY</Text>
+        <TouchableOpacity onPress={handlePlayPress} activeOpacity={0.85} style={styles.playWrap}>
+          <View style={styles.playButton}>
+            <Image source={uiArt.buttonRed} resizeMode="stretch" style={styles.playButtonArt} />
+            <View style={styles.playLabel}>
+              <Ionicons name="play" size={22} color="#F5E6C8" />
+              <Text style={styles.playButtonText}>PLAY</Text>
+            </View>
+          </View>
         </TouchableOpacity>
 
         {/* Quick actions */}
         <View style={styles.quickActionsRow}>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleShopPress} activeOpacity={0.85}>
-            <Ionicons name="cart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Shop</Text>
+          <TouchableOpacity onPress={handleShopPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="cart-outline" size={20} color="#F5E6C8" />
+              <Text style={styles.quickActionText}>Shop</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleSettingsPress} activeOpacity={0.85}>
-            <Ionicons name="settings-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Settings</Text>
+          <TouchableOpacity onPress={handleSettingsPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="settings-outline" size={20} color="#F5E6C8" />
+              <Text style={styles.quickActionText}>Settings</Text>
+            </ImageBackground>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={handleProgressPress} activeOpacity={0.85}>
-            <Ionicons name="stats-chart-outline" size={20} color={TacticalTheme.accent} />
-            <Text style={styles.quickActionText}>Progress</Text>
+          <TouchableOpacity onPress={handleProgressPress} activeOpacity={0.85} style={styles.quickActionWrap}>
+            <ImageBackground source={uiArt.buttonSquare} resizeMode="stretch" style={styles.quickActionBtn}>
+              <Ionicons name="stats-chart-outline" size={20} color="#F5E6C8" />
+              <Text style={styles.quickActionText}>Progress</Text>
+            </ImageBackground>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
 
       {/* XP Progress bar */}
-      <View style={styles.xpContainer}>
+      <View
+        style={styles.xpContainer}
+        onLayout={(event) => {
+          const xp = event.nativeEvent.layout.height;
+          setHomeFrame((prev) => (prev.xp === xp ? prev : { ...prev, xp }));
+        }}
+      >
         <View style={styles.xpBar}>
           <View
             style={[
@@ -681,21 +741,38 @@ export default function HomeScreen() {
         }}
       />
 
-      {/* Bottom banner ad (hidden for premium / ad-free players) */}
-      <AdBanner placement="home" />
-
       {/* Tutorial overlay */}
       {showTutorial && (
         <TutorialOverlay onComplete={handleTutorialComplete} />
       )}
     </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: TacticalTheme.bg,
+    backgroundColor: '#2f6a34',
+    position: 'relative',
+  },
+  homeGrass: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  homeScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(28, 16, 8, 0.22)',
+  },
+  homeSafe: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: 'transparent',
   },
   splashContainer: {
     flex: 1,
@@ -724,6 +801,23 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     marginTop: 12,
     fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 28,
+    lineHeight: 20,
+  },
+  serverNote: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: '#172033',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#3d5a80',
+  },
+  serverNoteText: {
+    color: '#d5dde6',
+    fontSize: 13,
+    lineHeight: 18,
   },
   loadingContainer: {
     flex: 1,
@@ -739,8 +833,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   playerInfo: {
     flex: 1,
@@ -756,8 +850,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   playerLevel: {
-    color: TacticalTheme.accent,
+    color: '#fff6d0',
     fontSize: 14,
+    fontWeight: '700',
+    textShadowColor: 'rgba(20, 10, 4, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   currencyContainer: {
     flexDirection: 'row',
@@ -773,15 +871,21 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  content: {
+  contentScroll: {
     flex: 1,
-    justifyContent: 'center',
+    minHeight: 0,
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 2,
   },
   titleContainer: {
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 6,
   },
   arenaSectionLabel: {
     alignSelf: 'flex-start',
@@ -822,7 +926,7 @@ const styles = StyleSheet.create({
   arenaSwatch: {
     height: 4,
     borderRadius: 2,
-    marginBottom: 8,
+    marginBottom: 6,
     opacity: 0.95,
   },
   arenaName: {
@@ -836,7 +940,7 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     fontSize: 11,
     lineHeight: 15,
-    marginBottom: 8,
+    marginBottom: 6,
     minHeight: 48,
   },
   arenaMeta: {
@@ -844,42 +948,74 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginBottom: 4,
+  },
+  titlePlaque: {
+    paddingHorizontal: 16,
+    paddingVertical: 2,
+    alignItems: 'center',
+  },
   title: {
-    color: '#fff',
-    fontSize: 42,
-    fontWeight: 'bold',
-    letterSpacing: 4,
-    marginTop: 8,
+    color: '#ffe7a3',
+    fontSize: 32,
+    fontFamily: 'DisplayNarrow',
+    letterSpacing: 1,
+    textShadowColor: 'rgba(90, 48, 12, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   subtitle: {
-    color: TacticalTheme.accent,
-    fontSize: 28,
-    fontWeight: 'bold',
-    letterSpacing: 8,
+    color: '#f0c14d',
+    fontSize: 16,
+    fontFamily: 'DisplayNarrow',
+    letterSpacing: 4,
   },
   dailyBonusCard: {
     width: '100%',
-    backgroundColor: TacticalTheme.surfaceDeep,
+    backgroundColor: 'transparent',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    padding: 12,
-    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  woodInset: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(20, 12, 6, 0.72)',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  dailyBonusText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 4,
+  },
+  woodCardImage: {
+    borderRadius: 12,
   },
   dailyBonusTitle: {
-    color: TacticalTheme.text,
-    fontSize: 14,
-    fontWeight: 'bold',
+    color: '#F5E6C8',
+    fontSize: 15,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   dailyBonusSub: {
-    color: TacticalTheme.textMuted,
-    fontSize: 12,
+    color: '#E8D2A8',
+    fontSize: 13,
+    lineHeight: 18,
     marginTop: 2,
   },
   dailyBonusButton: {
+    flexShrink: 0,
     backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -902,9 +1038,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: TacticalTheme.border,
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 14,
-    marginBottom: 12,
+    marginBottom: 6,
   },
   dailyChallengeTextWrap: { flex: 1 },
   dailyChallengeTitle: {
@@ -921,9 +1057,9 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: TacticalTheme.accent,
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    marginBottom: 18,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: TacticalTheme.borderStrong,
     flexDirection: 'row',
@@ -941,26 +1077,41 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '600',
   },
+  playWrap: {
+    marginBottom: 6,
+  },
   playButton: {
+    minWidth: 220,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playButtonArt: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+  },
+  playLabel: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: TacticalTheme.accent,
-    paddingVertical: 20,
-    paddingHorizontal: 64,
-    borderRadius: 16,
-    gap: 12,
-    marginBottom: 48,
-    shadowColor: TacticalTheme.black,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
+    justifyContent: 'center',
+    gap: 8,
+    paddingTop: 8,
   },
   playButtonText: {
-    color: TacticalTheme.white,
-    fontSize: 28,
-    fontWeight: 'bold',
+    color: '#F5E6C8',
+    fontSize: 22,
+    fontWeight: '800',
+    fontFamily: 'DisplayNarrow',
     letterSpacing: 2,
+    lineHeight: 26,
+    textShadowColor: '#1a0c04',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   quickActionsRow: {
     width: '100%',
@@ -970,28 +1121,32 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  quickActionBtn: {
+  quickActionWrap: {
     flex: 1,
-    minHeight: 64,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: TacticalTheme.border,
-    backgroundColor: TacticalTheme.panel,
+  },
+  quickActionBtn: {
+    minHeight: 60,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 8,
+    overflow: 'hidden',
   },
   quickActionText: {
-    color: TacticalTheme.text,
-    fontSize: 11,
+    color: '#F5E6C8',
+    fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   xpContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 8,
     borderTopWidth: 1,
     borderTopColor: TacticalTheme.border,
     backgroundColor: TacticalTheme.bgElevated,
@@ -1001,7 +1156,7 @@ const styles = StyleSheet.create({
     backgroundColor: TacticalTheme.panel,
     borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   xpFill: {
     height: '100%',

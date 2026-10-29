@@ -59,14 +59,17 @@ export const TOWER_UNLOCK_PRICES = {
   freeze: 60,          // 60 gems
   missile: 100,        // 100 gems
   laser: 200,          // 200 gems
+  tesla: 140,
+  flak: 160,
+  cannon: 180,
 };
 
 // Tower definitions
 export const TOWERS = {
   machine_gun: {
     id: 'machine_gun',
-    name: 'Machine Gun',
-    description: 'Fast fire rate, moderate damage',
+    name: 'Archer',
+    description: 'Fast arrows, moderate damage',
     baseCost: 32,
     baseStats: {
       damage: 10,
@@ -80,8 +83,8 @@ export const TOWERS = {
   },
   sniper: {
     id: 'sniper',
-    name: 'Sniper',
-    description: 'Very long range, high damage, slow fire rate',
+    name: 'Ranger',
+    description: 'Very long range, heavy shots, slow to nock',
     baseCost: 65,
     baseStats: {
       damage: 50,
@@ -95,8 +98,8 @@ export const TOWERS = {
   },
   splash: {
     id: 'splash',
-    name: 'Splash',
-    description: 'Area damage against groups of enemies',
+    name: 'Alchemist',
+    description: 'Splashes a crowd with a bursting flask',
     baseCost: 78,
     baseStats: {
       damage: 25,
@@ -111,8 +114,8 @@ export const TOWERS = {
   },
   freeze: {
     id: 'freeze',
-    name: 'Freeze',
-    description: 'Slows enemies significantly',
+    name: 'Frost',
+    description: 'Slows enemies in a biting chill',
     baseCost: 52,
     baseStats: {
       damage: 5,
@@ -128,8 +131,8 @@ export const TOWERS = {
   },
   missile: {
     id: 'missile',
-    name: 'Missile',
-    description: 'High damage explosive rounds',
+    name: 'Fire Mage',
+    description: 'Hurls a heavy fireball',
     baseCost: 130,
     baseStats: {
       damage: 100,
@@ -144,8 +147,8 @@ export const TOWERS = {
   },
   laser: {
     id: 'laser',
-    name: 'Laser',
-    description: 'Continuous beam - damage increases while targeting same enemy',
+    name: 'Arcane',
+    description: 'A beam that grows while it holds one foe',
     baseCost: 195,
     baseStats: {
       damage: 5,              // Starting damage per tick
@@ -159,6 +162,52 @@ export const TOWERS = {
     icon: 'flashlight',
     color: '#FF00FF',
   },
+  tesla: {
+    id: 'tesla',
+    name: 'Storm',
+    description: 'Chain lightning. Ground only — arcs to nearby foes.',
+    baseCost: 90,
+    baseStats: {
+      damage: 18,
+      fireRate: 900,
+      range: 3.2,
+      projectileSpeed: 14,
+    },
+    unlockPrice: 140,
+    icon: 'flash',
+    color: '#7DF9FF',
+  },
+  flak: {
+    id: 'flak',
+    name: 'Ballista',
+    description: 'Bolts built for the sky. Weak against ground targets.',
+    baseCost: 110,
+    baseStats: {
+      damage: 28,
+      fireRate: 1200,
+      range: 4.2,
+      splashRadius: 1.1,
+      projectileSpeed: 9,
+    },
+    unlockPrice: 160,
+    icon: 'airplane',
+    color: '#F4D35E',
+  },
+  cannon: {
+    id: 'cannon',
+    name: 'Cannon',
+    description: 'Slow dwarven shot. The answer to plated foes.',
+    baseCost: 150,
+    baseStats: {
+      damage: 70,
+      fireRate: 2200,
+      range: 4.5,
+      projectileSpeed: 7,
+    },
+    unlockPrice: 180,
+    icon: 'bullseye',
+    color: '#C4A484',
+  },
 };
 
 export type TowerType = keyof typeof TOWERS;
@@ -167,7 +216,7 @@ export type TowerType = keyof typeof TOWERS;
 export const ENEMIES = {
   basic: {
     id: 'basic',
-    name: 'Basic',
+    name: 'Goblin',
     baseHealth: 30,
     baseSpeed: 0.8,
     coinReward: 1,      // Very slow
@@ -176,7 +225,7 @@ export const ENEMIES = {
   },
   fast: {
     id: 'fast',
-    name: 'Fast',
+    name: 'Wolf Rider',
     baseHealth: 20,
     baseSpeed: 1.5,
     coinReward: 1,      // Same as basic
@@ -185,7 +234,7 @@ export const ENEMIES = {
   },
   tank: {
     id: 'tank',
-    name: 'Tank',
+    name: 'Troll',
     baseHealth: 100,
     baseSpeed: 0.4,
     coinReward: 2,      // Slightly more
@@ -194,16 +243,17 @@ export const ENEMIES = {
   },
   boss: {
     id: 'boss',
-    name: 'Boss',
+    name: 'Warlord',
     baseHealth: 500,
     baseSpeed: 0.25,
     coinReward: 15,     // Reduced from 25
     color: '#F39C12',
     size: 28,
+    armor: 3,
   },
   shielded: {
     id: 'shielded',
-    name: 'Shielded',
+    name: 'Shield Orc',
     baseHealth: 180,
     baseSpeed: 0.6,
     coinReward: 3,
@@ -213,7 +263,7 @@ export const ENEMIES = {
   },
   healer: {
     id: 'healer',
-    name: 'Healer',
+    name: 'Shaman',
     baseHealth: 90,
     baseSpeed: 0.75,
     coinReward: 4,
@@ -224,7 +274,7 @@ export const ENEMIES = {
   },
   splitter: {
     id: 'splitter',
-    name: 'Splitter',
+    name: 'Ooze',
     baseHealth: 140,
     baseSpeed: 0.7,
     coinReward: 3,
@@ -233,6 +283,26 @@ export const ENEMIES = {
     splitOnDeath: true,
     splitCount: 2,
     splitInto: 'fast',
+  },
+  armored: {
+    id: 'armored',
+    name: 'Plate Orc',
+    baseHealth: 220,
+    baseSpeed: 0.5,
+    coinReward: 4,
+    color: '#8D6E63',
+    size: 18,
+    armor: 9,
+  },
+  flying: {
+    id: 'flying',
+    name: 'Wyvern',
+    baseHealth: 48,
+    baseSpeed: 1.35,
+    coinReward: 2,
+    color: '#5DADE2',
+    size: 13,
+    flying: true,
   },
 };
 
@@ -312,6 +382,18 @@ export const getWaveCompletionBonus = (waveNumber: number): number => {
   return GAME_CONFIG.WAVE_BONUS_BASE + (waveNumber * GAME_CONFIG.WAVE_BONUS_SCALING);
 };
 
+export const FORTIFY_UPGRADE_MAX = 8;
+export const FORTIFY_HP_PER_LEVEL = 2;
+export const getFortifyUpgradePrice = (currentLevel: number): number =>
+  Math.floor(45 * Math.pow(1.42, currentLevel));
+
+export const CALIBRATION_UPGRADE_MAX = 10;
+export const CALIBRATION_DAMAGE_PER_LEVEL = 0.02;
+export const getCalibrationUpgradePrice = (currentLevel: number): number =>
+  Math.floor(50 * Math.pow(1.45, currentLevel));
+
+export const REVIVE_GEM_COST = 40;
+
 export const STARTING_COINS_UPGRADE_MAX = 20;
 export const STARTING_COINS_BONUS_PER_LEVEL = 40;
 export const getStartingCoinsUpgradePrice = (currentLevel: number): number =>
@@ -319,41 +401,64 @@ export const getStartingCoinsUpgradePrice = (currentLevel: number): number =>
 
 // Wave configuration - Boss every 10 waves
 export const getWaveConfig = (waveNumber: number) => {
-  const baseEnemies = 5 + Math.floor(waveNumber * 1.5);
-  const healthMultiplier = 1 + (waveNumber - 1) * 0.15;
-  const speedMultiplier = 1 + (waveNumber - 1) * 0.05;
-  
+  const baseEnemies = 5 + Math.floor(waveNumber * 1.4);
+  const healthMultiplier = 1 + (waveNumber - 1) * 0.14;
+  const speedMultiplier = 1 + (waveNumber - 1) * 0.045;
+  const pattern = waveNumber % 4;
+
   let enemies: { type: EnemyType; count: number }[] = [];
-  
-  if (waveNumber <= 3) {
+
+  if (waveNumber <= 2) {
     enemies = [{ type: 'basic', count: baseEnemies }];
-  } else if (waveNumber <= 6) {
+  } else if (waveNumber <= 4) {
     enemies = [
-      { type: 'basic', count: Math.floor(baseEnemies * 0.7) },
-      { type: 'fast', count: Math.floor(baseEnemies * 0.3) },
+      { type: 'basic', count: Math.ceil(baseEnemies * 0.7) },
+      { type: 'fast', count: Math.max(1, Math.floor(baseEnemies * 0.3)) },
     ];
-  } else if (waveNumber <= 10) {
+  } else if (waveNumber <= 7) {
     enemies = [
-      { type: 'basic', count: Math.floor(baseEnemies * 0.5) },
-      { type: 'fast', count: Math.floor(baseEnemies * 0.3) },
-      { type: 'tank', count: Math.floor(baseEnemies * 0.2) },
+      { type: 'basic', count: Math.max(1, Math.floor(baseEnemies * 0.5)) },
+      { type: 'fast', count: Math.max(1, Math.floor(baseEnemies * 0.3)) },
+      { type: 'tank', count: Math.max(1, Math.floor(baseEnemies * 0.2)) },
     ];
   } else {
     enemies = [
-      { type: 'basic', count: Math.floor(baseEnemies * 0.3) },
-      { type: 'fast', count: Math.floor(baseEnemies * 0.2) },
-      { type: 'tank', count: Math.floor(baseEnemies * 0.2) },
+      { type: 'basic', count: Math.max(1, Math.floor(baseEnemies * 0.28)) },
+      { type: 'fast', count: Math.max(1, Math.floor(baseEnemies * 0.16)) },
+      { type: 'tank', count: Math.max(1, Math.floor(baseEnemies * 0.12)) },
     ];
-    if (waveNumber >= 12) enemies.push({ type: 'shielded', count: Math.max(1, Math.floor(baseEnemies * 0.15)) });
-    if (waveNumber >= 16) enemies.push({ type: 'healer', count: Math.max(1, Math.floor(baseEnemies * 0.1)) });
-    if (waveNumber >= 14) enemies.push({ type: 'splitter', count: Math.max(1, Math.floor(baseEnemies * 0.12)) });
+    if (waveNumber >= 8) {
+      enemies.push({
+        type: 'flying',
+        count: Math.max(1, Math.floor(baseEnemies * (pattern === 0 ? 0.22 : 0.12))),
+      });
+    }
+    if (waveNumber >= 11) {
+      enemies.push({
+        type: 'armored',
+        count: Math.max(1, Math.floor(baseEnemies * (pattern === 1 ? 0.2 : 0.1))),
+      });
+    }
+    if (waveNumber >= 12 && pattern !== 2) {
+      enemies.push({ type: 'shielded', count: Math.max(1, Math.floor(baseEnemies * 0.1)) });
+    }
+    if (waveNumber >= 14 && pattern === 2) {
+      enemies.push({ type: 'splitter', count: Math.max(1, Math.floor(baseEnemies * 0.12)) });
+    }
+    if (waveNumber >= 16 && pattern === 3) {
+      enemies.push({ type: 'healer', count: Math.max(1, Math.floor(baseEnemies * 0.08)) });
+    }
   }
-  
-  // Boss every 10 waves
+
+  if (waveNumber >= 15 && waveNumber % 5 === 0 && waveNumber % GAME_CONFIG.BOSS_WAVE_INTERVAL !== 0) {
+    enemies.push({ type: 'armored', count: 1 });
+    enemies.push({ type: 'flying', count: 2 });
+  }
+
   if (waveNumber > 0 && waveNumber % GAME_CONFIG.BOSS_WAVE_INTERVAL === 0) {
-    enemies.push({ type: 'boss', count: 1 });
+    enemies.push({ type: 'boss', count: 1 + Math.floor(waveNumber / 40) });
   }
-  
+
   return {
     waveNumber,
     enemies,
@@ -400,6 +505,9 @@ export const getShopUpgradeCost = (towerType: TowerType, currentLevel: number): 
     freeze: 20,
     missile: 35,
     laser: 50,
+    tesla: 40,
+    flak: 42,
+    cannon: 48,
   };
   return Math.floor(basePrices[towerType] * Math.pow(1.5, currentLevel));
 };
@@ -421,7 +529,7 @@ export const SKIN_COLORS: Record<string, string> = {
 export const COSMETIC_SKINS: { id: keyof typeof SKIN_COLORS; name: string; price: number }[] = [
   { id: 'default', name: 'Classic Slate', price: 0 },
   { id: 'neon', name: 'Neon Strike', price: 45 },
-  { id: 'military', name: 'OD Green', price: 35 },
+  { id: 'military', name: 'Mosswood', price: 35 },
   { id: 'ice', name: 'Frost', price: 40 },
   { id: 'gold', name: 'Champion Gold', price: 120 },
   { id: 'cyber', name: 'Cyber Magenta', price: 90 },

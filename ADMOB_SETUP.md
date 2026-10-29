@@ -1,8 +1,11 @@
 # AdMob Setup — Last Stand Tower Defense
 
-Ads are implemented with `react-native-google-mobile-ads` (+ `expo-tracking-transparency` for iOS ATT).
-The code ships with **Google test IDs**, so every build works out of the box but earns nothing until
-the real IDs below are filled in.
+**Retired. Do not restore ads.** The AdMob account was rejected. Version 2.3.0 removes
+`react-native-google-mobile-ads`, the tracking-transparency plugin, and every banner, interstitial,
+and rewarded placement. Monetization is in-app purchases only. The notes below are historical so the
+old unit ids are not lost. Do not put the SDK or these ids back into `app.json`.
+
+The rest of this file describes the 2.2.0 ad placements. They are no longer in the app.
 
 ## What's in the app
 

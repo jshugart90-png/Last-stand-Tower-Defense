@@ -1,26 +1,21 @@
-# Last Stand Defense - AdMob & IAP Setup Guide
+# Last Stand Defense - IAP Setup Guide
 
-## AdMob Configuration
-
-See **[ADMOB_SETUP.md](./ADMOB_SETUP.md)** — the IDs previously listed here were from a retired AdMob
-setup and must not be reused. Ad unit IDs now come from `EXPO_PUBLIC_ADMOB_*` env vars and the App IDs
-from `frontend/app.json`.
+Ads are retired. See **[ADMOB_SETUP.md](./ADMOB_SETUP.md)**. Do not add AdMob back. The product ids below are the live ones in `frontend/src/services/iapService.native.ts`. Do not rename them.
 
 ---
 
 ## In-App Purchase Products
 
-### Product IDs (Placeholder - Update after uploading to stores)
+### Product IDs (live — do not change)
 
 | Product | ID | Type | Price |
 |---------|-----|------|-------|
-| Remove Ads | `com.laststanddefense.remove_ads` | Non-consumable | $2.99 |
+| Commander Bundle (was sold as remove-ads; still `premium`) | `com.laststanddefense.premium_bundle` | Non-consumable | $4.99 |
 | Arena Expansion | `com.laststanddefense.arena_expansion` | Consumable | $2.99 |
-| 500 Coins | `com.laststanddefense.coins_500` | Consumable | $0.99 |
-| 2,000 Coins | `com.laststanddefense.coins_2000` | Consumable | $1.99 |
-| 5,000 Coins | `com.laststanddefense.coins_5000` | Consumable | $4.99 |
-| 12,000 Coins | `com.laststanddefense.coins_12000` | Consumable | $9.99 |
-| Premium Bundle | `com.laststanddefense.premium_bundle` | Non-consumable | $4.99 |
+| 120 Gems | `com.laststanddefense.gems_100` | Consumable | $0.99 |
+| 500 Gems | `com.laststanddefense.gems_500` | Consumable | $2.99 |
+| 1,500 Gems | `com.laststanddefense.gems_1500` | Consumable | $5.99 |
+| 4,000 Gems | `com.laststanddefense.gems_4000` | Consumable | $9.99 |
 
 ### How to Set Up IAP Products
 
@@ -40,46 +35,36 @@ from `frontend/app.json`.
 
 ### Product Details
 
-#### Remove Ads ($2.99)
+#### Commander Bundle ($4.99)
 - **Type**: Non-consumable
-- **Description**: Remove all banner ads permanently
-- Stored in player's `premium` field
+- **Product id**: `com.laststanddefense.premium_bundle` (unchanged)
+- **What it does now**: +15% coins from battles, and unlocks the Champion Gold skin
+- Stored in the player's `premium` field. Existing buyers keep the flag. The game is ad-free for everyone, so this is no longer sold as ad removal. Update the App Store product description to match before the next release.
 
 #### Arena Expansion ($2.99)
 - **Type**: Consumable
-- **Description**: Adds 1 row of cells to each side of battlefield
+- **Description**: Adds 1 row of cells to each side of the battlefield
 - Can be purchased multiple times
-
-#### Premium Bundle ($4.99) - Future
-- **Type**: Non-consumable  
-- **Description**: Remove ads + exclusive skins + bonus coins
-- Not yet implemented in shop
 
 ---
 
 ## Technical Implementation
 
-### Files Modified/Created
-- `app.json` - AdMob App ID, build properties, permissions
-- `src/services/adService.ts` - AdMob initialization, rewarded ads, banner ads
-- `src/services/iapService.ts` - IAP connection, purchases, restore
-- `src/components/BannerAdComponent.tsx` - Banner ad React component
-- `app/_layout.tsx` - Initializes ads & IAP on app launch
-- `app/shop.tsx` - Real ad/IAP integration for shop
-- `app/game.tsx` - Real rewarded ad for revive
-- `app/index.tsx` - Banner ad on home screen
-- `app/leaderboard.tsx` - Banner ad on leaderboard
+### Files
+- `frontend/src/services/iapService.native.ts` — StoreKit connection, purchases, restore
+- `frontend/app/shop.tsx` — gem packs, Commander Bundle, arena expansion
+- `frontend/app/_layout.tsx` — initializes IAP after launch. It does not initialize ads.
 
-### Dependencies Added
-- `react-native-google-mobile-ads` - AdMob SDK
-- `expo-build-properties` - iOS static frameworks
-- `expo-tracking-transparency` - iOS ATT permission
-- `expo-iap` - In-App Purchases
+### Dependencies
+- `expo-iap` — In-App Purchases
+- `expo-build-properties` — iOS static frameworks
+
+`react-native-google-mobile-ads` and `expo-tracking-transparency` were removed. Do not add them back.
 
 ### Development vs Production
-- In **web preview / Expo Go**: Ads and IAP show simulated behavior with fallback UI
-- In **native build**: Real AdMob ads and App/Play Store IAP are used
-- Build with `eas build` to test real functionality
+- Web preview has no StoreKit. Purchases are unavailable there.
+- A native EAS build uses the real App Store products.
+- Build with `eas build` when you are ready to test purchases. This revamp does not submit a build.
 
 ### Building for Testing
 ```bash

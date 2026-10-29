@@ -31,6 +31,11 @@ import {
   COIN_INCOME_PER_LEVEL,
   getCoinIncomeUpgradePrice,
   getRunCoinIncomeMultiplier,
+  FORTIFY_UPGRADE_MAX,
+  FORTIFY_HP_PER_LEVEL,
+  getFortifyUpgradePrice,
+  CALIBRATION_UPGRADE_MAX,
+  getCalibrationUpgradePrice,
 } from '../src/constants/game';
 import { 
   IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, completePurchase, 
@@ -43,8 +48,8 @@ import {
 } from '../src/constants/storeMessages';
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { AdBanner } from '../src/components/AdBanner';
-import { useRewardedGems } from '../src/hooks/useRewardedGems';
+import { TowerPicture } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 interface Skin {
   id: string;
   name: string;
@@ -52,28 +57,7 @@ interface Skin {
   color: string;
 }
 
-// Tower icon helper
-const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) => {
-  switch (type) {
-    case 'machine_gun':
-      return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
-    case 'sniper':
-      return <MaterialCommunityIcons name="crosshairs-gps" size={size} color={color} />;
-    case 'splash':
-      return <MaterialCommunityIcons name="bomb" size={size} color={color} />;
-    case 'freeze':
-      return <MaterialCommunityIcons name="snowflake" size={size} color={color} />;
-    case 'missile':
-      return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
-    case 'laser':
-      return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
-    default:
-      return <Ionicons name="help" size={size} color={color} />;
-  }
-};
-
 export default function ShopScreen() {
-  const rewardedGems = useRewardedGems();
   const router = useRouter();
   const params = useLocalSearchParams<{ highlightTower?: string }>();
   const playerStore = usePlayerStore();
@@ -249,6 +233,38 @@ export default function ShopScreen() {
     }
   };
 
+  const handlePurchaseFortify = () => {
+    const level = playerStore.fortifyUpgradeLevel;
+    if (level >= FORTIFY_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Base fortification is maxed out.');
+      return;
+    }
+    const price = getFortifyUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseFortifyUpgrade()) {
+      Alert.alert('Upgraded', `Each run starts with ${FORTIFY_HP_PER_LEVEL} more base health.`);
+    }
+  };
+
+  const handlePurchaseCalibration = () => {
+    const level = playerStore.calibrationUpgradeLevel;
+    if (level >= CALIBRATION_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Calibration is maxed out.');
+      return;
+    }
+    const price = getCalibrationUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseCalibrationUpgrade()) {
+      Alert.alert('Upgraded', 'All towers deal 2% more damage.');
+    }
+  };
+
   const handlePurchaseSpeed = (speed: GameSpeed) => {
     const price = SPEED_UNLOCK_PRICES[speed];
     
@@ -334,15 +350,15 @@ export default function ShopScreen() {
   };
 
 
-  // Handle Premium Bundle (removes ads permanently) — real money via IAP
+  // Commander Bundle — real money via IAP. Product id stays the same.
   const handlePurchasePremium = async () => {
     if (playerStore.premium) {
-      Alert.alert('Already Premium', 'Ads are already removed on this account.');
+      Alert.alert('Already a Commander', 'The coin bonus and Champion Gold skin are already on this account.');
       return;
     }
     Alert.alert(
-      'Premium — Remove Ads',
-      'Remove banner and full-screen ads permanently for $4.99?\n\nRewarded "watch a video" bonuses stay available whenever you want them.',
+      'Commander Bundle — $4.99',
+      'Permanent +15% coins from battles, and the Champion Gold skin unlocks. The game is ad-free for everyone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -368,14 +384,14 @@ export default function ShopScreen() {
                     playerStore.setPremium(true);
                     await completePurchase(result.purchase, IAP_PRODUCTS.PREMIUM_BUNDLE);
                   } catch {
-                    playerStore.setPremium(true); // store purchase succeeded; never keep showing ads
+                    playerStore.setPremium(true);
                     Alert.alert(
                       'Purchase Recorded',
                       'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
                     );
                     return;
                   }
-                  Alert.alert('Welcome to Premium!', 'Ads are now removed. Thanks for supporting the game!');
+                  Alert.alert('Welcome, Commander', 'Battles pay 15% more coins, and Champion Gold is unlocked.');
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
@@ -499,8 +515,8 @@ export default function ShopScreen() {
           highlightedTower === towerType && styles.towerCardHighlighted,
         ]}
       >
-        <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
-          {getTowerIcon(towerType, 28)}
+        <View style={styles.towerIconLarge}>
+          <TowerPicture type={towerType} level={Math.min(2, upgradeLevel)} size={56} />
         </View>
         
         <View style={styles.towerInfo}>
@@ -625,7 +641,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <WoodPanel style={styles.header} cap={18}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -634,7 +650,7 @@ export default function ShopScreen() {
           <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
-      </View>
+      </WoodPanel>
 
       {/* Tabs */}
       <View style={styles.tabs}>
@@ -760,6 +776,55 @@ export default function ShopScreen() {
               </View>
             </View>
 
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Base fortification</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +{FORTIFY_HP_PER_LEVEL} base health per level. Current bonus{' '}
+                {playerStore.fortifyUpgradeLevel * FORTIFY_HP_PER_LEVEL}.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.fortifyUpgradeLevel}/{FORTIFY_UPGRADE_MAX}
+                </Text>
+                {playerStore.fortifyUpgradeLevel >= FORTIFY_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseFortify}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getFortifyUpgradePrice(playerStore.fortifyUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Calibration</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +2% damage for every tower, every run.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.calibrationUpgradeLevel}/{CALIBRATION_UPGRADE_MAX}
+                </Text>
+                {playerStore.calibrationUpgradeLevel >= CALIBRATION_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseCalibration}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getCalibrationUpgradePrice(playerStore.calibrationUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
             <Text style={styles.sectionSubtitle}>
               Unlock towers and upgrade stats. Higher upgrade levels increase that tower&apos;s cost in battle.
@@ -777,57 +842,26 @@ export default function ShopScreen() {
               Purchase gems to unlock towers, upgrades, and more
             </Text>
 
-            {/* Premium: remove ads (hidden once owned) */}
+            {/* Commander Bundle — same product id as before. */}
             {!playerStore.premium && (
               <TouchableOpacity
                 style={styles.premiumCard}
                 onPress={handlePurchasePremium}
                 disabled={purchaseLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Remove ads permanently for $4.99"
+                accessibilityLabel="Commander bundle for $4.99"
               >
                 <View style={styles.premiumIconWrap}>
                   <MaterialCommunityIcons name="crown" size={26} color="#d4af37" />
                 </View>
                 <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Remove Ads — Premium</Text>
+                  <Text style={styles.rewardedTitle}>Commander Bundle</Text>
                   <Text style={styles.rewardedSubtitle}>
-                    No banners, no full-screen ads. Forever.
+                    +15% battle coins and the Champion Gold skin. Same $4.99 product as before.
                   </Text>
                 </View>
                 <View style={styles.premiumPriceTag}>
                   <Text style={styles.premiumPriceText}>$4.99</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
-            {/* Free gems: rewarded video */}
-            {rewardedGems.adsReady && (
-              <TouchableOpacity
-                style={[styles.rewardedCard, !rewardedGems.available && styles.rewardedCardDisabled]}
-                onPress={() => { void rewardedGems.watch(); }}
-                disabled={!rewardedGems.available}
-                accessibilityRole="button"
-                accessibilityLabel={`Watch a video for ${rewardedGems.gemsPerAd} gems`}
-              >
-                <View style={styles.rewardedIconWrap}>
-                  <Ionicons name="play-circle" size={28} color={TacticalTheme.accent} />
-                </View>
-                <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Watch a video</Text>
-                  <Text style={styles.rewardedSubtitle}>
-                    {rewardedGems.busy
-                      ? 'Loading video…'
-                      : rewardedGems.cooldownSeconds > 0
-                        ? `Next free gems in ${rewardedGems.cooldownSeconds}s`
-                        : rewardedGems.available
-                          ? `Earn ${rewardedGems.gemsPerAd} free gems`
-                          : 'Video loading — try again in a moment'}
-                  </Text>
-                </View>
-                <View style={styles.rewardedGemTag}>
-                  <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
-                  <Text style={styles.rewardedGemText}>+{rewardedGems.gemsPerAd}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -1030,9 +1064,6 @@ export default function ShopScreen() {
 
         {selectedTab === 'logos' && renderLogoCard()}
       </ScrollView>
-
-      {/* Bottom banner ad (hidden for premium / ad-free players) */}
-      <AdBanner placement="shop" />
     </SafeAreaView>
   );
 }
@@ -1048,17 +1079,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  headerImage: {
+    borderRadius: 0,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    color: TacticalTheme.text,
+    color: '#F5E6C8',
     fontSize: 20,
     fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   coinsDisplay: {
     flexDirection: 'row',
@@ -1135,30 +1171,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
-  rewardedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: TacticalTheme.panel,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: TacticalTheme.accent,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-    gap: 12,
-  },
-  rewardedCardDisabled: {
-    opacity: 0.55,
-    borderColor: TacticalTheme.border,
-  },
-  rewardedIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: TacticalTheme.panelAlt,
-  },
   rewardedTextWrap: { flex: 1 },
   rewardedTitle: {
     color: TacticalTheme.white,
@@ -1169,20 +1181,6 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
-  },
-  rewardedGemTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: TacticalTheme.panelAlt,
-  },
-  rewardedGemText: {
-    color: TacticalTheme.gem,
-    fontWeight: '800',
-    fontSize: 13,
   },
   sectionTitle: {
     color: TacticalTheme.text,
@@ -1228,6 +1226,10 @@ const styles = StyleSheet.create({
   startingCoinsBuy: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-end',
+    marginLeft: 'auto',
+    minWidth: 72,
     gap: 6,
     backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
@@ -1283,11 +1285,11 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   towerIconLarge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
+    width: 56,
+    height: 64,
+    justifyContent: 'flex-end',
     alignItems: 'center',
+    overflow: 'visible',
   },
   towerInfo: {
     flex: 1,

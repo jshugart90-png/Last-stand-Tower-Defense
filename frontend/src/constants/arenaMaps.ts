@@ -326,7 +326,7 @@ const ARENAS: ArenaMapDefinition[] = [
   {
     id: 'iron_widow',
     name: 'Iron Widow',
-    description: 'Industrial trench — long straights broken by sudden corners.',
+    description: 'A dark trench of long straights and sudden corners.',
     gridCols: 18,
     gridRows: 19,
     cellSize: 28,
@@ -377,6 +377,54 @@ const ARENAS: ArenaMapDefinition[] = [
       true
     ),
     theme: t('#090c11', '#1c222c', '#383642', '#f39c1244', '#cf2f2f55'),
+  },
+  {
+    id: 'cinder_ridge',
+    name: 'Cinder Ridge',
+    description: 'High switchbacks over a burnt ridge. Long sight lines reward cannons.',
+    gridCols: 16,
+    gridRows: 18,
+    cellSize: 28,
+    spawnPoint: { x: 0, y: 0 },
+    basePosition: { x: 15, y: 17 },
+    route: chainWaypoints(
+      [
+        { x: 0, y: 0 },
+        { x: 12, y: 0 },
+        { x: 12, y: 6 },
+        { x: 3, y: 6 },
+        { x: 3, y: 12 },
+        { x: 14, y: 12 },
+        { x: 14, y: 17 },
+        { x: 15, y: 17 },
+      ],
+      true
+    ),
+    theme: t('#140c0a', '#3a241c', '#6a4030', '#e67e2244', '#c0392b55'),
+  },
+  {
+    id: 'gale_bastion',
+    name: 'Gale Bastion',
+    description: 'Open causeways where flying waves cut the corners of the wind.',
+    gridCols: 14,
+    gridRows: 20,
+    cellSize: 28,
+    spawnPoint: { x: 0, y: 10 },
+    basePosition: { x: 13, y: 19 },
+    route: chainWaypoints(
+      [
+        { x: 0, y: 10 },
+        { x: 8, y: 10 },
+        { x: 8, y: 2 },
+        { x: 2, y: 2 },
+        { x: 2, y: 16 },
+        { x: 12, y: 16 },
+        { x: 12, y: 19 },
+        { x: 13, y: 19 },
+      ],
+      true
+    ),
+    theme: t('#071018', '#123044', '#1d4e6e', '#5dade244', '#d4af3755'),
   },
 ];
 
