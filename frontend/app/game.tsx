@@ -2522,10 +2522,16 @@ export default function GameScreen() {
   const boxW = battleBox.w > 0 ? battleBox.w : SCREEN_WIDTH;
   const widthFit = boardWidth > 0 ? boxW / boardWidth : 1;
   const heightFit = battleBox.h > 0 && boardHeight > 0 ? battleBox.h / boardHeight : 0;
-  // Painted maps cover the battle area so a square painting does not leave a black band.
-  // Free Play stays width-fit. Overflow scrolls; hit tests use the measured board rect.
-  const scale =
-    mapBackgroundFor(battleMapId) != null && heightFit > 0 ? Math.max(widthFit, heightFit) : widthFit;
+  // Phones (tall battle box): painted maps cover the battle area so a square painting does not
+  // leave a black band, and Free Play stays width-fit. Wide boxes such as iPad, where the
+  // width-fit board would run past the bottom: fit by height so the whole board, base included,
+  // stays on screen. Overflow scrolls; hit tests use the measured board rect.
+  const boardTallerThanBox = heightFit > 0 && heightFit < widthFit;
+  const scale = boardTallerThanBox
+    ? heightFit
+    : mapBackgroundFor(battleMapId) != null && heightFit > 0
+      ? Math.max(widthFit, heightFit)
+      : widthFit;
 
   // Initialize game on mount - check for saved game
   useEffect(() => {
@@ -3318,7 +3324,12 @@ export default function GameScreen() {
           />
           {!waveInProgress ? (
             <TouchableOpacity onPress={handleStartWave} activeOpacity={0.85}>
-              <ImageBackground source={uiArt.buttonRed} resizeMode="stretch" style={styles.startWaveButton}>
+              <ImageBackground
+                source={uiArt.buttonRed}
+                resizeMode="stretch"
+                style={styles.startWaveButton}
+                imageStyle={styles.startWaveImage}
+              >
                 <Text style={styles.startWaveText} numberOfLines={1}>
                   Start {currentWave + 1}
                   {autoWaveTimer > 0 && currentWave > 0 ? ` ${formatTimer(autoWaveTimer)}` : ''}
@@ -3709,11 +3720,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   startWaveButton: {
+    overflow: 'hidden',
     paddingHorizontal: 10,
     paddingVertical: 6,
     minWidth: 84,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /** Pin the button art to the button box; on web it otherwise renders at its natural size. */
+  startWaveImage: {
+    width: '100%',
+    height: '100%',
   },
   startWaveText: {
     color: '#F5E6C8',

@@ -1225,6 +1225,9 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 16,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     paddingBottom: 32,
   },
   premiumCard: {

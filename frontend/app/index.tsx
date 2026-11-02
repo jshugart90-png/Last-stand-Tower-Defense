@@ -877,6 +877,9 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     justifyContent: 'flex-start',
     alignItems: 'center',
     paddingHorizontal: 16,

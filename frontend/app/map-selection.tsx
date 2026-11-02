@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
   title: { color: TacticalTheme.text, fontSize: 20, fontWeight: '800' },
   gemWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   gemText: { color: TacticalTheme.gem, fontWeight: '700' },
-  listContent: { padding: 14, gap: 10, paddingBottom: 120 },
+  listContent: { padding: 14, gap: 10, paddingBottom: 120, width: '100%', maxWidth: 640, alignSelf: 'center' },
   card: {
     backgroundColor: TacticalTheme.panel,
     borderColor: TacticalTheme.border,
