@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix';
+import { parseShotRoute } from './shotUrl';
 import {
   ARENA_TIER_PRODUCT_IDS,
   LEGACY_ARENA_PRODUCT_ID,
@@ -49,6 +50,18 @@ import {
   projectileAngleDeg,
   towerArtTier,
 } from './artMap';
+
+describe('screenshot links', () => {
+  it('maps simulator deep links onto app routes', () => {
+    assert.equal(parseShotRoute('laststandtd:///shop?tab=arena'), '/shop?tab=arena');
+    assert.equal(parseShotRoute('laststandtd://shop?tab=arena'), '/shop?tab=arena');
+    assert.equal(parseShotRoute('laststandtd:///game?proof=classic&size=0'), '/game?proof=classic&size=0');
+    assert.equal(parseShotRoute('laststandtd:///game?proof=classic&size=3'), '/game?proof=classic&size=3');
+    assert.equal(parseShotRoute('laststandtd:///game?proof=ash_pass'), '/game?proof=ash_pass');
+    assert.equal(parseShotRoute('laststandtd:///map-selection'), '/map-selection');
+    assert.equal(parseShotRoute('laststandtd:///'), '/');
+  });
+});
 
 describe('arena size', () => {
   it('buys a tier up to that size and ignores unknown products', () => {

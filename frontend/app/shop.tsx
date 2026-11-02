@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -22,6 +23,7 @@ import {
   type ArenaTier,
 } from '../src/logic/arenaSize';
 import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
+import { screenshotAutomation } from '../src/logic/proofBattle';
 import { isBackendConfigured, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { syncPurchaseWithBackend } from '../src/utils/iapBackend';
 import {
@@ -69,7 +71,8 @@ interface Skin {
 
 export default function ShopScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ highlightTower?: string }>();
+  const params = useLocalSearchParams<{ highlightTower?: string; tab?: string | string[] }>();
+  const tabletShop = Dimensions.get('window').width >= 744;
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +93,15 @@ export default function ShopScreen() {
       setSelectedTab('towers');
     }
   }, [highlightedTower]);
+
+  useEffect(() => {
+    const tab = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+    if (tab !== 'arena') return;
+    setSelectedTab('arena');
+    if (screenshotAutomation()) {
+      usePlayerStore.setState({ arenaExpansions: 1, selectedArenaSize: 0 });
+    }
+  }, [params.tab]);
 
   const loadSkins = () => {
     setSkins(
@@ -767,7 +779,13 @@ export default function ShopScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[
+          styles.contentContainer,
+          tabletShop && selectedTab === 'arena' && styles.arenaTabletCenter,
+        ]}
+      >
         {/* Towers Tab */}
         {selectedTab === 'towers' && (
           <View>
@@ -1229,6 +1247,12 @@ const styles = StyleSheet.create({
     maxWidth: 640,
     alignSelf: 'center',
     paddingBottom: 32,
+  },
+  arenaTabletCenter: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    maxWidth: 800,
+    paddingVertical: 28,
   },
   premiumCard: {
     flexDirection: 'row',

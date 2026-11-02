@@ -273,7 +273,9 @@ export default function HomeScreen() {
   const [showDailyMissionsModal, setShowDailyMissionsModal] = useState(false);
   const insets = useSafeAreaInsets();
   const [homeFrame, setHomeFrame] = useState({ header: 0, xp: 0 });
+  const windowWidth = Dimensions.get('window').width;
   const windowHeight = Dimensions.get('window').height;
+  const tabletHome = windowWidth >= 744;
   const menuHeight = Math.max(
     160,
     windowHeight - insets.top - insets.bottom - homeFrame.header - homeFrame.xp
@@ -586,7 +588,7 @@ export default function HomeScreen() {
       {/* Main content — scrolls above the pinned XP bar */}
       <ScrollView
         style={{ height: menuHeight }}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, tabletHome && styles.contentTablet]}
         showsVerticalScrollIndicator={false}
       >
         {/* Game title */}
@@ -885,6 +887,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 2,
     paddingBottom: 2,
+  },
+  contentTablet: {
+    justifyContent: 'center',
+    maxWidth: 800,
+    paddingVertical: 28,
   },
   titleContainer: {
     width: '100%',

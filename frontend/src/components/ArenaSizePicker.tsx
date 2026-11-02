@@ -12,17 +12,21 @@ export function ArenaSizePicker({
   owned,
   selected,
   onSelect,
+  align = 'start',
 }: {
   owned: number;
   selected: number;
   onSelect: (size: number) => void;
+  align?: 'start' | 'center';
 }) {
   const max = Math.max(0, Math.floor(owned));
   const sizes = Array.from({ length: max + 1 }, (_, i) => i);
   return (
     <View style={styles.wrap}>
-      <Text style={styles.hint}>Free Play field. A saved game keeps the size it started with.</Text>
-      <View style={styles.row}>
+      <Text style={[styles.hint, align === 'center' && styles.hintCenter]}>
+        Free Play field. A saved game keeps the size it started with.
+      </Text>
+      <View style={[styles.row, align === 'center' && styles.rowCenter]}>
         {sizes.map((size) => {
           const grid = gridForArenaSize(size);
           const on = size === selected;
@@ -55,7 +59,9 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginBottom: 8,
   },
+  hintCenter: { textAlign: 'center', width: '100%' },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  rowCenter: { justifyContent: 'center', width: '100%' },
   chip: {
     minWidth: 72,
     borderWidth: 1,

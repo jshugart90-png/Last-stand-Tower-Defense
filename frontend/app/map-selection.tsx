@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
-import { Alert, FlatList, ImageBackground, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, FlatList, ImageBackground, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -14,6 +14,7 @@ import { TacticalTheme } from '../src/theme/colors';
 import { DIFFICULTY_MODES, getDifficultyModifiers } from '../src/logic/difficulty';
 import { uiArt } from '../src/art/sprites';
 import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
+import { screenshotAutomation } from '../src/logic/proofBattle';
 
 const MapCard = ({
   map,
@@ -84,6 +85,15 @@ export default function MapSelectionScreen() {
   } = usePlayerStore();
 
   const unlockedMapIds = usePlayerStore((s) => s.unlockedMapIds);
+  const tabletMaps = Dimensions.get('window').width >= 744;
+
+  useEffect(() => {
+    if (!screenshotAutomation()) return;
+    const owned = usePlayerStore.getState().arenaExpansions;
+    if (owned < 2) {
+      usePlayerStore.setState({ arenaExpansions: 2, selectedArenaSize: 1 });
+    }
+  }, []);
 
   /** Reconcile wave gates whenever this screen gains focus (after a run finishes, etc.). */
   useFocusEffect(
@@ -157,7 +167,8 @@ export default function MapSelectionScreen() {
         </View>
       </View>
 
-      <View style={styles.diffRow}>
+      <View style={[styles.filters, tabletMaps && styles.filtersTablet]}>
+      <View style={[styles.diffRow, tabletMaps && styles.diffRowTablet]}>
         {DIFFICULTY_MODES.map((mode) => {
           const info = getDifficultyModifiers(mode);
           const selected = difficultyMode === mode;
@@ -172,14 +183,18 @@ export default function MapSelectionScreen() {
           );
         })}
       </View>
-      <Text style={styles.diffBlurb}>{getDifficultyModifiers(difficultyMode).blurb}</Text>
+      <Text style={[styles.diffBlurb, tabletMaps && styles.diffBlurbTablet]}>
+        {getDifficultyModifiers(difficultyMode).blurb}
+      </Text>
       <View style={styles.arenaPicker}>
-        <Text style={styles.arenaPickerTitle}>Free Play size</Text>
+        <Text style={[styles.arenaPickerTitle, tabletMaps && styles.arenaPickerTitleTablet]}>Free Play size</Text>
         <ArenaSizePicker
           owned={arenaExpansions}
           selected={selectedArenaSize}
           onSelect={setSelectedArenaSize}
+          align={tabletMaps ? 'center' : 'start'}
         />
+      </View>
       </View>
 
       <FlatList
@@ -213,12 +228,24 @@ const styles = StyleSheet.create({
     borderBottomColor: TacticalTheme.border,
   },
   headerBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  filters: { width: '100%' },
+  filtersTablet: {
+    maxWidth: 640,
+    alignSelf: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
   diffRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     paddingHorizontal: 16,
     paddingTop: 10,
+  },
+  diffRowTablet: {
+    justifyContent: 'center',
+    paddingHorizontal: 0,
+    width: '100%',
   },
   diffChip: {
     borderWidth: 1,
@@ -239,12 +266,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  diffBlurbTablet: {
+    textAlign: 'center',
+    paddingHorizontal: 0,
+    width: '100%',
+  },
   arenaPicker: { paddingHorizontal: 16, paddingBottom: 4 },
   arenaPickerTitle: {
     color: TacticalTheme.text,
     fontSize: 14,
     fontWeight: '700',
     marginBottom: 4,
+  },
+  arenaPickerTitleTablet: {
+    textAlign: 'center',
+    alignSelf: 'center',
   },
   title: { color: TacticalTheme.text, fontSize: 20, fontWeight: '800' },
   gemWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },

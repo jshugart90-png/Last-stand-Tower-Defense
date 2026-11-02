@@ -36,7 +36,7 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
   useGameStore,
   PlacedTower,
@@ -87,7 +87,7 @@ import {
   projectileAngleDeg,
 } from '../src/logic/artMap';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
-import { readProofMapId, seedProofBattle } from '../src/logic/proofBattle';
+import { readShotRequest, screenshotAutomation, seedProofBattle, seedProofFreePlay } from '../src/logic/proofBattle';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -995,13 +995,21 @@ const GameSpawnBaseMarkers = React.memo(function GameSpawnBaseMarkers({
   basePosition: { x: number; y: number };
   scaledCellSize: number;
 }) {
+  const gridCols = useGameStore((s) => s.gridCols);
+  const gridRows = useGameStore((s) => s.gridRows);
   const draw = scaledCellSize * MARKER_DRAW;
-  const place = (cell: { x: number; y: number }) => ({
-    left: cell.x * scaledCellSize + (scaledCellSize - draw) / 2,
-    top: cell.y * scaledCellSize + scaledCellSize - draw,
-    width: draw,
-    height: draw,
-  });
+  const boardW = gridCols * scaledCellSize;
+  const boardH = gridRows * scaledCellSize;
+  const place = (cell: { x: number; y: number }) => {
+    const rawLeft = cell.x * scaledCellSize + (scaledCellSize - draw) / 2;
+    const rawTop = cell.y * scaledCellSize + scaledCellSize - draw;
+    return {
+      left: Math.max(0, Math.min(rawLeft, Math.max(0, boardW - draw))),
+      top: Math.max(0, Math.min(rawTop, Math.max(0, boardH - draw))),
+      width: draw,
+      height: draw,
+    };
+  };
   return (
     <>
       <View pointerEvents="none" style={[styles.spawnPoint, place(spawnPoint)]}>
@@ -1571,6 +1579,8 @@ const GameBoard = React.memo(
     onRegisterBoardHitTest,
     onRegisterClearPlacementPreview,
     onRegisterBoardScreenSync,
+    frameHeight = 0,
+    pinToTray = false,
   }: {
     onCellPress: (x: number, y: number) => void;
     scale: number;
@@ -1582,6 +1592,8 @@ const GameBoard = React.memo(
     onRegisterBoardHitTest?: (hit: BoardHitTestFn | null) => void;
     onRegisterClearPlacementPreview?: (clear: (() => void) | null) => void;
     onRegisterBoardScreenSync?: (sync: (() => void) | null) => void;
+    frameHeight?: number;
+    pinToTray?: boolean;
   }) => {
     const { gridCols, gridRows, cellSize, selectedTowerType, selectedPlacedTower, spawnPoint, basePosition, currentMapId } =
       useGameStore(
@@ -1933,10 +1945,12 @@ const GameBoard = React.memo(
       }
     }, [clearPlacementPreview, hoverPlacementCell]);
 
+    const frame = frameHeight > 0 ? frameHeight : 0;
+    const sitOnTray = pinToTray && frame > 0;
     return (
     <ScrollView
-      style={styles.boardScrollContainer}
-      contentContainerStyle={styles.boardScrollContent}
+      style={[styles.boardScrollContainer, frame > 0 ? { height: frame } : null]}
+      contentContainerStyle={[styles.boardScrollContent, frame > 0 ? { height: frame } : null]}
       horizontal
       scrollEnabled={!scrollLocked}
       removeClippedSubviews
@@ -1947,10 +1961,14 @@ const GameBoard = React.memo(
       onMomentumScrollEnd={scheduleBoardScreenSync}
     >
       <ScrollView
+        style={frame > 0 ? { height: frame, width: '100%' } : { flex: 1 }}
         scrollEnabled={!scrollLocked}
         removeClippedSubviews
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.boardInnerScrollContent}
+        contentContainerStyle={[
+          styles.boardInnerScrollContent,
+          sitOnTray ? { minHeight: frame, justifyContent: 'flex-end' } : null,
+        ]}
         scrollEventThrottle={24}
         onScroll={scheduleBoardScreenSync}
         onMomentumScrollEnd={scheduleBoardScreenSync}
@@ -2288,6 +2306,9 @@ const ResumeGameModal = ({
 };
 
 export default function GameScreen() {
+  const shotParams = useLocalSearchParams<{ proof?: string | string[]; size?: string | string[] }>();
+  const proofParam = Array.isArray(shotParams.proof) ? shotParams.proof[0] : shotParams.proof;
+  const sizeParam = Array.isArray(shotParams.size) ? shotParams.size[0] : shotParams.size;
   const router = useRouter();
   const dailyChallenge = useMemo(() => getDailyChallenge(), []);
   const runStartBestWaveRef = useRef<number>(0);
@@ -2522,25 +2543,31 @@ export default function GameScreen() {
   const boxW = battleBox.w > 0 ? battleBox.w : SCREEN_WIDTH;
   const widthFit = boardWidth > 0 ? boxW / boardWidth : 1;
   const heightFit = battleBox.h > 0 && boardHeight > 0 ? battleBox.h / boardHeight : 0;
-  // Phones (tall battle box): painted maps cover the battle area so a square painting does not
-  // leave a black band, and Free Play stays width-fit. Wide boxes such as iPad, where the
-  // width-fit board would run past the bottom: fit by height so the whole board, base included,
-  // stays on screen. Overflow scrolls; hit tests use the measured board rect.
+  // The whole grid stays on screen: scale is the smaller of width-fit and height-fit.
+  // Painted maps still cover a short box so a square painting does not leave a dark band.
+  // Free Play that is shorter than the box sits on the tower tray instead of floating above a gap.
   const boardTallerThanBox = heightFit > 0 && heightFit < widthFit;
+  const paintedBattle = mapBackgroundFor(battleMapId) != null;
   const scale = boardTallerThanBox
     ? heightFit
-    : mapBackgroundFor(battleMapId) != null && heightFit > 0
+    : paintedBattle && heightFit > 0
       ? Math.max(widthFit, heightFit)
       : widthFit;
+  const pinFreePlayToTray = !paintedBattle;
 
   // Initialize game on mount - check for saved game
   useEffect(() => {
     if (initializedRef.current) return;
+    if (screenshotAutomation() && !proofParam) return;
     initializedRef.current = true;
 
-    const proofMapId = readProofMapId();
-    if (proofMapId) {
-      seedProofBattle(proofMapId);
+    const shot = readShotRequest(proofParam, sizeParam);
+    if (shot?.kind === 'freeplay') {
+      seedProofFreePlay(shot.size);
+      return;
+    }
+    if (shot?.kind === 'arena') {
+      seedProofBattle(shot.mapId);
       return;
     }
 
@@ -2581,7 +2608,7 @@ export default function GameScreen() {
       frameAccumRef.current = 0;
       void cleanupGameplayAudioAfterSession();
     };
-  }, [playerStore, startGame, registerRunStarted]);
+  }, [playerStore, startGame, registerRunStarted, proofParam, sizeParam]);
 
   // Handle resume saved game
   const handleResumeGame = useCallback(() => {
@@ -3360,7 +3387,7 @@ export default function GameScreen() {
 
       {/* Game board — pinch with two fingers to zoom */}
       <View
-        style={styles.boardContainer}
+        style={[styles.boardContainer, pinFreePlayToTray && styles.boardTrayField]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
           setBattleBox((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
@@ -3376,6 +3403,8 @@ export default function GameScreen() {
           onRegisterBoardHitTest={registerBoardHitTest}
           onRegisterClearPlacementPreview={registerClearBoardPlacementPreview}
           onRegisterBoardScreenSync={registerBoardScreenSync}
+          frameHeight={battleBox.h}
+          pinToTray={pinFreePlayToTray}
         />
       </View>
 
@@ -3808,9 +3837,12 @@ const styles = StyleSheet.create({
   boardContainer: {
     flex: 1,
     position: 'relative',
-    justifyContent: 'flex-start',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     overflow: 'hidden',
+  },
+  boardTrayField: {
+    backgroundColor: '#2f6a34',
   },
   boardScrollContainer: {
     flex: 1,
