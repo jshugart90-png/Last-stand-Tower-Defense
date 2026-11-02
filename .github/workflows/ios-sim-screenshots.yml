@@ -6,6 +6,9 @@ name: iOS simulator screenshots
 
 on:
   workflow_dispatch:
+  push:
+    branches: [cursor/td-quality-revamp-5b68]
+    paths: ['.ci/sim-shots-trigger']
 
 jobs:
   screenshots:
