@@ -31,6 +31,7 @@ import {
   type ArenaMapTheme,
 } from '../constants/arenaMaps';
 import { gridForArenaSize } from '../logic/arenaSize';
+import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_IMPACT_SFX_PER_TICK, MAX_PROJECTILES } from '../logic/simClock';
 import {
   playWeaponFireSound,
   playProjectileImpact,
@@ -285,6 +286,9 @@ interface GameActions {
   
   // Enemy actions
   spawnEnemy: (type: EnemyType, healthMultiplier: number, speedMultiplier: number) => void;
+  spawnEnemyBatch: (
+    spawns: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[]
+  ) => void;
   
   // Main game tick
   gameTick: (deltaTime: number) => void;
@@ -890,6 +894,59 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }));
   },
 
+  /** One store update for every enemy that becomes due in a single simulation step. */
+  spawnEnemyBatch: (spawns: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[]) => {
+    if (spawns.length === 0) return;
+    const state = get();
+    const born: Enemy[] = [];
+    for (const spawn of spawns) {
+      const enemyDef = ENEMIES[spawn.type];
+      const flying = Boolean((enemyDef as { flying?: boolean }).flying);
+      let path: { x: number; y: number }[];
+      if (flying && state.arenaRoute.length < 2) {
+        path = manhattanPath(state.spawnPoint, state.basePosition, true);
+      } else if (state.arenaRoute.length >= 2) {
+        path = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+      } else {
+        const blockedCells = getBlockedCells(state.towers);
+        const computed =
+          findPath(state.spawnPoint, state.basePosition, state.gridCols, state.gridRows, blockedCells) ??
+          null;
+        if (!computed || computed.length < 2) continue;
+        path = computed;
+      }
+      born.push({
+        id: generateId(),
+        type: spawn.type,
+        position: { x: path[0].x, y: path[0].y },
+        health: Math.floor(enemyDef.baseHealth * spawn.healthMultiplier),
+        maxHealth: Math.floor(enemyDef.baseHealth * spawn.healthMultiplier),
+        speed: enemyDef.baseSpeed * spawn.speedMultiplier,
+        pathIndex: 0,
+        slowedUntil: 0,
+        coinReward: enemyDef.coinReward,
+        spawnTime: Date.now(),
+        path,
+        damageReduction: (enemyDef as { damageReduction?: number }).damageReduction,
+        healPerSecond: (enemyDef as { healPerSecond?: number }).healPerSecond,
+        auraRange: (enemyDef as { auraRange?: number }).auraRange,
+        splitOnDeath: (enemyDef as { splitOnDeath?: boolean }).splitOnDeath,
+        splitCount: (enemyDef as { splitCount?: number }).splitCount,
+        splitInto: (enemyDef as { splitInto?: EnemyType }).splitInto,
+        flying,
+        armor: (enemyDef as { armor?: number }).armor ?? 0,
+      });
+    }
+    if (born.length === 0) return;
+    set((s) => ({
+      enemies: [...s.enemies, ...born],
+      waveSpawnSlotsReleased:
+        s.waveInProgress && s.waveSpawnSlotsTotal > 0
+          ? Math.min(s.waveSpawnSlotsTotal, s.waveSpawnSlotsReleased + born.length)
+          : s.waveSpawnSlotsReleased,
+    }));
+  },
+
   // Main game tick - NO COMBO SYSTEM
   gameTick: (deltaTime) => {
     const state = get();
@@ -897,7 +954,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     try {
     const now = Date.now();
-    const adjustedDelta = deltaTime * state.gameSpeed;
+    // Speed is applied by running more fixed steps per real second, not by enlarging this step.
+    const adjustedDelta = deltaTime;
 
     // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
     // `>= 100` throttle compared delta to the *unchanged* store value, so at 1x–2x speed the
@@ -1148,6 +1206,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemyById.set(enemy.id, enemy);
     }
 
+    let impactSfx = 0;
     const updatedProjectiles = [...state.projectiles, ...newProjectiles].map(proj => {
       const target = enemyById.get(proj.targetId);
       if (!target || exploding.has(target.id)) {
@@ -1162,7 +1221,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
       if (dist < moveAmount + 0.2) {
         projectilesToRemove.add(proj.id);
-        void playProjectileImpact(proj);
+        if (impactSfx < MAX_IMPACT_SFX_PER_TICK) {
+          impactSfx += 1;
+          void playProjectileImpact(proj);
+        }
 
         if (proj.isSplash && proj.splashRadius) {
           const splashRadiusSq = proj.splashRadius * proj.splashRadius;
@@ -1258,8 +1320,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }
 
     const allowFx = !usePlayerStore.getState().performanceMode && (usePlayerStore.getState().vfxQuality ?? 2) > 0;
-    const nextFloats: FloatText[] = allowFx ? state.floatTexts.filter((f) => now - f.born < 700).slice(-12) : [];
-    const nextBursts: Burst[] = allowFx ? state.bursts.filter((b) => now - b.born < 640).slice(-16) : [];
+    const nextFloats: FloatText[] = allowFx
+      ? state.floatTexts.filter((f) => now - f.born < 700).slice(-MAX_FLOAT_TEXTS)
+      : [];
+    const nextBursts: Burst[] = allowFx
+      ? state.bursts.filter((b) => now - b.born < 640).slice(-MAX_BURSTS)
+      : [];
     let flyingKills = 0;
     let armoredKills = 0;
     let bossKills = 0;
@@ -1281,7 +1347,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         }
 
         if (enemy.type === 'boss' && dealt > 0) bossHit = true;
-        if (allowFx && dealt >= 4 && nextFloats.length < 12) {
+        if (allowFx && dealt >= 4 && nextFloats.length < MAX_FLOAT_TEXTS) {
           nextFloats.push({
             id: generateId(),
             x: enemy.position.x,
@@ -1298,7 +1364,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           else if (enemy.type === 'boss') bossKills += 1;
           const gained = scaleRunCoinsFromKill(enemy.coinReward);
           coinsEarned += gained;
-          if (allowFx && nextFloats.length < 12) {
+          if (allowFx && nextFloats.length < MAX_FLOAT_TEXTS) {
             nextFloats.push({
               id: generateId(),
               x: enemy.position.x,
@@ -1307,7 +1373,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
               born: now,
             });
           }
-          if (allowFx && nextBursts.length < 16) {
+          if (allowFx && nextBursts.length < MAX_BURSTS) {
             nextBursts.push({
               id: generateId(),
               x: enemy.position.x,
@@ -1387,7 +1453,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     set({
       enemies: [...finalEnemies, ...splitSpawns],
       towers: updatedTowers,
-      projectiles: updatedProjectiles.filter((p) => !projectilesToRemove.has(p.id)),
+      projectiles: (() => {
+        const live = updatedProjectiles.filter((p) => !projectilesToRemove.has(p.id));
+        return live.length > MAX_PROJECTILES ? live.slice(live.length - MAX_PROJECTILES) : live;
+      })(),
       laserBeams: newLaserBeams,
       baseHealth: newBaseHealth,
       isGameOver,

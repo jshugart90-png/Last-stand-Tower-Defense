@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix';
 import { parseShotRoute } from './shotUrl';
+import { clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
+import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, consumeSimSteps } from './simClock';
+import { runLateWaveLoad } from './waveLoadSim';
 import {
   ARENA_TIER_PRODUCT_IDS,
   LEGACY_ARENA_PRODUCT_ID,
@@ -31,7 +34,6 @@ import {
   migrateFieldBriefing,
   unionTowerUnlocks,
 } from './save';
-import { getWaveConfig, getWavePlannedEnemyCount } from '../constants/game';
 import { GAME_MAPS } from '../constants/maps';
 import { getArenaMap } from '../constants/arenaMaps';
 import { createDefaultAchievements } from '../constants/progression';
@@ -50,6 +52,31 @@ import {
   projectileAngleDeg,
   towerArtTier,
 } from './artMap';
+
+describe('game speed', () => {
+  it('clamps every legacy speed above 2 down to 2', () => {
+    assert.equal(clampGameSpeed(1), 1);
+    assert.equal(clampGameSpeed(2), 2);
+    assert.equal(clampGameSpeed(3), 2);
+    assert.equal(clampGameSpeed(4), 2);
+    assert.equal(clampGameSpeed(5), 2);
+    assert.equal(clampGameSpeed(10), 2);
+    assert.deepEqual(normalizeUnlockedSpeeds([1, 3, 5, 10]), [1, 2]);
+  });
+
+  it('keeps a 2x late wave inside a fixed step budget', () => {
+    const hitch = consumeSimSteps(0, 500, 2);
+    assert.ok(hitch.steps <= MAX_SUBSTEPS_PER_FRAME);
+    assert.ok(hitch.accumMs <= 1000 / 30);
+    const load = runLateWaveLoad({ realMinutes: 3, speed: 2 });
+    assert.ok(load.spawned > 20);
+    assert.ok(load.maxSteps <= MAX_SUBSTEPS_PER_FRAME);
+    assert.ok(load.maxShots <= MAX_PROJECTILES);
+    assert.ok(load.maxEnemies <= load.spawned);
+    assert.ok(load.maxEnemies < 80);
+    assert.ok(load.shotsLeft <= MAX_PROJECTILES);
+  });
+});
 
 describe('screenshot links', () => {
   it('maps simulator deep links onto app routes', () => {

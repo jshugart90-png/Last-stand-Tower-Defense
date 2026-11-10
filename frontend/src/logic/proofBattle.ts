@@ -108,7 +108,7 @@ export function seedProofBattle(mapId: string): void {
   const live = usePlayerStore.getState();
   useGameStore.getState().startGame(
     allTowers,
-    [1, 2, 3, 5],
+    [1, 2],
     live.towerUpgradeLevels,
     live.equippedSkins,
     live.selectedArenaSize,
@@ -162,7 +162,7 @@ export function seedProofFreePlay(size: number): void {
   const allTowers = live.unlockedTowers;
   useGameStore.getState().startGame(
     allTowers,
-    [1, 2, 3, 5],
+    [1, 2],
     live.towerUpgradeLevels,
     live.equippedSkins,
     n,

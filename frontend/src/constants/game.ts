@@ -10,24 +10,22 @@ export const TARGETING_MODES: { id: TargetingMode; label: string; description: s
   { id: 'closest', label: 'Close', description: 'Target nearest enemy to tower' },
 ];
 
-// Speed unlock prices (gems) — 1x is free; max simulation speed is 5x (no 10x).
-export type GameSpeed = 1 | 2 | 3 | 5;
+// Speed unlock prices (gems). 1x is free. 2x is the maximum.
+// Older saves may contain 3, 5, or 10; those clamp down to 2x.
+export type GameSpeed = 1 | 2;
 
-export const MAX_GAME_SPEED: GameSpeed = 5;
+export const MAX_GAME_SPEED: GameSpeed = 2;
 
-export const ALLOWED_GAME_SPEEDS: readonly GameSpeed[] = [1, 2, 3, 5];
+export const ALLOWED_GAME_SPEEDS: readonly GameSpeed[] = [1, 2];
 
 export function isGameSpeed(n: number): n is GameSpeed {
-  return (ALLOWED_GAME_SPEEDS as readonly number[]).includes(n);
+  return n === 1 || n === 2;
 }
 
-/** Map legacy saves / bad values onto allowed speeds (10 → 5). */
+/** Map legacy saves and bad values onto 1x or 2x. Anything above 2 becomes 2. */
 export function clampGameSpeed(n: number): GameSpeed {
-  if (isGameSpeed(n)) return n;
-  if (n === 10 || n > 5) return 5;
-  if (n < 1) return 1;
-  const list: GameSpeed[] = [1, 2, 3, 5];
-  return list.reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a));
+  if (!Number.isFinite(n) || n < 1.5) return 1;
+  return 2;
 }
 
 export function normalizeUnlockedSpeeds(input: unknown): GameSpeed[] {
@@ -35,20 +33,14 @@ export function normalizeUnlockedSpeeds(input: unknown): GameSpeed[] {
   if (!Array.isArray(input)) return [1];
   for (const raw of input) {
     const n = Number(raw);
-    if (n === 10) {
-      out.add(5);
-      continue;
-    }
-    if (isGameSpeed(n)) out.add(n);
+    if (Number.isFinite(n) && n >= 2) out.add(2);
   }
   return Array.from(out).sort((a, b) => a - b);
 }
 
 export const SPEED_UNLOCK_PRICES: Record<GameSpeed, number> = {
-  1: 0,      // Free
-  2: 30,     // 30 gems for 2x speed
-  3: 80,     // 80 gems for 3x speed
-  5: 150,    // 150 gems for 5x speed
+  1: 0,
+  2: 30,
 };
 
 // Tower unlock prices (gems) - purchased in shop

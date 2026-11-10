@@ -88,6 +88,7 @@ import {
 } from '../src/logic/artMap';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
 import { readShotRequest, screenshotAutomation, seedProofBattle, seedProofFreePlay } from '../src/logic/proofBattle';
+import { SIM_STEP_MS, consumeSimSteps } from '../src/logic/simClock';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -179,12 +180,6 @@ const getUtcDayKey = (ts: number) => {
   const d = new Date(ts);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 };
-
-const LOOP_STEP_MS = 1000 / 30;
-const MAX_FRAME_DELTA_MS = 250;
-/** Base simulation slices per rendered frame (scaled up when gameSpeed is high). */
-const BASE_MAX_SUBSTEPS_PER_FRAME = 6;
-const MAX_SUBSTEPS_CAP = 14;
 
 /** Build wave spawn schedule synchronously inside RAF — never rely on useEffect for this (effects run after RAF, causing empty schedules and instant erroneous endWave). */
 function ensureWaveSpawnSchedule(args: {
@@ -2530,6 +2525,7 @@ export default function GameScreen() {
 
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [battleBox, setBattleBox] = useState({ w: 0, h: 0 });
+  const fitLatch = useRef({ key: '', w: 0, h: 0 });
   const battleMapId = useGameStore((s) => s.currentMapId);
 
   const waveChallengeKey = useMemo(
@@ -2678,24 +2674,15 @@ export default function GameScreen() {
         const now = Date.now();
         const rawDelta = now - lastUpdateRef.current;
         lastUpdateRef.current = now;
-        frameAccumRef.current += Math.min(rawDelta, MAX_FRAME_DELTA_MS);
+        const consumed = consumeSimSteps(frameAccumRef.current, rawDelta, live.gameSpeed);
+        frameAccumRef.current = consumed.accumMs;
 
-        const maxSubsteps = Math.min(
-          MAX_SUBSTEPS_CAP,
-          BASE_MAX_SUBSTEPS_PER_FRAME + Math.floor(live.gameSpeed / 2)
-        );
-        const maxAccumCatchupMs = LOOP_STEP_MS * Math.max(12, maxSubsteps * 3);
-        frameAccumRef.current = Math.min(frameAccumRef.current, maxAccumCatchupMs);
-
-        let substeps = 0;
-        while (frameAccumRef.current >= LOOP_STEP_MS && substeps < maxSubsteps) {
-          frameAccumRef.current -= LOOP_STEP_MS;
-          substeps += 1;
+        for (let substeps = 0; substeps < consumed.steps; substeps += 1) {
           let state = useGameStore.getState();
           if (!state.isPlaying || state.isPaused) break;
 
           try {
-            state.gameTick(LOOP_STEP_MS);
+            state.gameTick(SIM_STEP_MS);
           } catch {
             continue;
           }
@@ -2716,7 +2703,8 @@ export default function GameScreen() {
                 selectedMap,
               });
 
-              waveElapsedMsRef.current += LOOP_STEP_MS * state.gameSpeed;
+              waveElapsedMsRef.current += SIM_STEP_MS;
+              const due: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[] = [];
               while (
                 waveSpawnCursorRef.current < waveScheduleRef.current.length &&
                 waveScheduleRef.current[waveSpawnCursorRef.current].atMs <= waveElapsedMsRef.current
@@ -2725,17 +2713,22 @@ export default function GameScreen() {
                 const waveConfig = getWaveConfig(state.currentWave);
                 const mapHealthMult = selectedMap?.enemyHealthMultiplier ?? 1;
                 const mapSpeedMult = selectedMap?.enemySpeedMultiplier ?? 1;
-                try {
-                  const diff = getDifficultyModifiers(usePlayerStore.getState().difficultyMode);
-                state.spawnEnemy(
-                    next.type as EnemyType,
+                const diff = getDifficultyModifiers(usePlayerStore.getState().difficultyMode);
+                due.push({
+                  type: next.type as EnemyType,
+                  healthMultiplier:
                     waveConfig.healthMultiplier * dailyChallenge.enemyHealthMultiplier * mapHealthMult * diff.enemyHealth,
-                    waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult * diff.enemySpeed
-                  );
-                } catch {
-                  /* skip spawn slot on failure */
-                }
+                  speedMultiplier:
+                    waveConfig.speedMultiplier * dailyChallenge.enemySpeedMultiplier * mapSpeedMult * diff.enemySpeed,
+                });
                 waveSpawnCursorRef.current += 1;
+              }
+              if (due.length > 0) {
+                try {
+                  useGameStore.getState().spawnEnemyBatch(due);
+                } catch {
+                  /* skip this step's spawns; the cursor already advanced */
+                }
               }
               if (waveSpawnCursorRef.current >= waveScheduleRef.current.length) {
                 spawningCompleteRef.current = true;
@@ -3390,7 +3383,21 @@ export default function GameScreen() {
         style={[styles.boardContainer, pinFreePlayToTray && styles.boardTrayField]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
-          setBattleBox((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
+          if (width <= 0 || height <= 0) return;
+          // Fit once per screen and arena. The tray, selection, and instruction line must not refit.
+          const key = `${gridCols}x${gridRows}x${Math.round(SCREEN_WIDTH)}`;
+          const latch = fitLatch.current;
+          if (latch.key !== key) {
+            latch.key = key;
+            latch.w = width;
+            latch.h = height;
+          } else if (height > latch.h + 1 || Math.abs(width - latch.w) > 1) {
+            latch.w = width;
+            latch.h = Math.max(latch.h, height);
+          }
+          setBattleBox((prev) =>
+            prev.w === latch.w && prev.h === latch.h ? prev : { w: latch.w, h: latch.h }
+          );
         }}
       >
         <GameBoard
@@ -4263,6 +4270,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   instructionBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 118,
+    zIndex: 40,
     backgroundColor: TacticalTheme.accent,
     paddingVertical: 6,
     paddingHorizontal: 16,
