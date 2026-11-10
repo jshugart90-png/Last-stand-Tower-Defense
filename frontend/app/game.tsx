@@ -32,7 +32,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -88,7 +88,8 @@ import { SIM_STEP_MS, consumeSimSteps, scaledStepMs } from '../src/logic/simCloc
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 /** Compact tower-button row. The upgrade panel overlays the board and does not grow this. */
-const TRAY_SLOT_HEIGHT = 124;
+/** Button row. The home-indicator inset is added in the screen so this stays the visible tray on SE. */
+const TRAY_BUTTON_HEIGHT = 104;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -2171,6 +2172,8 @@ const ResumeGameModal = ({
 };
 
 export default function GameScreen() {
+  const trayInset = useSafeAreaInsets().bottom;
+  const trayHeight = TRAY_BUTTON_HEIGHT + trayInset;
   const shotParams = useLocalSearchParams<{ proof?: string | string[]; size?: string | string[] }>();
   const proofParam = Array.isArray(shotParams.proof) ? shotParams.proof[0] : shotParams.proof;
   const sizeParam = Array.isArray(shotParams.size) ? shotParams.size[0] : shotParams.size;
@@ -3116,7 +3119,7 @@ export default function GameScreen() {
         router.replace('/');
       }}
     >
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <WoodPanel style={styles.header} cap={12}>
         <TouchableOpacity onPress={handleExitAttempt} style={styles.headerButton} accessibilityLabel="Back">
           <Ionicons name="arrow-back" size={18} color="#f4ead8" />
@@ -3205,7 +3208,7 @@ export default function GameScreen() {
       {/* Board slot is fixed. Tray, range ring, and the placement hint overlay it and do not move it. */}
       <View style={styles.playStage}>
       <View
-        style={[styles.boardSlot, pinFreePlayToTray && styles.boardTrayField]}
+        style={[styles.boardSlot, { bottom: trayHeight }, pinFreePlayToTray && styles.boardTrayField]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
           if (width <= 0 || height <= 0) return;
@@ -3255,7 +3258,7 @@ export default function GameScreen() {
       />
 
       {selectedTowerType && !selectedPlacedTower && (
-        <View style={[styles.instructionBar, { width: renderedBoardWidth }]} pointerEvents="none">
+        <View style={[styles.instructionBar, { width: renderedBoardWidth, bottom: trayHeight }]} pointerEvents="none">
           <Text style={styles.instructionText}>
             Drag a tower from the panel onto the map · Or tap to select, then drag on the map ·{' '}
             {TOWERS[selectedTowerType].name}
@@ -3264,7 +3267,7 @@ export default function GameScreen() {
       )}
 
       {selectedPlacedTower ? (
-        <View style={styles.optionsOverlay} pointerEvents="box-none">
+        <View style={[styles.optionsOverlay, { bottom: trayHeight }]} pointerEvents="box-none">
           <View style={{ width: renderedBoardWidth }} pointerEvents="auto">
           <TowerOptionsPanel
             tower={selectedPlacedTower}
@@ -3281,8 +3284,12 @@ export default function GameScreen() {
         </View>
       ) : null}
 
-      <View style={styles.traySlot} pointerEvents="box-none">
+      <View style={[styles.traySlot, { height: trayHeight }]} pointerEvents="box-none">
         <View style={{ width: renderedBoardWidth, height: '100%' }}>
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <Image source={uiArt.panel} resizeMode="stretch" style={StyleSheet.absoluteFill} />
+          </View>
+          <View style={{ height: TRAY_BUTTON_HEIGHT }}>
           <TowerPanel
             onSelect={selectTower}
             selectedType={selectedTowerType}
@@ -3295,6 +3302,7 @@ export default function GameScreen() {
             onTowerDragEnd={handleTowerDragEnd}
             onTowerDragFinalize={handleTowerDragFinalize}
           />
+          </View>
         </View>
       </View>
       </View>
@@ -3682,7 +3690,6 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    bottom: TRAY_SLOT_HEIGHT,
     overflow: 'hidden',
   },
   traySlot: {
@@ -3690,15 +3697,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: TRAY_SLOT_HEIGHT,
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   optionsOverlay: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: TRAY_SLOT_HEIGHT,
     zIndex: 45,
     alignItems: 'center',
     maxHeight: 210,
@@ -3977,7 +3982,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   towerOptionsPanel: {
-    maxHeight: TRAY_SLOT_HEIGHT,
+    maxHeight: 220,
     backgroundColor: TacticalTheme.surfaceDeep,
     borderTopWidth: 1,
     borderTopColor: '#2a2a4e',
@@ -4149,7 +4154,6 @@ const styles = StyleSheet.create({
   instructionBar: {
     position: 'absolute',
     alignSelf: 'center',
-    bottom: TRAY_SLOT_HEIGHT,
     zIndex: 40,
     backgroundColor: TacticalTheme.accent,
     paddingVertical: 6,
