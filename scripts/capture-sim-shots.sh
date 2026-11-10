@@ -30,6 +30,15 @@ echo "iPad 13: $IPAD13"
 echo "iPad 11: $IPAD11"
 echo "iPhone: $IPHONE"
 
+approve_scheme() {
+  local udid="$1"
+  local plist="$HOME/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences/com.apple.launchservices.schemeapproval.plist"
+  mkdir -p "$(dirname "$plist")"
+  # iOS 26 reads this at boot. Writing it during the same session still shows "Open in?".
+  /usr/libexec/PlistBuddy -c "Clear dict" "$plist" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :com.apple.CoreSimulator.CoreSimulatorBridge-->laststandtd string $BUNDLE" "$plist"
+}
+
 capture_device() {
   local udid="$1"
   local folder="$2"
@@ -38,8 +47,12 @@ capture_device() {
   xcrun simctl shutdown all || true
   xcrun simctl boot "$udid" || true
   xcrun simctl bootstatus "$udid" -b
-  xcrun simctl ui "$udid" orientation portrait || true
   xcrun simctl install "$udid" "$APP_PATH"
+  xcrun simctl shutdown "$udid" || true
+  approve_scheme "$udid"
+  xcrun simctl boot "$udid"
+  xcrun simctl bootstatus "$udid" -b
+  xcrun simctl ui "$udid" orientation portrait || true
   shot() {
     local name="$1"
     local url="$2"
