@@ -59,9 +59,10 @@ jobs:
         run: |
           set -euo pipefail
           WS="$(ls -d *.xcworkspace | head -n 1)"
-          SCHEME="$(xcodebuild -workspace "$WS" -list -json | python3 -c 'import json,sys; data=json.load(sys.stdin); schemes=data.get("workspace", data.get("project", {})).get("schemes", []); print(next(s for s in schemes if s != "Pods"))')"
-          echo "Scheme: $SCHEME"
+          SCHEME="$(xcodebuild -workspace "$WS" -list -json | python3 -c 'import json,sys; data=json.load(sys.stdin); schemes=data.get("workspace", data.get("project", {})).get("schemes", []); named=[s for s in schemes if "LastStand" in s]; print(named[0] if named else "")')"
           echo "Workspace: $WS"
+          echo "Scheme: $SCHEME"
+          test -n "$SCHEME"
           xcodebuild \
             -workspace "$WS" \
             -scheme "$SCHEME" \
@@ -73,6 +74,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
           APP="$(find "$RUNNER_TEMP/sim-dd/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          test -d "$APP"
           echo "APP_PATH=$APP" >> "$GITHUB_ENV"
           echo "Built $APP"
 
