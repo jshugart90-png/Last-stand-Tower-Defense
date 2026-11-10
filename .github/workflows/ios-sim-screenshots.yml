@@ -77,7 +77,7 @@ jobs:
           echo "Built $APP"
 
       - name: Capture screenshots
-        run: bash .github/scripts/capture-sim-shots.sh
+        run: bash scripts/capture-sim-shots.sh
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
