@@ -87,8 +87,8 @@ import { readShotRequest, screenshotAutomation, seedProofBattle, seedProofFreePl
 import { SIM_STEP_MS, consumeSimSteps, scaledStepMs } from '../src/logic/simClock';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
-/** Tall enough for the tower options panel, including the branch choice. Fixed so the board does not move. */
-const TRAY_SLOT_HEIGHT = 260;
+/** Compact tower-button row. The upgrade panel overlays the board and does not grow this. */
+const TRAY_SLOT_HEIGHT = 124;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -2394,6 +2394,7 @@ export default function GameScreen() {
   const heldScale = useRef(fittedScale);
   if (!placingNow) heldScale.current = fittedScale;
   const scale = placingNow ? heldScale.current : fittedScale;
+  const renderedBoardWidth = Math.min(SCREEN_WIDTH, Math.max(1, boardWidth * scale));
   const pinFreePlayToTray = !paintedBattle;
 
   // Initialize game on mount - check for saved game
@@ -3254,7 +3255,7 @@ export default function GameScreen() {
       />
 
       {selectedTowerType && !selectedPlacedTower && (
-        <View style={styles.instructionBar} pointerEvents="none">
+        <View style={[styles.instructionBar, { width: renderedBoardWidth }]} pointerEvents="none">
           <Text style={styles.instructionText}>
             Drag a tower from the panel onto the map · Or tap to select, then drag on the map ·{' '}
             {TOWERS[selectedTowerType].name}
@@ -3262,34 +3263,39 @@ export default function GameScreen() {
         </View>
       )}
 
-      <View style={styles.traySlot}>
-      <Image source={uiArt.panel} resizeMode="stretch" style={styles.trayWood} />
       {selectedPlacedTower ? (
-        <TowerOptionsPanel
-          tower={selectedPlacedTower}
-          onUpgrade={handleUpgrade}
-          onSell={handleSell}
-          onTargetingChange={handleTargetingChange}
-          onClose={() => selectPlacedTower(null)}
-          getUpgradeCost={getUpgradeCost}
-          getSellValue={getSellValue}
-          shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
-          calibrationLevel={playerStore.calibrationUpgradeLevel}
-        />
-      ) : (
-        <TowerPanel
-          onSelect={selectTower}
-          selectedType={selectedTowerType}
-          unlockedTowers={unlockedTowers}
-          getTowerCost={getTowerCost}
-          scrollEnabled={towerPanelScrollEnabled}
-          dragSV={panelDragSV}
-          onTowerDragStart={handleTowerDragStart}
-          onTowerDragMove={handleTowerDragMove}
-          onTowerDragEnd={handleTowerDragEnd}
-          onTowerDragFinalize={handleTowerDragFinalize}
-        />
-      )}
+        <View style={styles.optionsOverlay} pointerEvents="box-none">
+          <View style={{ width: renderedBoardWidth }} pointerEvents="auto">
+          <TowerOptionsPanel
+            tower={selectedPlacedTower}
+            onUpgrade={handleUpgrade}
+            onSell={handleSell}
+            onTargetingChange={handleTargetingChange}
+            onClose={() => selectPlacedTower(null)}
+            getUpgradeCost={getUpgradeCost}
+            getSellValue={getSellValue}
+            shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
+            calibrationLevel={playerStore.calibrationUpgradeLevel}
+          />
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.traySlot} pointerEvents="box-none">
+        <View style={{ width: renderedBoardWidth, height: '100%' }}>
+          <TowerPanel
+            onSelect={selectTower}
+            selectedType={selectedTowerType}
+            unlockedTowers={unlockedTowers}
+            getTowerCost={getTowerCost}
+            scrollEnabled={towerPanelScrollEnabled}
+            dragSV={panelDragSV}
+            onTowerDragStart={handleTowerDragStart}
+            onTowerDragMove={handleTowerDragMove}
+            onTowerDragEnd={handleTowerDragEnd}
+            onTowerDragFinalize={handleTowerDragFinalize}
+          />
+        </View>
       </View>
       </View>
 
@@ -3685,11 +3691,17 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: TRAY_SLOT_HEIGHT,
+    alignItems: 'center',
     justifyContent: 'flex-end',
-    overflow: 'hidden',
   },
-  trayWood: {
-    ...StyleSheet.absoluteFillObject,
+  optionsOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: TRAY_SLOT_HEIGHT,
+    zIndex: 45,
+    alignItems: 'center',
+    maxHeight: 210,
   },
   boardContainer: {
     flex: 1,
@@ -4136,8 +4148,7 @@ const styles = StyleSheet.create({
   },
   instructionBar: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    alignSelf: 'center',
     bottom: TRAY_SLOT_HEIGHT,
     zIndex: 40,
     backgroundColor: TacticalTheme.accent,

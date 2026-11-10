@@ -40,7 +40,7 @@ import {
   unionTowerUnlocks,
 } from '../logic/save';
 import { isServerBackedPlayerId, playerApi, isBackendConfigured } from '../hooks/useApi';
-import { legacySpeedOwnership, speedRefundNotice } from '../logic/speedRefund';
+import { legacySpeedRefundDue, speedRefundNotice } from '../logic/speedRefund';
 import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
@@ -1291,10 +1291,14 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       const state = get();
       const revision = state.legacySpeedRefundRevision ?? (state.legacySpeedRefundApplied ? 1 : 0);
       if (revision >= 2) return;
-      const owned2 = state.legacySpeedRefundOwned2;
-      const owned3 = revision < 1 && state.legacySpeedRefundOwned3;
-      const owned5 = revision < 1 && state.legacySpeedRefundOwned5;
-      const refund = (owned2 ? 30 : 0) + (owned3 ? 80 : 0) + (owned5 ? 150 : 0);
+      const due = legacySpeedRefundDue({
+        revision,
+        unlockedSpeeds: state.unlockedSpeeds,
+        owned2Flag: state.legacySpeedRefundOwned2,
+        owned3Flag: state.legacySpeedRefundOwned3,
+        owned5Flag: state.legacySpeedRefundOwned5,
+      });
+      const { pay2: owned2, pay3: owned3, pay5: owned5, refund } = due;
       if (isServerBackedPlayerId(state.playerId) && isBackendConfigured()) {
         try {
           const response = await playerApi.speedRefund(state.playerId as string, {
@@ -1502,12 +1506,15 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           : p?.legacySpeedRefundApplied
             ? 1
             : 0;
-      const ownership = legacySpeedOwnership(p?.unlockedSpeeds);
+      const due = legacySpeedRefundDue({
+        revision,
+        unlockedSpeeds: p?.unlockedSpeeds,
+        owned2Flag: p?.legacySpeedRefundOwned2,
+        owned3Flag: p?.legacySpeedRefundOwned3,
+        owned5Flag: p?.legacySpeedRefundOwned5,
+      });
       const serverBacked = isServerBackedPlayerId(rehydrated.playerId);
-      const pay2 = revision < 2 && ownership.owned2;
-      const pay3 = revision < 1 && ownership.owned3;
-      const pay5 = revision < 1 && ownership.owned5;
-      const refund = (pay2 ? 30 : 0) + (pay3 ? 80 : 0) + (pay5 ? 150 : 0);
+      const { pay2, pay3, pay5, refund } = due;
       let gems = rehydrated.gems;
       let nextRevision = revision;
       let owned2 = false;

@@ -168,7 +168,18 @@ export function seedProofFreePlay(size: number): void {
     n,
     CLASSIC_MAP_ID
   );
-  useGameStore.setState({ coins: 800, currentWave: 4, baseHealth: 20 });
+  useGameStore.setState({ coins: 8000, currentWave: 4, baseHealth: 20 });
+  const cols = useGameStore.getState().gridCols;
+  const rows = useGameStore.getState().gridRows;
+  let placed = 0;
+  for (let y = 0; y < rows && placed < 5; y += 1) {
+    for (let x = 0; x < cols && placed < 5; x += 1) {
+      if ((x + y) % 3 !== 1) continue;
+      useGameStore.getState().selectTower(PROOF_TOWERS[placed % PROOF_TOWERS.length]);
+      if (useGameStore.getState().placeTower({ x, y })) placed += 1;
+    }
+  }
+  useGameStore.getState().selectTower(null);
   useGameStore.getState().startWave();
   const spawn = useGameStore.getState().spawnEnemy;
   spawn('basic', 1, 0.55);

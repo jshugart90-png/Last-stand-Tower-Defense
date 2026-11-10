@@ -26,9 +26,11 @@ sys.exit(1)'
 IPAD13="$(pick "ipad pro 13-inch (m4)" || pick "ipad pro 13-inch")"
 IPAD11="$(pick "ipad pro 11-inch (m4)" || pick "ipad pro 11-inch")"
 IPHONE="$(pick "iphone 17 pro max" || pick "iphone 16 pro max")"
+IPHONE_SE="$(pick "iphone se (3rd generation)" || pick "iphone se")"
 echo "iPad 13: $IPAD13"
 echo "iPad 11: $IPAD11"
 echo "iPhone: $IPHONE"
+echo "iPhone SE: $IPHONE_SE"
 
 approve_scheme() {
   local udid="$1"
@@ -75,6 +77,23 @@ capture_device "$IPAD13" "ipad-13"
 capture_device "$IPAD11" "ipad-11"
 capture_device "$IPHONE" "iphone-6.9"
 
+# 4.7-inch SE battle, for the compact tray.
+mkdir -p "$ROOT/iphone-se"
+xcrun simctl shutdown all || true
+xcrun simctl boot "$IPHONE_SE" || true
+xcrun simctl bootstatus "$IPHONE_SE" -b
+xcrun simctl install "$IPHONE_SE" "$APP_PATH"
+xcrun simctl shutdown "$IPHONE_SE" || true
+approve_scheme "$IPHONE_SE"
+xcrun simctl boot "$IPHONE_SE"
+xcrun simctl bootstatus "$IPHONE_SE" -b
+xcrun simctl ui "$IPHONE_SE" orientation portrait || true
+xcrun simctl terminate "$IPHONE_SE" "$BUNDLE" || true
+xcrun simctl openurl "$IPHONE_SE" "laststandtd:///game?proof=classic&size=0"
+sleep 22
+xcrun simctl io booted screenshot "$ROOT/iphone-se/battle.png"
+xcrun simctl shutdown "$IPHONE_SE" || true
+
 find "$ROOT" -name '*.png' -print
 count="$(find "$ROOT" -name '*.png' | wc -l | tr -d ' ')"
-test "$count" -eq 18
+test "$count" -eq 19

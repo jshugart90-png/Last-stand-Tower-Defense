@@ -4,7 +4,7 @@ import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix
 import { parseShotRoute } from './shotUrl';
 import { GAME_CONFIG, clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
 import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, SIM_STEP_MS, consumeSimSteps, scaledStepMs } from './simClock';
-import { legacySpeedOwnership, speedRefundNotice } from './speedRefund';
+import { legacySpeedOwnership, legacySpeedRefundDue, speedRefundNotice } from './speedRefund';
 import { runAcceptanceSessions } from './waveLoadSim';
 import {
   ARENA_TIER_PRODUCT_IDS,
@@ -130,6 +130,37 @@ describe('removed speed refund', () => {
     );
     assert.equal(speedRefundNotice(true, false, false, 30), '2x speed is now free. 30 gems were refunded.');
     assert.equal(speedRefundNotice(false, false, false, 0), null);
+  });
+
+  it('pays the 23007 flags after the speed list was clamped to 2x', () => {
+    const due = legacySpeedRefundDue({
+      revision: 0,
+      unlockedSpeeds: [1, 2],
+      owned3Flag: true,
+      owned5Flag: true,
+    });
+    assert.equal(due.pay2, true);
+    assert.equal(due.pay3, true);
+    assert.equal(due.pay5, true);
+    assert.equal(due.refund, 260);
+    assert.equal(
+      legacySpeedRefundDue({
+        revision: 1,
+        unlockedSpeeds: [1, 2],
+        owned3Flag: true,
+        owned5Flag: true,
+      }).refund,
+      30
+    );
+    assert.equal(
+      legacySpeedRefundDue({
+        revision: 2,
+        unlockedSpeeds: [1, 2],
+        owned3Flag: true,
+        owned5Flag: true,
+      }).refund,
+      0
+    );
   });
 });
 

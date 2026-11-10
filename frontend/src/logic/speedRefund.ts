@@ -30,6 +30,31 @@ export function legacySpeedOwnership(input: unknown): LegacySpeedOwnership {
   return { owned2, owned3, owned5, refund };
 }
 
+/**
+ * What this save still owes. Revision 0 is a build that stored the 3x/5x flags
+ * (23007) after the speed list had already been clamped to [1, 2].
+ * Revision 1 already paid 3x/5x. Revision 2 is finished.
+ */
+export function legacySpeedRefundDue(input: {
+  revision: number;
+  unlockedSpeeds: unknown;
+  owned2Flag?: boolean;
+  owned3Flag?: boolean;
+  owned5Flag?: boolean;
+}): { pay2: boolean; pay3: boolean; pay5: boolean; refund: number } {
+  const owned = legacySpeedOwnership(input.unlockedSpeeds);
+  const revision = input.revision;
+  const pay2 = revision < 2 && (owned.owned2 || !!input.owned2Flag);
+  const pay3 = revision < 1 && (owned.owned3 || !!input.owned3Flag);
+  const pay5 = revision < 1 && (owned.owned5 || !!input.owned5Flag);
+  return {
+    pay2,
+    pay3,
+    pay5,
+    refund: (pay2 ? LEGACY_SPEED_2X_GEMS : 0) + (pay3 ? LEGACY_SPEED_3X_GEMS : 0) + (pay5 ? LEGACY_SPEED_5X_GEMS : 0),
+  };
+}
+
 export function speedRefundNotice(
   owned2: boolean,
   owned3: boolean,
