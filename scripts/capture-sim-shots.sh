@@ -26,7 +26,67 @@ sys.exit(1)'
 IPAD13="$(pick "ipad pro 13-inch (m4)" || pick "ipad pro 13-inch")"
 IPAD11="$(pick "ipad pro 11-inch (m4)" || pick "ipad pro 11-inch")"
 IPHONE="$(pick "iphone 17 pro max" || pick "iphone 16 pro max")"
-IPHONE_SE="$(pick "iphone se (3rd generation)" || pick "iphone se")"
+# Hosted runners ship the large phones only. SE is a device type, so create a 4.7" one.
+IPHONE_SE="$(pick "iphone se (3rd generation)" || pick "iphone se" || true)"
+if [[ -z "${IPHONE_SE}" ]]; then
+  echo "No iPhone SE simulator yet. Creating a 4.7-inch one."
+  IPHONE_SE="$(python3 - <<'PY'
+import json, subprocess, sys
+
+def run_json(args):
+    return json.loads(subprocess.check_output(args, text=True))
+
+types = run_json(["xcrun", "simctl", "list", "devicetypes", "-j"]).get("devicetypes", [])
+ranked = []
+for dt in types:
+    name = dt.get("name", "")
+    low = name.lower()
+    ident = dt.get("identifier", "")
+    if "iphone se" in low and "3rd" in low:
+        ranked.append((0, name, ident))
+    elif "iphone se" in low:
+        ranked.append((1, name, ident))
+    elif low == "iphone 8" or low.startswith("iphone 8 "):
+        ranked.append((2, name, ident))
+ranked.sort()
+if not ranked:
+    print("No 4.7-inch iPhone device type on this Xcode.", file=sys.stderr)
+    for dt in types:
+        if "iphone" in dt.get("name", "").lower():
+            print(dt.get("name"), file=sys.stderr)
+    sys.exit(1)
+
+runtimes = []
+for rt in run_json(["xcrun", "simctl", "list", "runtimes", "available", "-j"]).get("runtimes", []):
+    if not rt.get("isAvailable", True):
+        continue
+    ident = rt.get("identifier", "")
+    name = rt.get("name", "")
+    if "iOS" not in name and ".iOS" not in ident:
+        continue
+    runtimes.append((str(rt.get("version", "")), ident, name))
+runtimes.sort(reverse=True)
+
+errors = []
+for _, type_name, type_id in ranked:
+    for _, runtime_id, runtime_name in runtimes:
+        proc = subprocess.run(
+            ["xcrun", "simctl", "create", type_name, type_id, runtime_id],
+            text=True,
+            capture_output=True,
+        )
+        if proc.returncode == 0:
+            udid = proc.stdout.strip().splitlines()[-1].strip()
+            print(f"Created {type_name} on {runtime_name}: {udid}", file=sys.stderr)
+            print(udid)
+            sys.exit(0)
+        errors.append(f"{type_name} + {runtime_name}: {proc.stderr.strip() or proc.stdout.strip()}")
+print("Could not create a 4.7-inch simulator.", file=sys.stderr)
+print("\n".join(errors[-12:]), file=sys.stderr)
+sys.exit(1)
+PY
+)"
+fi
 echo "iPad 13: $IPAD13"
 echo "iPad 11: $IPAD11"
 echo "iPhone: $IPHONE"
