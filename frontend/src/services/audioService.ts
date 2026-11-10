@@ -505,31 +505,41 @@ export const refreshAudioModeOnForeground = async (): Promise<void> => {
   }
 };
 
-async function replayKey(key: string, baseVolume: number, combat: boolean): Promise<void> {
+/** One live player per sample. Extra shots in the same step reuse it instead of stacking loads. */
+const replayBusy = new Set<string>();
+
+function requestReplay(key: string, baseVolume: number, combat: boolean): void {
+  if (replayBusy.has(key)) return;
   if (combat && !gameplaySfxArmed) return;
   const gain = playerAudio().sfx;
   if (gain <= 0.001) return;
-  const ready = await ensureAudioReady();
-  if (!ready) return;
-  if (combat && !gameplaySfxArmed) return;
-  const sound = await loadSound(key, false);
-  if (!sound) return;
-  try {
-    await sound.setVolumeAsync(Math.max(0, Math.min(1, baseVolume * gain)));
-    await sound.replayAsync();
-  } catch {
-    /* drop this voice only */
-  }
-}
-
-function defer(op: () => Promise<void>) {
+  replayBusy.add(key);
   queueMicrotask(() => {
-    void op();
+    void (async () => {
+      try {
+        if (combat && !gameplaySfxArmed) return;
+        const ready = await ensureAudioReady();
+        if (!ready) return;
+        const sound = await loadSound(key, false);
+        if (!sound) return;
+        await sound.setVolumeAsync(Math.max(0, Math.min(1, baseVolume * gain)));
+        await sound.replayAsync();
+      } catch {
+        /* drop this voice only */
+      } finally {
+        replayBusy.delete(key);
+      }
+    })();
   });
 }
 
 export function setGameplaySfxArmed(armed: boolean): void {
   gameplaySfxArmed = armed;
+}
+
+/** Voices currently loading or playing. Extra shots of the same sample do not add one. */
+export function activeAudioVoices(): number {
+  return replayBusy.size;
 }
 
 export function isGameplaySfxArmed(): boolean {
@@ -554,7 +564,7 @@ export function canPlayUiSfx(): boolean {
 
 export function playSfx(name: SfxName): void {
   if (!canPlayUiSfx()) return;
-  defer(() => replayKey(`ui_${name}`, name === 'record' ? 0.72 : 0.68, false));
+  requestReplay(`ui_${name}`, name === 'record' ? 0.72 : 0.68, false);
 }
 
 const SHOT_KEY: Record<TowerType, string> = {
@@ -579,13 +589,13 @@ export function playWeaponFireSound(towerType: TowerType): void {
     if (now - lastMgAt < 45) return;
     lastMgAt = now;
   }
-  defer(() => replayKey(SHOT_KEY[towerType], towerType === 'sniper' ? 0.85 : 0.7, true));
+  requestReplay(SHOT_KEY[towerType], towerType === 'sniper' ? 0.85 : 0.7, true);
 }
 
 export function playProjectileImpact(proj: { towerType: TowerType }): void {
   if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
   const loud = proj.towerType === 'splash' || proj.towerType === 'missile' || proj.towerType === 'cannon' || proj.towerType === 'flak';
-  defer(() => replayKey('impact', loud ? 0.8 : 0.55, true));
+  requestReplay('impact', loud ? 0.8 : 0.55, true);
 }
 
 export function playEnemyDeathBurst(killCount: number): void {
@@ -595,34 +605,34 @@ export function playEnemyDeathBurst(killCount: number): void {
   for (let i = 0; i < layers; i++) {
     setTimeout(() => {
       if (!gameplaySfxArmed) return;
-      void replayKey(i === 0 ? key : 'death', 0.75, true);
+      requestReplay(i === 0 ? key : 'death', 0.75, true);
     }, i * 50);
   }
 }
 
 export function playBaseDamageSound(): void {
   if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('impact', 0.9, true));
+  requestReplay('impact', 0.9, true);
 }
 
 export function playWaveStartFanfare(): void {
   if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('wave', 0.8, true));
+  requestReplay('wave', 0.8, true);
 }
 
 export function playBuildSound(): void {
   if (playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('build', 0.7, false));
+  requestReplay('build', 0.7, false);
 }
 
 export function playUpgradeSound(): void {
   if (playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('upgrade', 0.75, false));
+  requestReplay('upgrade', 0.75, false);
 }
 
 export function playWinSound(): void {
   if (playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('win', 0.8, false));
+  requestReplay('win', 0.8, false);
 }
 
 export function playLoseSound(): void {
@@ -630,6 +640,6 @@ export function playLoseSound(): void {
   if (now - lastLoseAt < 1500) return;
   lastLoseAt = now;
   if (playerAudio().sfx <= 0.001) return;
-  defer(() => replayKey('lose', 0.85, false));
+  requestReplay('lose', 0.85, false);
   void playMusic('defeat');
 }

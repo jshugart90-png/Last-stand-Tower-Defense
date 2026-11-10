@@ -3378,26 +3378,20 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Game board — pinch with two fingers to zoom */}
+      {/* Board slot is fixed. Tray, range ring, and the placement hint overlay it and do not move it. */}
+      <View style={styles.playStage}>
       <View
-        style={[styles.boardContainer, pinFreePlayToTray && styles.boardTrayField]}
+        style={[styles.boardSlot, pinFreePlayToTray && styles.boardTrayField]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
           if (width <= 0 || height <= 0) return;
-          // Fit once per screen and arena. The tray, selection, and instruction line must not refit.
-          const key = `${gridCols}x${gridRows}x${Math.round(SCREEN_WIDTH)}`;
+          const key = `${gridCols}x${gridRows}x${Math.round(SCREEN_WIDTH)}x${Math.round(height)}`;
           const latch = fitLatch.current;
-          if (latch.key !== key) {
-            latch.key = key;
-            latch.w = width;
-            latch.h = height;
-          } else if (height > latch.h + 1 || Math.abs(width - latch.w) > 1) {
-            latch.w = width;
-            latch.h = Math.max(latch.h, height);
-          }
-          setBattleBox((prev) =>
-            prev.w === latch.w && prev.h === latch.h ? prev : { w: latch.w, h: latch.h }
-          );
+          if (latch.key === key && latch.w === width && latch.h === height) return;
+          latch.key = key;
+          latch.w = width;
+          latch.h = height;
+          setBattleBox({ w: width, h: height });
         }}
       >
         <GameBoard
@@ -3423,8 +3417,17 @@ export default function GameScreen() {
         invalidDrop={invalidDropFlash}
       />
 
-      {/* Tower options panel */}
-      {selectedPlacedTower && (
+      {selectedTowerType && !selectedPlacedTower && (
+        <View style={styles.instructionBar} pointerEvents="none">
+          <Text style={styles.instructionText}>
+            Drag a tower from the panel onto the map · Or tap to select, then drag on the map · Pinch to zoom ·{' '}
+            {TOWERS[selectedTowerType].name}
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.traySlot}>
+      {selectedPlacedTower ? (
         <TowerOptionsPanel
           tower={selectedPlacedTower}
           onUpgrade={handleUpgrade}
@@ -3437,10 +3440,7 @@ export default function GameScreen() {
           shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
           calibrationLevel={playerStore.calibrationUpgradeLevel}
         />
-      )}
-
-      {/* Tower selection panel */}
-      {!selectedPlacedTower && (
+      ) : (
         <TowerPanel
           onSelect={selectTower}
           selectedType={selectedTowerType}
@@ -3455,16 +3455,8 @@ export default function GameScreen() {
           onTowerDragFinalize={handleTowerDragFinalize}
         />
       )}
-
-      {/* Instructions */}
-      {selectedTowerType && !selectedPlacedTower && (
-        <View style={styles.instructionBar}>
-          <Text style={styles.instructionText}>
-            Drag a tower from the panel onto the map · Or tap to select, then drag on the map · Pinch to zoom ·{' '}
-            {TOWERS[selectedTowerType].name}
-          </Text>
-        </View>
-      )}
+      </View>
+      </View>
 
       <GameOverFlowModal
         visible={isGameOver}
@@ -3840,6 +3832,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     width: 40,
     textAlign: 'center',
+  },
+  playStage: {
+    flex: 1,
+    position: 'relative',
+  },
+  boardSlot: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 124,
+    overflow: 'hidden',
+  },
+  traySlot: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 124,
+    justifyContent: 'flex-end',
   },
   boardContainer: {
     flex: 1,
@@ -4273,7 +4285,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 118,
+    bottom: 124,
     zIndex: 40,
     backgroundColor: TacticalTheme.accent,
     paddingVertical: 6,

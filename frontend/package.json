@@ -10,7 +10,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test:logic": "tsx --test src/logic/logic.test.ts",
+    "test:logic": "node --experimental-test-module-mocks --import tsx --test src/logic/logic.test.ts src/logic/headlessSessions.test.ts",
     "eas:ios": "eas build --platform ios --profile production",
     "eas:submit:ios": "eas submit --platform ios --profile production --latest",
     "eas:ios:testflight": "eas build --platform ios --profile production --auto-submit --non-interactive"

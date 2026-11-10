@@ -11,7 +11,8 @@ export const TARGETING_MODES: { id: TargetingMode; label: string; description: s
 ];
 
 // Speed unlock prices (gems). 1x is free. 2x is the maximum.
-// Older saves may contain 3, 5, or 10; those clamp down to 2x.
+// 3x (80 gems) and 5x (150 gems) were gem-shop unlocks, not IAP products.
+// A legacy 10x flag mapped to 5x. Those saved unlocks stay and clamp to 2x.
 export type GameSpeed = 1 | 2;
 
 export const MAX_GAME_SPEED: GameSpeed = 2;

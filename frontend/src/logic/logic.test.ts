@@ -4,7 +4,7 @@ import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix
 import { parseShotRoute } from './shotUrl';
 import { clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
 import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, consumeSimSteps } from './simClock';
-import { runLateWaveLoad } from './waveLoadSim';
+import { runAcceptanceSessions } from './waveLoadSim';
 import {
   ARENA_TIER_PRODUCT_IDS,
   LEGACY_ARENA_PRODUCT_ID,
@@ -68,13 +68,24 @@ describe('game speed', () => {
     const hitch = consumeSimSteps(0, 500, 2);
     assert.ok(hitch.steps <= MAX_SUBSTEPS_PER_FRAME);
     assert.ok(hitch.accumMs <= 1000 / 30);
-    const load = runLateWaveLoad({ realMinutes: 3, speed: 2 });
-    assert.ok(load.spawned > 20);
-    assert.ok(load.maxSteps <= MAX_SUBSTEPS_PER_FRAME);
-    assert.ok(load.maxShots <= MAX_PROJECTILES);
-    assert.ok(load.maxEnemies <= load.spawned);
-    assert.ok(load.maxEnemies < 80);
-    assert.ok(load.shotsLeft <= MAX_PROJECTILES);
+    const load = runAcceptanceSessions();
+    assert.equal(load.freeGrid.cols, 16);
+    assert.equal(load.freeGrid.rows, 20);
+    assert.equal(load.roundPeaks.length, 2);
+    for (const peak of load.roundPeaks) {
+      assert.ok(peak.projectiles <= MAX_PROJECTILES);
+      assert.ok(peak.listeners <= 9);
+    }
+    assert.equal(load.galeLeveled.enemies, true);
+    assert.equal(load.galeLeveled.projectiles, true);
+    assert.equal(load.galeLeveled.particles, true);
+    assert.equal(load.galeLeveled.timers, true);
+    assert.equal(load.galeLeveled.listeners, true);
+    assert.equal(load.freeLeveled.enemies, true);
+    assert.equal(load.freeLeveled.projectiles, true);
+    assert.equal(load.freeLeveled.particles, true);
+    assert.equal(load.freeLeveled.timers, true);
+    assert.equal(load.freeLeveled.listeners, true);
   });
 });
 

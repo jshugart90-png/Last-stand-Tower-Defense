@@ -219,6 +219,8 @@ export interface GameState {
   // Game timing
   gameStartTime: number;
   gameSpeed: GameSpeed;
+  /** Simulation clock. Fire rate and slows use this, not the wall clock. */
+  simTimeMs: number;
   waveEndTime: number;
   autoWaveTimer: number;
   
@@ -418,6 +420,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   doubleDamageUntil: 0,
   gameStartTime: 0,
   gameSpeed: 1,
+  simTimeMs: 0,
   waveEndTime: 0,
   autoWaveTimer: 0,
   selectedTowerType: null,
@@ -478,6 +481,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
         gameSpeed: 1,
+  simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: 0,
         selectedTowerType: null,
@@ -542,6 +546,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
       gameSpeed: 1,
+  simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: 0,
       selectedTowerType: null,
@@ -899,21 +904,30 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     if (spawns.length === 0) return;
     const state = get();
     const born: Enemy[] = [];
+    let sharedGround: { x: number; y: number }[] | null = null;
+    let sharedFly: { x: number; y: number }[] | null = null;
+    const groundPath = () => {
+      if (sharedGround) return sharedGround;
+      if (state.arenaRoute.length >= 2) {
+        sharedGround = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+        return sharedGround;
+      }
+      const blockedCells = getBlockedCells(state.towers);
+      const computed =
+        findPath(state.spawnPoint, state.basePosition, state.gridCols, state.gridRows, blockedCells) ?? null;
+      sharedGround = computed && computed.length >= 2 ? computed : [];
+      return sharedGround;
+    };
     for (const spawn of spawns) {
       const enemyDef = ENEMIES[spawn.type];
       const flying = Boolean((enemyDef as { flying?: boolean }).flying);
       let path: { x: number; y: number }[];
       if (flying && state.arenaRoute.length < 2) {
-        path = manhattanPath(state.spawnPoint, state.basePosition, true);
-      } else if (state.arenaRoute.length >= 2) {
-        path = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+        if (!sharedFly) sharedFly = manhattanPath(state.spawnPoint, state.basePosition, true);
+        path = sharedFly;
       } else {
-        const blockedCells = getBlockedCells(state.towers);
-        const computed =
-          findPath(state.spawnPoint, state.basePosition, state.gridCols, state.gridRows, blockedCells) ??
-          null;
-        if (!computed || computed.length < 2) continue;
-        path = computed;
+        path = groundPath();
+        if (path.length < 2) continue;
       }
       born.push({
         id: generateId(),
@@ -938,6 +952,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       });
     }
     if (born.length === 0) return;
+    // One path for the whole batch. Searching again per enemy is what made 2x hitch and then die.
     set((s) => ({
       enemies: [...s.enemies, ...born],
       waveSpawnSlotsReleased:
@@ -954,8 +969,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     try {
     const now = Date.now();
-    // Speed is applied by running more fixed steps per real second, not by enlarging this step.
+    // Speed is applied by running more fixed steps per real second, not by enlarging this step
+    // and not by shortening the fire cooldown on the wall clock.
     const adjustedDelta = deltaTime;
+    const simNow = (state.simTimeMs ?? 0) + adjustedDelta;
 
     // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
     // `>= 100` throttle compared delta to the *unchanged* store value, so at 1x–2x speed the
@@ -978,7 +995,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     let baseDamage = 0;
 
     const updatedEnemies = state.enemies.map(enemy => {
-      const isSlowed = now < enemy.slowedUntil;
+      const isSlowed = simNow < enemy.slowedUntil;
       const speedMultiplier = isSlowed ? 0.5 : 1;
       const speed = enemy.speed * speedMultiplier;
       
@@ -1059,7 +1076,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         calibration
       );
 
-      if (now - tower.lastFireTime < stats.fireRate / state.gameSpeed) {
+      if (simNow - tower.lastFireTime < stats.fireRate) {
         return tower;
       }
 
@@ -1146,7 +1163,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
         return {
           ...tower,
-          lastFireTime: now,
+          lastFireTime: simNow,
           currentTargetId: target.id,
           damageAccumulator: newDamageAccumulator,
         };
@@ -1177,7 +1194,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         sfxPlayed += 1;
         void playWeaponFireSound(tower.type);
       }
-      return { ...tower, lastFireTime: now };
+      return { ...tower, lastFireTime: simNow };
     });
 
     // ====== PROCESS LASER BEAMS (instant damage) ======
@@ -1343,7 +1360,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
         let slowedUntil = enemy.slowedUntil;
         if (agg?.slow) {
-          slowedUntil = Math.max(slowedUntil, now + agg.slow.duration);
+          slowedUntil = Math.max(slowedUntil, simNow + agg.slow.duration);
         }
 
         if (enemy.type === 'boss' && dealt > 0) bossHit = true;
@@ -1451,6 +1468,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       sel === null ? null : updatedTowers.find((t) => t.id === sel.id) ?? null;
 
     set({
+      simTimeMs: simNow,
       enemies: [...finalEnemies, ...splitSpawns],
       towers: updatedTowers,
       projectiles: (() => {
@@ -1680,6 +1698,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
         gameSpeed: 1,
+  simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
         selectedTowerType: null,
@@ -1737,6 +1756,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
       gameSpeed: 1,
+  simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
       selectedTowerType: null,
