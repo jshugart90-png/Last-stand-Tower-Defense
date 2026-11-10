@@ -3263,6 +3263,7 @@ export default function GameScreen() {
       )}
 
       <View style={styles.traySlot}>
+      <Image source={uiArt.panel} resizeMode="stretch" style={styles.trayWood} />
       {selectedPlacedTower ? (
         <TowerOptionsPanel
           tower={selectedPlacedTower}
@@ -3686,6 +3687,9 @@ const styles = StyleSheet.create({
     height: TRAY_SLOT_HEIGHT,
     justifyContent: 'flex-end',
     overflow: 'hidden',
+  },
+  trayWood: {
+    ...StyleSheet.absoluteFillObject,
   },
   boardContainer: {
     flex: 1,
