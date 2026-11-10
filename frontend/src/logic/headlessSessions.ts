@@ -4,7 +4,7 @@ import { getDifficultyModifiers } from '../logic/difficulty';
 import { activeAudioVoices } from '../services/audioService';
 import { useGameStore } from '../stores/gameStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_PROJECTILES, SIM_STEP_MS, consumeSimSteps } from './simClock';
+import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_PROJECTILES, SIM_STEP_MS, consumeSimSteps, scaledStepMs } from './simClock';
 
 export type LiveCensus = {
   simSec: number;
@@ -221,7 +221,7 @@ export async function runLiveAcceptance() {
             elapsed = 0;
             waveKey = key;
           }
-          elapsed += SIM_STEP_MS;
+          elapsed += scaledStepMs(SIM_STEP_MS, state.gameSpeed);
           const due: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[] = [];
           const mult = multipliers(state.currentWave, mapId);
           while (cursor < schedule.length && schedule[cursor].atMs <= elapsed) {
@@ -343,7 +343,7 @@ export async function runGaleAudioSoak(waveCount = 25, hooks?: { onStep?: (step:
           hooks?.onStep?.(simSteps);
           const state = useGameStore.getState();
           if (schedule.length === 0) schedule = scheduleFor(state.currentWave, 'gale_bastion');
-          elapsed += SIM_STEP_MS;
+          elapsed += scaledStepMs(SIM_STEP_MS, state.gameSpeed);
           const due: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[] = [];
           const mult = multipliers(state.currentWave, 'gale_bastion');
           while (cursor < schedule.length && schedule[cursor].atMs <= elapsed) {

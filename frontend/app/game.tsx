@@ -47,6 +47,7 @@ import {
   TOWERS, GAME_CONFIG, getWaveConfig, TowerType, 
   TARGETING_MODES, TargetingMode, 
   getRunCoinIncomeMultiplier,
+  ALLOWED_GAME_SPEEDS,
   scaledTotalPerformanceGems,
   endGamePerformanceRemainder,
   COMBO_BONUS_GEMS,
@@ -83,12 +84,13 @@ import {
 } from '../src/logic/artMap';
 import { getDifficultyModifiers } from '../src/logic/difficulty';
 import { readShotRequest, screenshotAutomation, seedProofBattle, seedProofFreePlay } from '../src/logic/proofBattle';
-import { SIM_STEP_MS, consumeSimSteps } from '../src/logic/simClock';
+import { SIM_STEP_MS, consumeSimSteps, scaledStepMs } from '../src/logic/simClock';
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+/** Tall enough for the tower options panel, including the branch choice. Fixed so the board does not move. */
+const TRAY_SLOT_HEIGHT = 260;
 
-/** Pinch zoom limits (keep in sync with gameStore.setZoomLevel clamp) */
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type BoardHitTestFn = (winX: number, winY: number) => { col: number; row: number } | null;
 
@@ -487,6 +489,25 @@ function StartWaveLabel({ currentWave }: { currentWave: number }) {
   );
 }
 
+function SpeedToggle() {
+  const speed = useGameStore((s) => s.gameSpeed);
+  const setGameSpeed = useGameStore((s) => s.setGameSpeed);
+  return (
+    <View style={styles.speedControls}>
+      {ALLOWED_GAME_SPEEDS.map((option) => (
+        <TouchableOpacity
+          key={option}
+          style={[styles.speedButton, speed === option && styles.speedButtonActive]}
+          onPress={() => setGameSpeed(option)}
+          accessibilityLabel={`${option}x speed`}
+        >
+          <Text style={[styles.speedButtonText, speed === option && styles.speedButtonTextActive]}>{option}x</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 function PauseRunLine() {
   const coins = useGameStore((s) => s.coins);
   const enemiesKilled = useGameStore((s) => s.enemiesKilled);
@@ -537,7 +558,7 @@ const TowerOptionsPanel = ({
   );
 
   return (
-    <View style={styles.towerOptionsPanel}>
+    <TrayScroll style={styles.towerOptionsPanel} contentContainerStyle={styles.towerOptionsContent}>
       <View style={styles.towerOptionHeader}>
         <View style={[styles.towerOptionIcon, { backgroundColor: towerDef.color }]}>
           <TowerPicture type={tower.type} level={tower.level} size={22} />
@@ -615,7 +636,7 @@ const TowerOptionsPanel = ({
           <Text style={styles.actionButtonText}>+{sellValue}</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </TrayScroll>
   );
 };
 
@@ -2528,7 +2549,7 @@ export default function GameScreen() {
                 selectedMap,
               });
 
-              waveElapsedMsRef.current += SIM_STEP_MS;
+              waveElapsedMsRef.current += scaledStepMs(SIM_STEP_MS, state.gameSpeed);
               const due: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[] = [];
               while (
                 waveSpawnCursorRef.current < waveScheduleRef.current.length &&
@@ -3146,6 +3167,7 @@ export default function GameScreen() {
                 : `Wave ${currentWave} done`}
           </Text>
           <Text style={styles.hudStripText}>×{battleCoinIncomeMult.toFixed(2)}</Text>
+          <SpeedToggle />
           {!waveInProgress ? (
             <TouchableOpacity onPress={handleStartWave} activeOpacity={0.85}>
               <ImageBackground
@@ -3196,6 +3218,18 @@ export default function GameScreen() {
           setBattleBox({ w: width, h: height });
         }}
       >
+        {pinFreePlayToTray ? (
+          <View pointerEvents="none" style={styles.freePlayGrassFill}>
+            {Array.from({ length: 40 }, (_, i) => (
+              <Image
+                key={i}
+                source={i % 5 === 0 ? terrainArt.grassAlt : terrainArt.grass}
+                style={styles.freePlayGrassTile}
+                resizeMode="cover"
+              />
+            ))}
+          </View>
+        ) : null}
         <GameBoard
           onCellPress={handleCellPress}
           scale={scale}
@@ -3641,7 +3675,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    bottom: 124,
+    bottom: TRAY_SLOT_HEIGHT,
     overflow: 'hidden',
   },
   traySlot: {
@@ -3649,7 +3683,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    height: 124,
+    height: TRAY_SLOT_HEIGHT,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
@@ -3662,6 +3696,15 @@ const styles = StyleSheet.create({
   },
   boardTrayField: {
     backgroundColor: '#2f6a34',
+  },
+  freePlayGrassFill: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  freePlayGrassTile: {
+    width: '25%',
+    height: 96,
   },
   boardScrollContainer: {
     flex: 1,
@@ -3918,10 +3961,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   towerOptionsPanel: {
+    maxHeight: TRAY_SLOT_HEIGHT,
     backgroundColor: TacticalTheme.surfaceDeep,
-    padding: 12,
     borderTopWidth: 1,
     borderTopColor: '#2a2a4e',
+  },
+  towerOptionsContent: {
+    padding: 12,
   },
   towerOptionHeader: {
     flexDirection: 'row',
@@ -4088,7 +4134,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 124,
+    bottom: TRAY_SLOT_HEIGHT,
     zIndex: 40,
     backgroundColor: TacticalTheme.accent,
     paddingVertical: 6,

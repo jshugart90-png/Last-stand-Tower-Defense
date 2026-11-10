@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix';
 import { parseShotRoute } from './shotUrl';
-import { clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
-import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, consumeSimSteps } from './simClock';
+import { GAME_CONFIG, clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
+import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, SIM_STEP_MS, consumeSimSteps, scaledStepMs } from './simClock';
 import { legacySpeedOwnership, speedRefundNotice } from './speedRefund';
 import { runAcceptanceSessions } from './waveLoadSim';
 import {
@@ -94,15 +94,52 @@ describe('game speed', () => {
   });
 });
 
+function waveScheduleEndMs(wave: number): number {
+  let delay = 500;
+  let last = 500;
+  for (const group of getWaveConfig(wave).enemies) {
+    for (let i = 0; i < group.count; i++) {
+      last = delay;
+      delay += GAME_CONFIG.ENEMY_SPAWN_DELAY;
+    }
+  }
+  return last;
+}
+
+function wallStepsUntil(endMs: number, speed: 1 | 2): number {
+  let elapsed = 0;
+  let steps = 0;
+  while (elapsed < endMs) {
+    elapsed += scaledStepMs(SIM_STEP_MS, speed);
+    steps += 1;
+  }
+  return steps;
+}
+
 describe('removed speed refund', () => {
-  it('refunds 3x and 5x once from the saved unlock list', () => {
-    assert.deepEqual(legacySpeedOwnership([1, 2]), { owned3: false, owned5: false, refund: 0 });
-    assert.deepEqual(legacySpeedOwnership([1, 3]), { owned3: true, owned5: false, refund: 80 });
-    assert.deepEqual(legacySpeedOwnership([1, 5]), { owned3: false, owned5: true, refund: 150 });
-    assert.deepEqual(legacySpeedOwnership([1, 3, 5]), { owned3: true, owned5: true, refund: 230 });
+  it('refunds 2x, 3x, and 5x once from the saved unlock list', () => {
+    assert.deepEqual(legacySpeedOwnership([1]), { owned2: false, owned3: false, owned5: false, refund: 0 });
+    assert.deepEqual(legacySpeedOwnership([1, 2]), { owned2: true, owned3: false, owned5: false, refund: 30 });
+    assert.deepEqual(legacySpeedOwnership([1, 3]), { owned2: false, owned3: true, owned5: false, refund: 80 });
+    assert.deepEqual(legacySpeedOwnership([1, 5]), { owned2: false, owned3: false, owned5: true, refund: 150 });
+    assert.equal(legacySpeedOwnership([1, 2, 3, 5]).refund, 260);
     assert.equal(legacySpeedOwnership([1, 10]).refund, 150);
-    assert.equal(speedRefundNotice(true, true, 230), '3x and 5x speed was removed. 230 gems were refunded.');
-    assert.equal(speedRefundNotice(false, false, 0), null);
+    assert.equal(
+      speedRefundNotice(true, true, true, 260),
+      '3x and 5x speed was removed, and 2x is now free. 260 gems were refunded.'
+    );
+    assert.equal(speedRefundNotice(true, false, false, 30), '2x speed is now free. 30 gems were refunded.');
+    assert.equal(speedRefundNotice(false, false, false, 0), null);
+  });
+});
+
+describe('spawn clock', () => {
+  it('finishes a wave schedule at 2x in half the wall steps of 1x', () => {
+    const end = waveScheduleEndMs(10);
+    const at1 = wallStepsUntil(end, 1);
+    const at2 = wallStepsUntil(end, 2);
+    assert.ok(Math.abs(at1 - at2 * 2) <= 1);
+    assert.ok(at2 < at1);
   });
 });
 

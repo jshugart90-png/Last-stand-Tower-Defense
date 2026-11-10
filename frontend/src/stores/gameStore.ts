@@ -372,6 +372,10 @@ const generateId = () => {
 
 const scratchEnemiesInRange: Enemy[] = [];
 
+function rememberedGameSpeed(): GameSpeed {
+  return clampGameSpeed(usePlayerStore.getState().battleSpeed ?? 1);
+}
+
 const getBlockedCells = (towers: PlacedTower[]): Set<string> => {
   const blocked = new Set<string>();
   for (const tower of towers) {
@@ -479,7 +483,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         towerPurchaseCount: mergeNumericRecord(undefined),
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
-        gameSpeed: 1,
+        gameSpeed: rememberedGameSpeed(),
   simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: 0,
@@ -544,7 +548,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towerPurchaseCount: mergeNumericRecord(undefined),
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
-      gameSpeed: 1,
+      gameSpeed: rememberedGameSpeed(),
   simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: 0,
@@ -618,10 +622,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
 
   setGameSpeed: (speed) => {
-    const state = get();
     const target = clampGameSpeed(Number(speed));
-    if (!state.unlockedSpeeds.includes(target)) return;
-    if (state.gameSpeed === target) return;
+    usePlayerStore.getState().setBattleSpeed(target);
+    if (get().gameSpeed === target) return;
     set({ gameSpeed: target });
   },
 
@@ -1688,7 +1691,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         towerPurchaseCount: mergeNumericRecord(savedGame.towerPurchaseCount),
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
-        gameSpeed: 1,
+        gameSpeed: rememberedGameSpeed(),
   simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
@@ -1746,7 +1749,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towerPurchaseCount: mergeNumericRecord(savedGame.towerPurchaseCount),
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
-      gameSpeed: 1,
+      gameSpeed: rememberedGameSpeed(),
   simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,

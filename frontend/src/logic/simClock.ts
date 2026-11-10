@@ -28,3 +28,9 @@ export function consumeSimSteps(
   if (accum > SIM_STEP_MS) accum = SIM_STEP_MS;
   return { accumMs: accum, steps };
 }
+
+/** How far the spawn clock moves for one fixed step. 2x covers the schedule in half the wall steps. */
+export function scaledStepMs(stepMs: number, gameSpeed: number): number {
+  const speed = !Number.isFinite(gameSpeed) || gameSpeed < 1.5 ? 1 : 2;
+  return stepMs * speed;
+}

@@ -546,7 +546,7 @@ function bindSoundToggle() {
     const sfx = sfxGain(state.soundEnabled, state.sfxVolume);
     if (appliedSfx > 0.001 && sfx <= 0.001) {
       stopLoadedSfx();
-    } else if (appliedSfx >= 0 && appliedSfx <= 0.001 && sfx > 0.001) {
+    } else if (sfx > 0.001 && sfx !== appliedSfx) {
       restoreLoadedSfx(sfx);
     }
     appliedSfx = sfx;
@@ -692,7 +692,6 @@ export async function releaseBattleAudio(): Promise<void> {
   battleGeneration += 1;
   gameplaySfxArmed = false;
   musicToken += 1;
-  if (currentTrack && currentTrack !== 'menu') currentTrack = null;
   clearFade();
   replayBusy.clear();
   lastPlayAt.clear();

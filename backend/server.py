@@ -564,31 +564,37 @@ async def get_player_by_device(device_id: str):
     return serialize_doc(player)
 
 class SpeedRefundBody(BaseModel):
+    owned_2x: bool = False
     owned_3x: bool = False
     owned_5x: bool = False
 
 
 @api_router.post("/players/{player_id}/speed-refund", response_model=dict)
 async def refund_removed_speeds(player_id: str, body: SpeedRefundBody):
-    """One-time gem refund for the removed 3x (80) and 5x (150) speed unlocks."""
+    """One-time gem refund. Marker "1" paid 3x/5x. Marker "2" also paid the 30-gem 2x unlock."""
     where = {"_id": ObjectId(player_id)} if DB_PROVIDER == "mongo" else {"_id": player_id}
     player = await repo_find_one("players", where)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
     cooldowns = dict(player.get("reward_cooldowns") or {})
-    already = cooldowns.get("speed_refund_applied") == "1" or bool(player.get("speed_refund_applied"))
-    if already:
+    marker = str(cooldowns.get("speed_refund_applied") or "")
+    if marker == "2":
         return {"applied": False, "refund": 0, "gems": int(player.get("gems", 0) or 0)}
-    refund = (80 if body.owned_3x else 0) + (150 if body.owned_5x else 0)
+    refund = 0
+    if marker != "1":
+        refund += 80 if body.owned_3x else 0
+        refund += 150 if body.owned_5x else 0
+    if body.owned_2x:
+        refund += 30
     gems = int(player.get("gems", 0) or 0) + refund
-    cooldowns["speed_refund_applied"] = "1"
+    cooldowns["speed_refund_applied"] = "2"
     update = {"gems": gems, "reward_cooldowns": cooldowns, "speed_refund_applied": True, "updated_at": datetime.utcnow()}
     try:
         await repo_update_one("players", where, update)
     except Exception:
         update.pop("speed_refund_applied", None)
         await repo_update_one("players", where, update)
-    return {"applied": True, "refund": refund, "gems": gems}
+    return {"applied": refund > 0, "refund": refund, "gems": gems}
 
 
 @api_router.patch("/players/{player_id}", response_model=dict)
