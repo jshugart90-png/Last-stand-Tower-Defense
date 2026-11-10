@@ -31,7 +31,7 @@ import {
   type ArenaMapTheme,
 } from '../constants/arenaMaps';
 import { gridForArenaSize } from '../logic/arenaSize';
-import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_IMPACT_SFX_PER_TICK, MAX_PROJECTILES } from '../logic/simClock';
+import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_PROJECTILES } from '../logic/simClock';
 import {
   playWeaponFireSound,
   playProjectileImpact,
@@ -368,8 +368,6 @@ const generateId = () => {
   idSeq = (idSeq + 1) % 1_000_000_000;
   return `${Date.now().toString(36)}${idSeq.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 };
-
-const MAX_WEAPON_SFX_PER_TICK = 10;
 
 const scratchEnemiesInRange: Enemy[] = [];
 
@@ -969,9 +967,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     try {
     const now = Date.now();
-    // Speed is applied by running more fixed steps per real second, not by enlarging this step
-    // and not by shortening the fire cooldown on the wall clock.
-    const adjustedDelta = deltaTime;
+    const speed = clampGameSpeed(state.gameSpeed);
+    if (state.gameSpeed !== speed) {
+      set({ gameSpeed: speed });
+    }
+    // One application of speed. The frame loop does not also multiply the step count.
+    const adjustedDelta = deltaTime * speed;
     const simNow = (state.simTimeMs ?? 0) + adjustedDelta;
 
     // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
@@ -1058,7 +1059,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     // ====== TOWER FIRING ======
     const newProjectiles: Projectile[] = [];
     const newLaserBeams: LaserBeam[] = [];
-    let sfxPlayed = 0;
 
     const shopUpgradeLevels = state.towerUpgradeLevels;
 
@@ -1156,10 +1156,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           chain: stats.chain,
         });
 
-        if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
-          sfxPlayed += 1;
-          void playWeaponFireSound('laser');
-        }
+        void playWeaponFireSound('laser');
 
         return {
           ...tower,
@@ -1190,10 +1187,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       };
 
       newProjectiles.push(projectile);
-      if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
-        sfxPlayed += 1;
-        void playWeaponFireSound(tower.type);
-      }
+      void playWeaponFireSound(tower.type);
       return { ...tower, lastFireTime: simNow };
     });
 
@@ -1223,7 +1217,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemyById.set(enemy.id, enemy);
     }
 
-    let impactSfx = 0;
     const updatedProjectiles = [...state.projectiles, ...newProjectiles].map(proj => {
       const target = enemyById.get(proj.targetId);
       if (!target || exploding.has(target.id)) {
@@ -1238,10 +1231,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
       if (dist < moveAmount + 0.2) {
         projectilesToRemove.add(proj.id);
-        if (impactSfx < MAX_IMPACT_SFX_PER_TICK) {
-          impactSfx += 1;
-          void playProjectileImpact(proj);
-        }
+        void playProjectileImpact(proj);
 
         if (proj.isSplash && proj.splashRadius) {
           const splashRadiusSq = proj.splashRadius * proj.splashRadius;
@@ -1490,8 +1480,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       runArmoredKills: state.runArmoredKills + armoredKills,
       runBossKills: state.runBossKills + bossKills,
     });
-    } catch {
-      /* abort this tick only */
+    } catch (err) {
+      console.warn('[gameTick]', err);
     }
   },
 

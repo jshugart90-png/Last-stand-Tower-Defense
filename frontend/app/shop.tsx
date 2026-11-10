@@ -30,9 +30,6 @@ import {
   TOWERS,
   TowerType,
   TOWER_UNLOCK_PRICES,
-  SPEED_UNLOCK_PRICES,
-  GameSpeed,
-  ALLOWED_GAME_SPEEDS,
   COSMETIC_SKINS,
   SKIN_COLORS,
   STARTING_COINS_UPGRADE_MAX,
@@ -76,7 +73,7 @@ export default function ShopScreen() {
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const highlightedTower = useMemo(() => {
     const raw = params.highlightTower;
@@ -284,35 +281,6 @@ export default function ShopScreen() {
     }
     if (playerStore.purchaseCalibrationUpgrade()) {
       Alert.alert('Upgraded', 'All towers deal 2% more damage.');
-    }
-  };
-
-  const handlePurchaseSpeed = (speed: GameSpeed) => {
-    const price = SPEED_UNLOCK_PRICES[speed];
-    
-    if (playerStore.isSpeedUnlocked(speed)) {
-      Alert.alert('Already Owned', `You already have ${speed}x speed unlocked!`);
-      return;
-    }
-    
-    if (playerStore.gems < price) {
-      Alert.alert(
-        'Not Enough Gems',
-        `You need ${price} gems but only have ${playerStore.gems}.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
-        ]
-      );
-      return;
-    }
-    
-    // Execute purchase directly
-    const success = playerStore.purchaseSpeed(speed);
-    if (success) {
-      Alert.alert('Unlocked!', `${speed}x speed unlocked!`);
-    } else {
-      Alert.alert('Error', 'Unlock failed. Please try again.');
     }
   };
 
@@ -625,46 +593,6 @@ export default function ShopScreen() {
     );
   };
 
-  // Render speed unlock card
-  const renderSpeedCard = (speed: GameSpeed) => {
-    const price = SPEED_UNLOCK_PRICES[speed];
-    const isUnlocked = playerStore.isSpeedUnlocked(speed);
-    const canAfford = playerStore.gems >= price;
-
-    return (
-      <View key={speed} style={styles.speedCard}>
-        <View style={[styles.speedIcon, isUnlocked && styles.speedIconUnlocked]}>
-          <Text style={styles.speedText}>{speed}x</Text>
-        </View>
-        
-        <View style={styles.speedInfo}>
-          <Text style={styles.speedTitle}>{speed}x Speed</Text>
-          <Text style={styles.speedDesc}>
-            {speed === 1 ? 'Normal speed' : `${speed} times faster gameplay`}
-          </Text>
-        </View>
-        
-        {price === 0 ? (
-          <View style={styles.freeTag}>
-            <Text style={styles.freeText}>FREE</Text>
-          </View>
-        ) : isUnlocked ? (
-          <View style={styles.ownedTag}>
-            <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.buySpeedButton, !canAfford && styles.disabledButton]}
-            onPress={() => handlePurchaseSpeed(speed)}
-          >
-            <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
-            <Text style={styles.buttonText}>{price}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
-
   const renderLogoCard = () => {
     return (
       <View>
@@ -743,14 +671,6 @@ export default function ShopScreen() {
         >
           <Text style={[styles.tabText, selectedTab === 'gems' && styles.tabTextActive]}>
             Gems
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, selectedTab === 'speeds' && styles.tabActive]}
-          onPress={() => setSelectedTab('speeds')}
-        >
-          <Text style={[styles.tabText, selectedTab === 'speeds' && styles.tabTextActive]}>
-            Speed
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1039,18 +959,6 @@ export default function ShopScreen() {
             <Text style={styles.realMoneyNote}>
               * Real money purchases (In-App Purchase)
             </Text>
-          </View>
-        )}
-
-        {/* Speed Tab */}
-        {selectedTab === 'speeds' && (
-          <View>
-            <Text style={styles.sectionTitle}>Game Speed</Text>
-            <Text style={styles.sectionSubtitle}>
-              Unlocks are purchased with gems only (earned in-game or from the Gems tab)
-            </Text>
-            
-            {ALLOWED_GAME_SPEEDS.map(renderSpeedCard)}
           </View>
         )}
 

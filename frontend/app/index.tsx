@@ -354,6 +354,7 @@ export default function HomeScreen() {
           premium: data.premium,
           arenaExpansions: data.arena_expansions || 0,
         });
+        void usePlayerStore.getState().settleLegacySpeedRefund();
         setServerNote(null);
         setShowNicknameModal(false);
       };
@@ -447,6 +448,7 @@ export default function HomeScreen() {
             unlockedTowers: response.data.unlocked_towers,
             unlockedSkins: response.data.unlocked_skins,
           });
+          void usePlayerStore.getState().settleLegacySpeedRefund();
         } else {
           await registerLocalPlayer(nickname);
         }
@@ -562,6 +564,15 @@ export default function HomeScreen() {
         <View style={styles.serverNote}>
           <Text style={styles.serverNoteText}>{serverNote}</Text>
         </View>
+      ) : null}
+      {playerStore.legacySpeedRefundNotice ? (
+        <TouchableOpacity
+          style={styles.serverNote}
+          onPress={() => playerStore.dismissLegacySpeedRefundNotice()}
+          accessibilityRole="button"
+        >
+          <Text style={styles.serverNoteText}>{playerStore.legacySpeedRefundNotice}</Text>
+        </TouchableOpacity>
       ) : null}
       
       {/* Header with player stats */}

@@ -36,8 +36,6 @@ let activeSlot: 'a' | 'b' = 'a';
 let fadeTimer: ReturnType<typeof setInterval> | null = null;
 let musicToken = 0;
 let lastLoseAt = 0;
-let lastLaserAt = 0;
-let lastMgAt = 0;
 
 const sampleCache = new Map<string, Float32Array>();
 
@@ -283,18 +281,55 @@ function bundledAudio(key: string): number | undefined {
   return undefined;
 }
 
-async function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
-  const existing = cache.get(key);
-  if (existing && !loop) return existing;
+/** One native Sound per key. Concurrent plays share this promise instead of creating another. */
+const loadPromises = new Map<string, Promise<Audio.Sound | null>>();
+
+const SFX_VOLUME: Record<string, number> = {
+  shot_mg: 0.7,
+  shot_sniper: 0.85,
+  shot_splash: 0.7,
+  shot_freeze: 0.7,
+  shot_missile: 0.7,
+  shot_laser: 0.7,
+  shot_tesla: 0.7,
+  shot_flak: 0.7,
+  shot_cannon: 0.7,
+  impact: 0.75,
+  death: 0.75,
+  death_b: 0.75,
+  death_c: 0.75,
+  wave: 0.8,
+  build: 0.7,
+  upgrade: 0.75,
+  win: 0.8,
+  lose: 0.85,
+  ui_mission: 0.68,
+  ui_combo: 0.68,
+  ui_chest: 0.68,
+  ui_record: 0.72,
+};
+
+function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
+  const id = `${loop ? 'L' : 'S'}:${key}`;
+  const pending = loadPromises.get(id);
+  if (pending) return pending;
+  const created = createSound(key, loop);
+  loadPromises.set(id, created);
+  return created;
+}
+
+async function createSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
+  const base = SFX_VOLUME[key] ?? 1;
+  const volume = loop ? 0 : Math.max(0, Math.min(1, base * playerAudio().sfx));
   const file = bundledAudio(key);
   if (file) {
     try {
       const { sound } = await Audio.Sound.createAsync(file, {
         shouldPlay: false,
-        volume: 1,
+        volume,
         isLooping: loop,
       });
-      if (!loop) cache.set(key, sound);
+      cache.set(key, sound);
       return sound;
     } catch {
       if (key.startsWith('music_')) return null;
@@ -311,13 +346,23 @@ async function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null
     }
     const { sound } = await Audio.Sound.createAsync(
       { uri },
-      { shouldPlay: false, volume: 1, isLooping: loop }
+      { shouldPlay: false, volume, isLooping: loop }
     );
-    if (!loop) cache.set(key, sound);
+    cache.set(key, sound);
     return sound;
   } catch {
     return null;
   }
+}
+
+export function preloadGameplaySounds(): void {
+  void ensureAudioReady().then((ready) => {
+    if (!ready) return;
+    for (const key of Object.keys(SFX_VOLUME)) void loadSound(key, false);
+    for (const track of ['menu', 'battle', 'battle2', 'boss'] as MusicTrack[]) {
+      void loadSound(`music_${track}`, true);
+    }
+  });
 }
 
 async function ensureAudioReady(): Promise<boolean> {
@@ -505,14 +550,32 @@ export const refreshAudioModeOnForeground = async (): Promise<void> => {
   }
 };
 
-/** One live player per sample. Extra shots in the same step reuse it instead of stacking loads. */
+/** One live replay per sample. Volume was set when the Sound was created. */
 const replayBusy = new Set<string>();
+const lastPlayAt = new Map<string, number>();
+let soundWindowStart = 0;
+let soundWindowCount = 0;
+const MAX_SOUNDS_PER_SECOND = 20;
+const MIN_SOUND_GAP_MS = 50;
 
-function requestReplay(key: string, baseVolume: number, combat: boolean): void {
+function budgetAllows(key: string, now: number): boolean {
+  const gap = key === 'impact' ? 80 : MIN_SOUND_GAP_MS;
+  if (now - (lastPlayAt.get(key) ?? 0) < gap) return false;
+  if (now - soundWindowStart >= 1000) {
+    soundWindowStart = now;
+    soundWindowCount = 0;
+  }
+  return soundWindowCount < MAX_SOUNDS_PER_SECOND;
+}
+
+function requestReplay(key: string, _baseVolume: number, combat: boolean): void {
   if (replayBusy.has(key)) return;
   if (combat && !gameplaySfxArmed) return;
-  const gain = playerAudio().sfx;
-  if (gain <= 0.001) return;
+  if (playerAudio().sfx <= 0.001) return;
+  const now = Date.now();
+  if (!budgetAllows(key, now)) return;
+  lastPlayAt.set(key, now);
+  soundWindowCount += 1;
   replayBusy.add(key);
   queueMicrotask(() => {
     void (async () => {
@@ -522,7 +585,6 @@ function requestReplay(key: string, baseVolume: number, combat: boolean): void {
         if (!ready) return;
         const sound = await loadSound(key, false);
         if (!sound) return;
-        await sound.setVolumeAsync(Math.max(0, Math.min(1, baseVolume * gain)));
         await sound.replayAsync();
       } catch {
         /* drop this voice only */
@@ -535,11 +597,20 @@ function requestReplay(key: string, baseVolume: number, combat: boolean): void {
 
 export function setGameplaySfxArmed(armed: boolean): void {
   gameplaySfxArmed = armed;
+  if (armed) preloadGameplaySounds();
 }
 
 /** Voices currently loading or playing. Extra shots of the same sample do not add one. */
 export function activeAudioVoices(): number {
   return replayBusy.size;
+}
+
+/** Test hook. Clears the per-second budget without dropping the loaded Sound cache. */
+export function resetAudioBudgetForTests(): void {
+  replayBusy.clear();
+  lastPlayAt.clear();
+  soundWindowStart = 0;
+  soundWindowCount = 0;
 }
 
 export function isGameplaySfxArmed(): boolean {
@@ -581,15 +652,7 @@ const SHOT_KEY: Record<TowerType, string> = {
 
 export function playWeaponFireSound(towerType: TowerType): void {
   if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
-  const now = Date.now();
-  if (towerType === 'laser') {
-    if (now - lastLaserAt < 90) return;
-    lastLaserAt = now;
-  } else if (towerType === 'machine_gun') {
-    if (now - lastMgAt < 45) return;
-    lastMgAt = now;
-  }
-  requestReplay(SHOT_KEY[towerType], towerType === 'sniper' ? 0.85 : 0.7, true);
+  requestReplay(SHOT_KEY[towerType], SFX_VOLUME[SHOT_KEY[towerType]] ?? 0.7, true);
 }
 
 export function playProjectileImpact(proj: { towerType: TowerType }): void {

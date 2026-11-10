@@ -55,6 +55,9 @@ export const playerApi = {
   
   update: (playerId: string, data: any) =>
     api.patch(`/players/${playerId}`, data),
+
+  speedRefund: (playerId: string, body: { owned_3x: boolean; owned_5x: boolean }) =>
+    api.post(`/players/${playerId}/speed-refund`, body),
 };
 
 // Game APIs

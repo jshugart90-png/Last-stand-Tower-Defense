@@ -314,3 +314,66 @@ export async function runLiveAcceptance() {
     clock.restore();
   }
 }
+
+/** Gale Bastion at 2x for many full waves. Used to prove native audio stays bounded. */
+export async function runGaleAudioSoak(waveCount = 25) {
+  const clock = installFakeClock();
+  try {
+    useGameStore.getState().startGame(ALL_TOWERS, [1, 2], {} as Record<TowerType, number>, {}, 0, 'gale_bastion');
+    const placed = placeBatteries(18);
+    useGameStore.getState().setGameSpeed(2);
+    let cleared = 0;
+    for (let n = 0; n < waveCount; n++) {
+      useGameStore.getState().startWave();
+      let accum = 0;
+      let elapsed = 0;
+      let cursor = 0;
+      let schedule: Scheduled[] = [];
+      let done = false;
+      for (let frame = 0; frame < 2400 && !done; frame++) {
+        const live = useGameStore.getState();
+        if (!live.isPlaying || live.isGameOver) break;
+        const consumed = consumeSimSteps(accum, FRAME_MS, live.gameSpeed);
+        accum = consumed.accumMs;
+        for (let step = 0; step < consumed.steps; step++) {
+          useGameStore.getState().gameTick(SIM_STEP_MS);
+          clock.advance(SIM_STEP_MS);
+          const state = useGameStore.getState();
+          if (schedule.length === 0) schedule = scheduleFor(state.currentWave, 'gale_bastion');
+          elapsed += SIM_STEP_MS;
+          const due: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[] = [];
+          const mult = multipliers(state.currentWave, 'gale_bastion');
+          while (cursor < schedule.length && schedule[cursor].atMs <= elapsed) {
+            due.push({
+              type: schedule[cursor].type,
+              healthMultiplier: mult.health,
+              speedMultiplier: mult.speed,
+            });
+            cursor += 1;
+          }
+          if (due.length > 0) useGameStore.getState().spawnEnemyBatch(due);
+          const after = useGameStore.getState();
+          if (cursor >= schedule.length && after.enemies.length === 0 && after.waveInProgress) {
+            after.endWave();
+            cleared += 1;
+            done = true;
+          }
+        }
+      }
+      if (!done && useGameStore.getState().waveInProgress) {
+        useGameStore.getState().endWave();
+      }
+    }
+    for (let i = 0; i < 30; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return {
+      placed,
+      cleared,
+      wave: useGameStore.getState().currentWave,
+      playing: useGameStore.getState().isPlaying,
+    };
+  } finally {
+    clock.restore();
+  }
+}

@@ -38,6 +38,8 @@ import {
   migrateFieldBriefing,
   unionTowerUnlocks,
 } from '../logic/save';
+import { isServerBackedPlayerId, playerApi, isBackendConfigured } from '../hooks/useApi';
+import { legacySpeedOwnership, speedRefundNotice } from '../logic/speedRefund';
 import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
@@ -163,8 +165,12 @@ interface PlayerState {
   /** Run ruleset. Older saves default to normal. */
   difficultyMode: DifficultyMode;
   
-  // Speed unlocks (purchased in shop with gems)
+  // Speed unlocks (purchased in shop with gems). 3x and 5x are refunded once.
   unlockedSpeeds: GameSpeed[];
+  legacySpeedRefundApplied: boolean;
+  legacySpeedRefundOwned3: boolean;
+  legacySpeedRefundOwned5: boolean;
+  legacySpeedRefundNotice: string | null;
   
   // Skins
   unlockedSkins: string[];
@@ -337,6 +343,9 @@ interface PlayerActions {
   getSavedGame: () => SavedGameState | null;
   clearCurrentGameProgress: () => void;
   
+  dismissLegacySpeedRefundNotice: () => void;
+  settleLegacySpeedRefund: () => Promise<void>;
+
   // Sync from server
   syncFromServer: (data: Partial<PlayerState>) => void;
   
@@ -410,6 +419,10 @@ const initialState: PlayerState = {
   calibrationUpgradeLevel: 0,
   difficultyMode: 'normal',
   unlockedSpeeds: [1],  // 1x is free
+  legacySpeedRefundApplied: false,
+  legacySpeedRefundOwned3: false,
+  legacySpeedRefundOwned5: false,
+  legacySpeedRefundNotice: null,
   unlockedSkins: ['default'],
   equippedSkins: {},
   premium: false,
@@ -474,6 +487,10 @@ const playerPersistKeys = [
   'calibrationUpgradeLevel',
   'difficultyMode',
   'unlockedSpeeds',
+  'legacySpeedRefundApplied',
+  'legacySpeedRefundOwned3',
+  'legacySpeedRefundOwned5',
+  'legacySpeedRefundNotice',
   'unlockedSkins',
   'equippedSkins',
   'premium',
@@ -1253,6 +1270,43 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       return get().savedGame;
     },
 
+    dismissLegacySpeedRefundNotice: () => set({ legacySpeedRefundNotice: null }),
+
+    settleLegacySpeedRefund: async () => {
+      const state = get();
+      if (state.legacySpeedRefundApplied) return;
+      const owned3 = state.legacySpeedRefundOwned3;
+      const owned5 = state.legacySpeedRefundOwned5;
+      const refund = (owned3 ? 80 : 0) + (owned5 ? 150 : 0);
+      if (isServerBackedPlayerId(state.playerId) && isBackendConfigured()) {
+        try {
+          const response = await playerApi.speedRefund(state.playerId as string, {
+            owned_3x: owned3,
+            owned_5x: owned5,
+          });
+          const granted = typeof response.data?.refund === 'number' ? response.data.refund : refund;
+          const gems = typeof response.data?.gems === 'number' ? response.data.gems : state.gems + granted;
+          set({
+            gems,
+            legacySpeedRefundApplied: true,
+            legacySpeedRefundOwned3: false,
+            legacySpeedRefundOwned5: false,
+            legacySpeedRefundNotice: speedRefundNotice(owned3, owned5, granted),
+          });
+        } catch {
+          /* retry on the next launch so a failed request cannot double-pay */
+        }
+        return;
+      }
+      set({
+        gems: state.gems + refund,
+        legacySpeedRefundApplied: true,
+        legacySpeedRefundOwned3: false,
+        legacySpeedRefundOwned5: false,
+        legacySpeedRefundNotice: speedRefundNotice(owned3, owned5, refund),
+      });
+    },
+
     // Sync from server
     syncFromServer: (data) => {
       set((state) => ({
@@ -1420,10 +1474,35 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
         rehydrated.unlockedMapIds,
         rehydrated.mapBestWaves
       );
+      const refundAlready = p?.legacySpeedRefundApplied === true;
+      const ownership = legacySpeedOwnership(p?.unlockedSpeeds);
+      const serverBacked = isServerBackedPlayerId(rehydrated.playerId);
+      let gems = rehydrated.gems;
+      let applied = refundAlready;
+      let owned3 = false;
+      let owned5 = false;
+      let notice = refundAlready ? (p?.legacySpeedRefundNotice ?? null) : null;
+      if (!refundAlready && ownership.refund > 0 && !serverBacked) {
+        gems += ownership.refund;
+        applied = true;
+        notice = speedRefundNotice(ownership.owned3, ownership.owned5, ownership.refund);
+      } else if (!refundAlready && serverBacked) {
+        owned3 = ownership.owned3;
+        owned5 = ownership.owned5;
+        applied = ownership.refund === 0;
+        notice = null;
+      } else if (!refundAlready) {
+        applied = true;
+      }
       return {
         ...rehydrated,
+        gems,
         unlockedMapIds: reconciledUnlocks,
-        unlockedSpeeds: normalizeUnlockedSpeeds(rehydrated.unlockedSpeeds),
+        unlockedSpeeds: normalizeUnlockedSpeeds(p?.unlockedSpeeds ?? rehydrated.unlockedSpeeds),
+        legacySpeedRefundApplied: applied,
+        legacySpeedRefundOwned3: owned3,
+        legacySpeedRefundOwned5: owned5,
+        legacySpeedRefundNotice: notice,
       } as typeof current;
     },
   }

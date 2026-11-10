@@ -10,9 +10,8 @@ export const TARGETING_MODES: { id: TargetingMode; label: string; description: s
   { id: 'closest', label: 'Close', description: 'Target nearest enemy to tower' },
 ];
 
-// Speed unlock prices (gems). 1x is free. 2x is the maximum.
-// 3x (80 gems) and 5x (150 gems) were gem-shop unlocks, not IAP products.
-// A legacy 10x flag mapped to 5x. Those saved unlocks stay and clamp to 2x.
+// Speed unlock prices (gems). 1x is free. 2x is the maximum that can still be stored.
+// 3x (80 gems) and 5x (150 gems) are refunded once and are not sold.
 export type GameSpeed = 1 | 2;
 
 export const MAX_GAME_SPEED: GameSpeed = 2;

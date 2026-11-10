@@ -4,6 +4,7 @@ import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix
 import { parseShotRoute } from './shotUrl';
 import { clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
 import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, consumeSimSteps } from './simClock';
+import { legacySpeedOwnership, speedRefundNotice } from './speedRefund';
 import { runAcceptanceSessions } from './waveLoadSim';
 import {
   ARENA_TIER_PRODUCT_IDS,
@@ -62,6 +63,10 @@ describe('game speed', () => {
     assert.equal(clampGameSpeed(5), 2);
     assert.equal(clampGameSpeed(10), 2);
     assert.deepEqual(normalizeUnlockedSpeeds([1, 3, 5, 10]), [1, 2]);
+    const slow = consumeSimSteps(0, 500, 1);
+    const fast = consumeSimSteps(0, 500, 5);
+    assert.equal(fast.steps, slow.steps);
+    assert.ok(fast.steps <= MAX_SUBSTEPS_PER_FRAME);
   });
 
   it('keeps a 2x late wave inside a fixed step budget', () => {
@@ -86,6 +91,18 @@ describe('game speed', () => {
     assert.equal(load.freeLeveled.particles, true);
     assert.equal(load.freeLeveled.timers, true);
     assert.equal(load.freeLeveled.listeners, true);
+  });
+});
+
+describe('removed speed refund', () => {
+  it('refunds 3x and 5x once from the saved unlock list', () => {
+    assert.deepEqual(legacySpeedOwnership([1, 2]), { owned3: false, owned5: false, refund: 0 });
+    assert.deepEqual(legacySpeedOwnership([1, 3]), { owned3: true, owned5: false, refund: 80 });
+    assert.deepEqual(legacySpeedOwnership([1, 5]), { owned3: false, owned5: true, refund: 150 });
+    assert.deepEqual(legacySpeedOwnership([1, 3, 5]), { owned3: true, owned5: true, refund: 230 });
+    assert.equal(legacySpeedOwnership([1, 10]).refund, 150);
+    assert.equal(speedRefundNotice(true, true, 230), '3x and 5x speed was removed. 230 gems were refunded.');
+    assert.equal(speedRefundNotice(false, false, 0), null);
   });
 });
 

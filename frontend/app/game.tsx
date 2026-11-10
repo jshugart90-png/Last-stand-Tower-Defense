@@ -18,7 +18,6 @@ import {
   Pressable,
   Dimensions,
   Modal,
-  Alert,
   BackHandler,
   Image,
   ImageBackground,
@@ -47,11 +46,7 @@ import { usePlayerStore, SavedGameState } from '../src/stores/playerStore';
 import {
   TOWERS, GAME_CONFIG, getWaveConfig, TowerType, 
   TARGETING_MODES, TargetingMode, 
-  GameSpeed,
-  SPEED_UNLOCK_PRICES,
   getRunCoinIncomeMultiplier,
-  ALLOWED_GAME_SPEEDS,
-  normalizeUnlockedSpeeds,
   scaledTotalPerformanceGems,
   endGamePerformanceRemainder,
   COMBO_BONUS_GEMS,
@@ -94,10 +89,6 @@ import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 /** Pinch zoom limits (keep in sync with gameStore.setZoomLevel clamp) */
-const ZOOM_MIN = 0.8;
-const ZOOM_MAX = 2.5;
-
-const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
 
 type BoardHitTestFn = (winX: number, winY: number) => { col: number; row: number } | null;
 
@@ -410,7 +401,6 @@ TowerPanelItem.displayName = 'TowerPanelItem';
 const TowerPanel = ({
   onSelect,
   selectedType,
-  coins,
   unlockedTowers,
   getTowerCost,
   scrollEnabled,
@@ -422,7 +412,6 @@ const TowerPanel = ({
 }: {
   onSelect: (type: TowerType | null) => void;
   selectedType: TowerType | null;
-  coins: number;
   unlockedTowers: TowerType[];
   getTowerCost: (type: TowerType) => number;
   scrollEnabled: boolean;
@@ -432,6 +421,7 @@ const TowerPanel = ({
   onTowerDragEnd: (winX: number, winY: number) => void;
   onTowerDragFinalize: () => void;
 }) => {
+  const coins = useGameStore((s) => s.coins);
   const onQuickTap = useCallback(
     (type: TowerType) => {
       const isSelected = selectedType === type;
@@ -481,71 +471,31 @@ const TowerPanel = ({
   );
 };
 
-// Speed control buttons — unlocks cost gems only (see shop / player store)
-const SpeedControls = ({
-  currentSpeed,
-  onSpeedChange,
-  unlockedSpeeds,
-  onPurchaseSpeed,
-  gems,
-}: {
-  currentSpeed: GameSpeed;
-  onSpeedChange: (speed: GameSpeed) => void;
-  unlockedSpeeds: GameSpeed[];
-  onPurchaseSpeed: (speed: GameSpeed) => void;
-  gems: number;
-}) => {
-  const speeds = [...ALLOWED_GAME_SPEEDS];
+function HudCoinValue() {
+  const coins = useGameStore((s) => s.coins);
+  return <Text style={styles.statValue}>{coins}</Text>;
+}
 
+function StartWaveLabel({ currentWave }: { currentWave: number }) {
+  const autoWaveTimer = useGameStore((s) => s.autoWaveTimer);
+  const seconds = Math.ceil(autoWaveTimer / 1000);
   return (
-    <View style={styles.speedControls}>
-      {speeds.map((speed) => {
-        const isUnlocked = unlockedSpeeds.includes(speed);
-        const price = SPEED_UNLOCK_PRICES[speed];
-        const canAfford = gems >= price;
-
-        return (
-          <TouchableOpacity
-            key={speed}
-            style={[
-              styles.speedButton,
-              currentSpeed === speed && styles.speedButtonActive,
-              !isUnlocked && styles.speedButtonLocked,
-            ]}
-            onPress={() => {
-              if (isUnlocked) {
-                onSpeedChange(speed);
-              } else if (canAfford && price > 0) {
-                Alert.alert(
-                  `Unlock ${speed}x Speed`,
-                  `Spend ${price} gems to unlock ${speed}x speed forever?`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Unlock', onPress: () => onPurchaseSpeed(speed) },
-                  ]
-                );
-              } else if (!canAfford && price > 0) {
-                Alert.alert(
-                  'Not enough gems',
-                  `Need ${price} gems to unlock ${speed}x speed. Earn gems by playing or visit the Shop.`,
-                );
-              }
-            }}
-          >
-            <Text style={[
-              styles.speedButtonText,
-              currentSpeed === speed && styles.speedButtonTextActive,
-              !isUnlocked && styles.speedButtonTextLocked,
-            ]}>
-              {speed}x
-              {!isUnlocked && <Text style={styles.lockIcon}> 🔒</Text>}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
+    <Text style={styles.startWaveText} numberOfLines={1}>
+      Start {currentWave + 1}
+      {autoWaveTimer > 0 && currentWave > 0 ? ` ${seconds}s` : ''}
+    </Text>
   );
-};
+}
+
+function PauseRunLine() {
+  const coins = useGameStore((s) => s.coins);
+  const enemiesKilled = useGameStore((s) => s.enemiesKilled);
+  return (
+    <Text style={styles.pauseSubtext}>
+      {enemiesKilled} destroyed this run · {coins} coins
+    </Text>
+  );
+}
 
 // Tower options panel
 const TowerOptionsPanel = ({
@@ -554,7 +504,6 @@ const TowerOptionsPanel = ({
   onSell,
   onTargetingChange,
   onClose,
-  coins,
   getUpgradeCost,
   getSellValue,
   shopUpgradeLevel,
@@ -565,12 +514,12 @@ const TowerOptionsPanel = ({
   onSell: () => void;
   onTargetingChange: (mode: TargetingMode) => void;
   onClose: () => void;
-  coins: number;
   getUpgradeCost: (tower: PlacedTower) => number;
   getSellValue: (tower: PlacedTower) => number;
   shopUpgradeLevel: number;
   calibrationLevel: number;
 }) => {
+  const coins = useGameStore((s) => s.coins);
   const towerDef = TOWERS[tower.type];
   const upgradeCost = getUpgradeCost(tower);
   const sellValue = getSellValue(tower);
@@ -1605,16 +1554,7 @@ const GameBoard = React.memo(
       );
     const paintedMap = mapBackgroundFor(currentMapId) != null;
 
-    const pinchMultSV = useSharedValue(1);
-    const startZoomSV = useSharedValue(zoomLevel);
-    const committedZoomSV = useSharedValue(zoomLevel);
-    /** UI-thread guard: placement pan must not call JS while pinch is active. */
     const pinchActiveSV = useSharedValue(0);
-    /** Ref mirror for JS placement commit path. */
-    const pinchActiveRef = useRef(false);
-    const setPinchActive = useCallback((v: boolean) => {
-      pinchActiveRef.current = v;
-    }, []);
 
     const boardSurfaceRef = useRef<View | null>(null);
     const boardScreenRectRef = useRef({ x: 0, y: 0, w: 0, h: 0 });
@@ -1674,91 +1614,9 @@ const GameBoard = React.memo(
     }, []);
 
     useEffect(() => {
-      committedZoomSV.value = zoomLevel;
-    }, [zoomLevel, committedZoomSV]);
-
-    useEffect(() => {
       scheduleBoardScreenSync();
     }, [zoomLevel, scale, gridCols, gridRows, cellSize, scheduleBoardScreenSync]);
 
-    const commitZoom = useCallback((z: number) => {
-      try {
-        const nz = clampZoom(typeof z === 'number' && Number.isFinite(z) ? z : ZOOM_MIN);
-        useGameStore.getState().setZoomLevel(nz);
-      } catch {
-        /* ignore */
-      }
-    }, []);
-
-    const pinchOnBeginJS = useCallback(() => {
-      setPinchActive(true);
-    }, [setPinchActive]);
-
-    const pinchOnEndJS = useCallback(() => {
-      setPinchActive(false);
-    }, [setPinchActive]);
-
-    const pinchOnFinalizeJS = useCallback(() => {
-      setPinchActive(false);
-    }, [setPinchActive]);
-
-    const pinchGesture = useMemo(
-      () =>
-        Gesture.Pinch()
-          .onBegin(() => {
-            'worklet';
-            startZoomSV.value = committedZoomSV.value;
-            pinchMultSV.value = 1;
-            pinchActiveSV.value = 1;
-            runOnJS(pinchOnBeginJS)();
-          })
-          .onUpdate((e) => {
-            'worklet';
-            const raw = e?.scale;
-            const factor =
-              typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
-            const base = startZoomSV.value;
-            if (!Number.isFinite(base) || base <= 0) return;
-            const abs = Math.max(0.8, Math.min(2.5, base * factor));
-            const ratio = abs / base;
-            pinchMultSV.value = Math.min(3, Math.max(0.35, Number.isFinite(ratio) ? ratio : 1));
-          })
-          .onEnd((e) => {
-            'worklet';
-            const raw = e?.scale;
-            const factor =
-              typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 1;
-            const base = startZoomSV.value;
-            const abs =
-              Number.isFinite(base) && base > 0
-                ? Math.max(0.8, Math.min(2.5, base * factor))
-                : committedZoomSV.value;
-            pinchMultSV.value = 1;
-            pinchActiveSV.value = 0;
-            runOnJS(commitZoom)(abs);
-            runOnJS(pinchOnEndJS)();
-          })
-          .onFinalize(() => {
-            'worklet';
-            pinchMultSV.value = 1;
-            pinchActiveSV.value = 0;
-            runOnJS(pinchOnFinalizeJS)();
-          }),
-      [
-        commitZoom,
-        committedZoomSV,
-        pinchActiveSV,
-        pinchMultSV,
-        pinchOnBeginJS,
-        pinchOnEndJS,
-        pinchOnFinalizeJS,
-        startZoomSV,
-      ]
-    );
-
-    const pinchAnimatedStyle = useAnimatedStyle(() => ({
-      transform: [{ scale: pinchMultSV.value }],
-    }));
     const baseHealth = useGameStore((s) => s.baseHealth);
     const bossShake = useGameStore((s) => s.bossShake);
     const shakeX = useSharedValue(0);
@@ -1793,7 +1651,7 @@ const GameBoard = React.memo(
       transform: [{ translateX: shakeX.value }, { translateY: shakeY.value }],
     }));
 
-    const finalScale = scale * zoomLevel;
+    const finalScale = scale;
     const scaledCellSize = cellSize * finalScale;
     const boardWidth = gridCols * scaledCellSize;
     const boardHeight = gridRows * scaledCellSize;
@@ -1842,7 +1700,6 @@ const GameBoard = React.memo(
 
     const applyPlacementFromPan = useCallback(
       (absX: number, absY: number, cell: number, cols: number, rows: number) => {
-        if (pinchActiveRef.current) return;
         if (!Number.isFinite(cell) || cell <= 0.5) return;
         if (!Number.isFinite(absX) || !Number.isFinite(absY)) return;
         const col = Math.floor(absX / cell);
@@ -1915,15 +1772,9 @@ const GameBoard = React.memo(
     ]);
 
     const boardGestures = useMemo(() => {
-      try {
-        if (selectedTowerType && !selectedPlacedTower) {
-          return Gesture.Simultaneous(pinchGesture, placePanGesture);
-        }
-        return pinchGesture;
-      } catch {
-        return pinchGesture;
-      }
-    }, [pinchGesture, placePanGesture, selectedPlacedTower, selectedTowerType]);
+      if (selectedTowerType && !selectedPlacedTower) return placePanGesture;
+      return Gesture.Tap().enabled(false);
+    }, [placePanGesture, selectedPlacedTower, selectedTowerType]);
 
     const effectivePreview =
       hoverPlacementCell !== undefined ? hoverPlacementCell : placementPreview;
@@ -1981,7 +1832,6 @@ const GameBoard = React.memo(
                   height: boardHeight,
                   backgroundColor: paintedMap ? '#140e09' : '#2f6a34',
                 },
-                pinchAnimatedStyle,
               ]}
             >
               <Animated.View style={[{ width: boardWidth, height: boardHeight }, shakeStyle]}>
@@ -2219,15 +2069,14 @@ const ExitWarningModal = ({
   onCancel,
   onGoToShop,
   currentWave,
-  coins,
 }: {
   visible: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   onGoToShop: () => void;
   currentWave: number;
-  coins: number;
 }) => {
+  const coins = useGameStore((s) => s.coins);
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.modalOverlay}>
@@ -2345,23 +2194,17 @@ export default function GameScreen() {
     isGameOver,
     currentWave,
     waveInProgress,
-    coins,
     baseHealth,
-    score,
-    enemiesKilled,
     towersPlaced,
     towersCount,
     enemyCount,
     waveSpawnSlotsTotal,
     waveSpawnSlotsReleased,
     unlockedTowers,
-    unlockedSpeeds,
     towerUpgradeLevels,
     selectedTowerType,
     selectedPlacedTower,
     gameStartTime,
-    gameSpeed,
-    autoWaveTimer,
     gridCols,
     gridRows,
     cellSize,
@@ -2382,8 +2225,7 @@ export default function GameScreen() {
     getTowerCost,
     getUpgradeCost,
     getSellValue,
-    setGameSpeed,
-    getCurrentCoins,
+      getCurrentCoins,
       lastWaveBonus,
       showBonusPopup,
     } = useGameStore(
@@ -2393,23 +2235,17 @@ export default function GameScreen() {
       isGameOver: s.isGameOver,
       currentWave: s.currentWave,
       waveInProgress: s.waveInProgress,
-      coins: s.coins,
       baseHealth: s.baseHealth,
-      score: s.score,
-      enemiesKilled: s.enemiesKilled,
       towersPlaced: s.towersPlaced,
       towersCount: s.towers.length,
       enemyCount: s.enemies.length,
       waveSpawnSlotsTotal: s.waveSpawnSlotsTotal,
       waveSpawnSlotsReleased: s.waveSpawnSlotsReleased,
       unlockedTowers: s.unlockedTowers,
-      unlockedSpeeds: s.unlockedSpeeds,
       towerUpgradeLevels: s.towerUpgradeLevels,
       selectedTowerType: s.selectedTowerType,
       selectedPlacedTower: s.selectedPlacedTower,
       gameStartTime: s.gameStartTime,
-      gameSpeed: s.gameSpeed,
-      autoWaveTimer: s.autoWaveTimer,
       gridCols: s.gridCols,
       gridRows: s.gridRows,
       cellSize: s.cellSize,
@@ -2430,31 +2266,14 @@ export default function GameScreen() {
       getTowerCost: s.getTowerCost,
       getUpgradeCost: s.getUpgradeCost,
       getSellValue: s.getSellValue,
-      setGameSpeed: s.setGameSpeed,
       getCurrentCoins: s.getCurrentCoins,
       lastWaveBonus: s.lastWaveBonus,
       showBonusPopup: s.showBonusPopup,
     }))
   );
 
-  const applyGameSpeed = useCallback(
-    (speed: GameSpeed) => {
-      frameAccumRef.current = 0;
-      lastUpdateRef.current = Date.now();
-      setGameSpeed(speed);
-    },
-    [setGameSpeed]
-  );
-
-  const prevGameSpeedRef = useRef(gameSpeed);
-  useEffect(() => {
-    if (prevGameSpeedRef.current !== gameSpeed) {
-      prevGameSpeedRef.current = gameSpeed;
-      frameAccumRef.current = 0;
-      lastUpdateRef.current = Date.now();
-    }
-  }, [gameSpeed]);
-
+  const endKills = useGameStore((s) => (s.isGameOver ? s.enemiesKilled : 0));
+  const endScore = useGameStore((s) => (s.isGameOver ? s.score : 0));
   useFocusEffect(
     useCallback(() => {
       const s = useGameStore.getState();
@@ -2501,23 +2320,23 @@ export default function GameScreen() {
     if (sessionRunRecordedRef.current) return;
     if (!usePlayerStore.getState().playerId) return;
     sessionRunRecordedRef.current = true;
-    usePlayerStore.getState().recordSessionRunStats(enemiesKilled);
-  }, [isGameOver, gameOverStep, enemiesKilled]);
+    usePlayerStore.getState().recordSessionRunStats(useGameStore.getState().enemiesKilled);
+  }, [isGameOver, gameOverStep]);
 
   const slaughterHapticSentRef = useRef(false);
   useEffect(() => {
     if (!isPlaying || isGameOver) return;
-    if (enemiesKilled >= SESSION_SLAUGHTER_WIN_KILLS && !slaughterHapticSentRef.current) {
+    if (endKills >= SESSION_SLAUGHTER_WIN_KILLS && !slaughterHapticSentRef.current) {
       slaughterHapticSentRef.current = true;
       if (playerStore.hapticEnabled) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     }
-  }, [enemiesKilled, isPlaying, isGameOver, playerStore.hapticEnabled]);
+  }, [endKills, isPlaying, isGameOver, playerStore.hapticEnabled]);
 
   useEffect(() => {
-    if (enemiesKilled < SESSION_SLAUGHTER_WIN_KILLS) slaughterHapticSentRef.current = false;
-  }, [enemiesKilled]);
+    if (endKills < SESSION_SLAUGHTER_WIN_KILLS) slaughterHapticSentRef.current = false;
+  }, [endKills]);
 
   useEffect(() => {
     if (isGameOver) setGameOverStep(reviveOfferRef.current ? 'revive' : 'over');
@@ -2544,11 +2363,16 @@ export default function GameScreen() {
   // Free Play that is shorter than the box sits on the tower tray instead of floating above a gap.
   const boardTallerThanBox = heightFit > 0 && heightFit < widthFit;
   const paintedBattle = mapBackgroundFor(battleMapId) != null;
-  const scale = boardTallerThanBox
+  const fittedScale = boardTallerThanBox
     ? heightFit
     : paintedBattle && heightFit > 0
       ? Math.max(widthFit, heightFit)
       : widthFit;
+  const dragHoldsScale = useRef(false);
+  const placingNow = Boolean(selectedTowerType || selectedPlacedTower || dragHoldsScale.current);
+  const heldScale = useRef(fittedScale);
+  if (!placingNow) heldScale.current = fittedScale;
+  const scale = placingNow ? heldScale.current : fittedScale;
   const pinFreePlayToTray = !paintedBattle;
 
   // Initialize game on mount - check for saved game
@@ -2683,7 +2507,8 @@ export default function GameScreen() {
 
           try {
             state.gameTick(SIM_STEP_MS);
-          } catch {
+          } catch (err) {
+            console.warn('[runTick]', err);
             continue;
           }
 
@@ -2858,20 +2683,6 @@ export default function GameScreen() {
     resumeGame();
   }, [resumeGame]);
 
-  const handlePurchaseSpeed = useCallback(
-    (speed: GameSpeed) => {
-      const success = usePlayerStore.getState().purchaseSpeed(speed);
-      if (success) {
-        const unlocked = usePlayerStore.getState().unlockedSpeeds;
-        useGameStore.setState({
-          unlockedSpeeds: normalizeUnlockedSpeeds(unlocked),
-        });
-        applyGameSpeed(speed);
-      }
-    },
-    [applyGameSpeed]
-  );
-
   const handleStartWave = useCallback(() => {
     if (playerStore.hapticEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -2941,6 +2752,7 @@ export default function GameScreen() {
     (opts?: { deselect?: boolean }) => {
       panelDragGhostActive.value = 0;
       panelDragActiveRef.current = false;
+      dragHoldsScale.current = false;
       panelDragTypeRef.current = null;
       setPanelDragActive(false);
       setGhostTowerType(null);
@@ -2958,6 +2770,7 @@ export default function GameScreen() {
   const handleTowerDragStart = useCallback(
     (type: TowerType, winX: number, winY: number) => {
       panelDragActiveRef.current = true;
+      dragHoldsScale.current = true;
       panelDragTypeRef.current = type;
       panelDragGhostX.value = winX;
       panelDragGhostY.value = winY;
@@ -3066,7 +2879,10 @@ export default function GameScreen() {
     if (gameEndHandledRef.current) return;
     gameEndHandledRef.current = true;
 
-    const runMapId = useGameStore.getState().currentMapId ?? playerStore.currentMapId;
+    const liveEnd = useGameStore.getState();
+    const enemiesKilled = liveEnd.enemiesKilled;
+    const coins = liveEnd.coins;
+    const runMapId = liveEnd.currentMapId ?? playerStore.currentMapId;
     playerStore.recordMapBestWave(runMapId, currentWave);
 
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
@@ -3159,7 +2975,7 @@ export default function GameScreen() {
         difficulty: usePlayerStore.getState().difficultyMode,
       });
     playerStore.clearCurrentGameProgress();
-  }, [playerStore, gameStartTime, currentWave, enemiesKilled, towersPlaced, dailyChallenge, coins]);
+  }, [playerStore, gameStartTime, currentWave, towersPlaced, dailyChallenge]);
 
   useEffect(() => {
     if (!isGameOver) {
@@ -3241,18 +3057,13 @@ export default function GameScreen() {
     router.replace('/');
   }, [router, playerStore]);
 
-  const formatTimer = (ms: number) => {
-    const seconds = Math.ceil(ms / 1000);
-    return `${seconds}s`;
-  };
-
   const rewardSummary = useMemo(() => {
     // Keep in sync with handleGameEnd's XP formula (2.3: wave*2 + kills*0.2).
     const waveXp = Math.max(1, Math.floor(currentWave * 2));
-    const killXp = Math.floor(enemiesKilled * 0.2);
+    const killXp = Math.floor(endKills * 0.2);
     const roundXp = currentWave >= 1 ? 1 : 0;
     const baseXpReward = waveXp + killXp + roundXp;
-    const P_scaled = scaledTotalPerformanceGems(currentWave, enemiesKilled);
+    const P_scaled = scaledTotalPerformanceGems(currentWave, endKills);
     const challengeXpReward = Math.floor(baseXpReward * Math.max(0, dailyChallenge.xpMultiplier - 1));
     const challengeGemReward = Math.floor(P_scaled * Math.max(0, dailyChallenge.gemMultiplier - 1));
     const nowKey = getUtcDayKey(Date.now());
@@ -3268,7 +3079,7 @@ export default function GameScreen() {
       comboBonus,
       comboCount: nextCombo,
     };
-  }, [currentWave, enemiesKilled, dailyChallenge, playerStore.lastDailyChallengeRunAt, playerStore.dailyChallengeRunCombo]);
+  }, [currentWave, endKills, dailyChallenge, playerStore.lastDailyChallengeRunAt, playerStore.dailyChallengeRunCombo]);
 
   const coinIncomeUpgradeLevel = usePlayerStore((s) => s.coinIncomeUpgradeLevel);
   const battleCoinIncomeMult = useMemo(
@@ -3295,7 +3106,7 @@ export default function GameScreen() {
           </View>
           <View style={styles.stat}>
             <FontAwesome5 name="coins" size={12} color="#FFD700" />
-            <Text style={styles.statValue}>{coins}</Text>
+            <HudCoinValue />
           </View>
           <View style={styles.stat}>
             <MaterialCommunityIcons name="waves" size={14} color={TacticalTheme.accent} />
@@ -3335,13 +3146,6 @@ export default function GameScreen() {
                 : `Wave ${currentWave} done`}
           </Text>
           <Text style={styles.hudStripText}>×{battleCoinIncomeMult.toFixed(2)}</Text>
-          <SpeedControls
-            currentSpeed={gameSpeed}
-            onSpeedChange={applyGameSpeed}
-            unlockedSpeeds={unlockedSpeeds}
-            onPurchaseSpeed={handlePurchaseSpeed}
-            gems={playerStore.gems}
-          />
           {!waveInProgress ? (
             <TouchableOpacity onPress={handleStartWave} activeOpacity={0.85}>
               <ImageBackground
@@ -3350,10 +3154,7 @@ export default function GameScreen() {
                 style={styles.startWaveButton}
                 imageStyle={styles.startWaveImage}
               >
-                <Text style={styles.startWaveText} numberOfLines={1}>
-                  Start {currentWave + 1}
-                  {autoWaveTimer > 0 && currentWave > 0 ? ` ${formatTimer(autoWaveTimer)}` : ''}
-                </Text>
+                <StartWaveLabel currentWave={currentWave} />
               </ImageBackground>
             </TouchableOpacity>
           ) : (
@@ -3385,6 +3186,7 @@ export default function GameScreen() {
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
           if (width <= 0 || height <= 0) return;
+          if (selectedTowerType || selectedPlacedTower || dragHoldsScale.current) return;
           const key = `${gridCols}x${gridRows}x${Math.round(SCREEN_WIDTH)}x${Math.round(height)}`;
           const latch = fitLatch.current;
           if (latch.key === key && latch.w === width && latch.h === height) return;
@@ -3420,7 +3222,7 @@ export default function GameScreen() {
       {selectedTowerType && !selectedPlacedTower && (
         <View style={styles.instructionBar} pointerEvents="none">
           <Text style={styles.instructionText}>
-            Drag a tower from the panel onto the map · Or tap to select, then drag on the map · Pinch to zoom ·{' '}
+            Drag a tower from the panel onto the map · Or tap to select, then drag on the map ·{' '}
             {TOWERS[selectedTowerType].name}
           </Text>
         </View>
@@ -3434,7 +3236,6 @@ export default function GameScreen() {
           onSell={handleSell}
           onTargetingChange={handleTargetingChange}
           onClose={() => selectPlacedTower(null)}
-          coins={coins}
           getUpgradeCost={getUpgradeCost}
           getSellValue={getSellValue}
           shopUpgradeLevel={towerUpgradeLevels[selectedPlacedTower.type] || 0}
@@ -3444,7 +3245,6 @@ export default function GameScreen() {
         <TowerPanel
           onSelect={selectTower}
           selectedType={selectedTowerType}
-          coins={coins}
           unlockedTowers={unlockedTowers}
           getTowerCost={getTowerCost}
           scrollEnabled={towerPanelScrollEnabled}
@@ -3462,11 +3262,11 @@ export default function GameScreen() {
         visible={isGameOver}
         step={isGameOver && reviveOfferRef.current && gameOverStep !== 'results' ? 'revive' : gameOverStep}
         wave={currentWave}
-        score={score}
-        enemiesKilled={enemiesKilled}
+        score={endScore}
+        enemiesKilled={endKills}
         towersPlaced={towersPlaced}
         bestWaveRecord={Math.max(playerStore.bestWave, currentWave)}
-        slaughterQualified={enemiesKilled >= SESSION_SLAUGHTER_WIN_KILLS}
+        slaughterQualified={endKills >= SESSION_SLAUGHTER_WIN_KILLS}
         slaughterThreshold={SESSION_SLAUGHTER_WIN_KILLS}
         triumphCount={sessionSlaughterTriumphs}
         triumphsNeeded={SESSION_BOUNTY_TRIUMPHS_NEEDED}
@@ -3487,7 +3287,6 @@ export default function GameScreen() {
         onCancel={handleCancelExit}
         onGoToShop={handleGoToShop}
         currentWave={currentWave}
-        coins={coins}
       />
 
       {/* Resume game modal */}
@@ -3508,7 +3307,7 @@ export default function GameScreen() {
               ? ` · ${waveEnemiesRemaining} enemies left`
               : ''}
             {' · '}
-            {enemiesKilled} destroyed this run · {coins} coins
+            <PauseRunLine />
           </Text>
           
           <TouchableOpacity style={styles.pauseResumeButton} onPress={resumeGame}>
@@ -3852,6 +3651,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     height: 124,
     justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
   boardContainer: {
     flex: 1,
@@ -4221,8 +4021,11 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   briefingCard: {
-    marginHorizontal: 12,
-    marginBottom: 8,
+    position: 'absolute',
+    top: 118,
+    left: 12,
+    right: 12,
+    zIndex: 30,
     backgroundColor: 'transparent',
     borderRadius: 12,
     paddingHorizontal: 16,
