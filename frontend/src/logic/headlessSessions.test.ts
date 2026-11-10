@@ -11,7 +11,7 @@ for (const ext of ['.wav', '.m4a', '.mp3', '.png', '.jpg']) {
 
 const listenerBag = { app: 0 };
 (globalThis as { __lsListenerBag?: { app: number } }).__lsListenerBag = listenerBag;
-const audioNative = { creates: 0, replays: 0, volumes: 0 };
+const audioNative = { creates: 0, replays: 0, volumes: 0, live: 0 };
 (globalThis as { __lsAudio?: typeof audioNative }).__lsAudio = audioNative;
 
 mock.module('react-native', {
@@ -41,6 +41,7 @@ mock.module('expo-av', {
       Sound: {
         createAsync: async () => {
           audioNative.creates += 1;
+          audioNative.live += 1;
           return {
             sound: {
               setVolumeAsync: async () => {
@@ -52,7 +53,9 @@ mock.module('expo-av', {
               playAsync: async () => {},
               pauseAsync: async () => {},
               stopAsync: async () => {},
-              unloadAsync: async () => {},
+              unloadAsync: async () => {
+                audioNative.live = Math.max(0, audioNative.live - 1);
+              },
             },
           };
         },
@@ -159,5 +162,47 @@ describe('live 2x sessions', () => {
     assert.equal(audioNative.creates, sounds);
     assert.ok(replayed > 0);
     assert.ok(replayed <= 20 * Math.max(1, Math.ceil(seconds)));
+  });
+
+  it('drops battle sounds back to the menu baseline after each of 3 runs', async () => {
+    const sessions = await import('./headlessSessions');
+    const audio = await import('../services/audioService');
+    const player = await import('../stores/playerStore');
+    player.usePlayerStore.setState({ soundEnabled: true, musicEnabled: true });
+    await audio.cleanupGameplayAudioAfterSession();
+    const baseline = audioNative.live;
+    const exits: number[] = [];
+    for (let run = 0; run < 3; run++) {
+      audio.resetAudioBudgetForTests();
+      await sessions.runGaleAudioSoak(1);
+      assert.ok(audioNative.live > baseline);
+      await audio.cleanupGameplayAudioAfterSession();
+      await audio.cleanupGameplayAudioAfterSession();
+      exits.push(audioNative.live);
+      assert.equal(audioNative.live, baseline);
+    }
+    console.log(`AUDIO_EXIT ${JSON.stringify({ baseline, exits, creates: audioNative.creates })}`);
+  });
+
+  it('toggles sound during a 2x wave without duplicating Sounds', async () => {
+    const sessions = await import('./headlessSessions');
+    const audio = await import('../services/audioService');
+    const player = await import('../stores/playerStore');
+    player.usePlayerStore.setState({ soundEnabled: true });
+    await audio.releaseBattleAudio();
+    audio.resetAudioBudgetForTests();
+    await sessions.runGaleAudioSoak(1);
+    const held = audioNative.creates;
+    const live = audioNative.live;
+    audio.resetAudioBudgetForTests();
+    await sessions.runGaleAudioSoak(1, {
+      onStep(step) {
+        if (step === 20) player.usePlayerStore.setState({ soundEnabled: false });
+        if (step === 50) player.usePlayerStore.setState({ soundEnabled: true });
+      },
+    });
+    console.log(`AUDIO_TOGGLE ${JSON.stringify({ held, after: audioNative.creates, live, afterLive: audioNative.live })}`);
+    assert.equal(audioNative.creates, held);
+    assert.equal(audioNative.live, live);
   });
 });

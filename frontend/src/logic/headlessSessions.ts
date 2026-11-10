@@ -316,13 +316,14 @@ export async function runLiveAcceptance() {
 }
 
 /** Gale Bastion at 2x for many full waves. Used to prove native audio stays bounded. */
-export async function runGaleAudioSoak(waveCount = 25) {
+export async function runGaleAudioSoak(waveCount = 25, hooks?: { onStep?: (step: number) => void }) {
   const clock = installFakeClock();
   try {
     useGameStore.getState().startGame(ALL_TOWERS, [1, 2], {} as Record<TowerType, number>, {}, 0, 'gale_bastion');
     const placed = placeBatteries(18);
     useGameStore.getState().setGameSpeed(2);
     let cleared = 0;
+    let simSteps = 0;
     for (let n = 0; n < waveCount; n++) {
       useGameStore.getState().startWave();
       let accum = 0;
@@ -338,6 +339,8 @@ export async function runGaleAudioSoak(waveCount = 25) {
         for (let step = 0; step < consumed.steps; step++) {
           useGameStore.getState().gameTick(SIM_STEP_MS);
           clock.advance(SIM_STEP_MS);
+          simSteps += 1;
+          hooks?.onStep?.(simSteps);
           const state = useGameStore.getState();
           if (schedule.length === 0) schedule = scheduleFor(state.currentWave, 'gale_bastion');
           elapsed += SIM_STEP_MS;

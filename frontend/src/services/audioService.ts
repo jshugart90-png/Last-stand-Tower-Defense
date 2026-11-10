@@ -283,6 +283,14 @@ function bundledAudio(key: string): number | undefined {
 
 /** One native Sound per key. Concurrent plays share this promise instead of creating another. */
 const loadPromises = new Map<string, Promise<Audio.Sound | null>>();
+/** Bumped when battle audio is torn down so an in-flight load cannot repopulate the pool. */
+let battleGeneration = 0;
+
+function isBattleAudioKey(key: string): boolean {
+  if (key.startsWith('ui_')) return false;
+  if (key === 'music_menu') return false;
+  return true;
+}
 
 const SFX_VOLUME: Record<string, number> = {
   shot_mg: 0.7,
@@ -319,9 +327,23 @@ function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
 }
 
 async function createSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
+  const generation = battleGeneration;
+  const battle = isBattleAudioKey(key);
   const base = SFX_VOLUME[key] ?? 1;
   const volume = loop ? 0 : Math.max(0, Math.min(1, base * playerAudio().sfx));
   const file = bundledAudio(key);
+  const adopt = async (sound: Audio.Sound): Promise<Audio.Sound | null> => {
+    if (battle && generation !== battleGeneration) {
+      try {
+        await sound.unloadAsync();
+      } catch {
+        /* already gone */
+      }
+      return null;
+    }
+    cache.set(key, sound);
+    return sound;
+  };
   if (file) {
     try {
       const { sound } = await Audio.Sound.createAsync(file, {
@@ -329,8 +351,7 @@ async function createSound(key: string, loop: boolean): Promise<Audio.Sound | nu
         volume,
         isLooping: loop,
       });
-      cache.set(key, sound);
-      return sound;
+      return adopt(sound);
     } catch {
       if (key.startsWith('music_')) return null;
     }
@@ -348,18 +369,18 @@ async function createSound(key: string, loop: boolean): Promise<Audio.Sound | nu
       { uri },
       { shouldPlay: false, volume, isLooping: loop }
     );
-    cache.set(key, sound);
-    return sound;
+    return adopt(sound);
   } catch {
     return null;
   }
 }
 
 export function preloadGameplaySounds(): void {
+  if (playerAudio().sfx <= 0.001) return;
   void ensureAudioReady().then((ready) => {
-    if (!ready) return;
+    if (!ready || playerAudio().sfx <= 0.001) return;
     for (const key of Object.keys(SFX_VOLUME)) void loadSound(key, false);
-    for (const track of ['menu', 'battle', 'battle2', 'boss'] as MusicTrack[]) {
+    for (const track of ['battle', 'battle2', 'boss'] as MusicTrack[]) {
       void loadSound(`music_${track}`, true);
     }
   });
@@ -476,37 +497,74 @@ async function resumeCurrentMusic() {
   await playMusic(currentTrack);
 }
 
+let appliedSfx = -1;
+
+function stopLoadedSfx(): void {
+  for (const [key, sound] of cache) {
+    if (key.startsWith('music_')) continue;
+    void sound.stopAsync().catch(() => {});
+    void sound.setVolumeAsync(0).catch(() => {});
+  }
+}
+
+function restoreLoadedSfx(gain: number): void {
+  for (const [key, sound] of cache) {
+    if (key.startsWith('music_')) continue;
+    const base = SFX_VOLUME[key] ?? 0.7;
+    void sound.setVolumeAsync(Math.max(0, Math.min(1, base * gain))).catch(() => {});
+  }
+}
+
 function bindLifecycle() {
   if (!appStateBound) {
     appStateBound = true;
     AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'active') {
         musicSuspended = false;
-        void refreshAudioModeOnForeground().then(() => resumeCurrentMusic());
+        void refreshAudioModeOnForeground().then(async () => {
+          const { useGameStore } = await import('../stores/gameStore');
+          const game = useGameStore.getState();
+          if (game.isPlaying && !game.isGameOver) {
+            gameplaySfxArmed = true;
+          }
+          await resumeCurrentMusic();
+        });
       } else {
         musicSuspended = true;
         clearFade();
-        void pauseSlot(slotA);
-        void pauseSlot(slotB);
+        void releaseBattleAudio();
       }
     });
   }
-  if (!storeBound) {
-    storeBound = true;
-    usePlayerStore.subscribe((state) => {
-      const gain = musicGain(state.musicEnabled, state.musicVolume);
-      const slot = activeSlot === 'a' ? slotA : slotB;
-      if (gain <= 0.001) {
-        void pauseSlot(slotA);
-        void pauseSlot(slotB);
-        return;
-      }
-      if (currentTrack && (!slot || musicSuspended)) return;
-      void applySlotVolume(slot, 1);
-      if (currentTrack) void playSlot(slot);
-    });
-  }
+  bindSoundToggle();
 }
+
+function bindSoundToggle() {
+  if (storeBound) return;
+  storeBound = true;
+  usePlayerStore.subscribe((state) => {
+    const sfx = sfxGain(state.soundEnabled, state.sfxVolume);
+    if (appliedSfx > 0.001 && sfx <= 0.001) {
+      stopLoadedSfx();
+    } else if (appliedSfx >= 0 && appliedSfx <= 0.001 && sfx > 0.001) {
+      restoreLoadedSfx(sfx);
+    }
+    appliedSfx = sfx;
+
+    const gain = musicGain(state.musicEnabled, state.musicVolume);
+    const slot = activeSlot === 'a' ? slotA : slotB;
+    if (gain <= 0.001) {
+      void pauseSlot(slotA);
+      void pauseSlot(slotB);
+      return;
+    }
+    if (currentTrack && (!slot || musicSuspended)) return;
+    void applySlotVolume(slot, 1);
+    if (currentTrack) void playSlot(slot);
+  });
+}
+
+bindSoundToggle();
 
 export const initializeAudio = async (): Promise<void> => {
   if (audioReady) return;
@@ -585,6 +643,8 @@ function requestReplay(key: string, _baseVolume: number, combat: boolean): void 
         if (!ready) return;
         const sound = await loadSound(key, false);
         if (!sound) return;
+        if (playerAudio().sfx <= 0.001) return;
+        if (combat && !gameplaySfxArmed) return;
         await sound.replayAsync();
       } catch {
         /* drop this voice only */
@@ -624,9 +684,60 @@ export async function stopAllSounds(): Promise<void> {
   await Promise.all(tasks);
 }
 
+/**
+ * Stop and unload every battle Sound, and drop in-flight loads.
+ * Safe to call again: a second call finds an empty battle pool.
+ */
+export async function releaseBattleAudio(): Promise<void> {
+  battleGeneration += 1;
+  gameplaySfxArmed = false;
+  musicToken += 1;
+  if (currentTrack && currentTrack !== 'menu') currentTrack = null;
+  clearFade();
+  replayBusy.clear();
+  lastPlayAt.clear();
+  soundWindowStart = 0;
+  soundWindowCount = 0;
+
+  const doomed = new Set<Audio.Sound>();
+  const pending: Promise<Audio.Sound | null>[] = [];
+  for (const [key, sound] of cache) {
+    if (!isBattleAudioKey(key)) continue;
+    doomed.add(sound);
+    cache.delete(key);
+  }
+  for (const [id, promise] of loadPromises) {
+    const key = id.slice(2);
+    if (!isBattleAudioKey(key)) continue;
+    pending.push(promise);
+    loadPromises.delete(id);
+  }
+  for (const slot of [slotA, slotB]) {
+    if (slot && slot.track !== 'menu') doomed.add(slot.sound);
+  }
+  if (slotA && slotA.track !== 'menu') slotA = null;
+  if (slotB && slotB.track !== 'menu') slotB = null;
+
+  await Promise.all(pending.map((promise) => promise.then(() => undefined).catch(() => undefined)));
+  await Promise.all(
+    [...doomed].map(async (sound) => {
+      try {
+        await sound.stopAsync();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        await sound.unloadAsync();
+      } catch {
+        /* already unloaded */
+      }
+    })
+  );
+}
+
 export async function cleanupGameplayAudioAfterSession(): Promise<void> {
-  await stopAllSounds();
-  await playMusic('menu');
+  await releaseBattleAudio();
+  if (playerAudio().music > 0.001) await playMusic('menu');
 }
 
 export function canPlayUiSfx(): boolean {

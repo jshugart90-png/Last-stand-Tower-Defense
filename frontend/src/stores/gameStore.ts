@@ -43,6 +43,7 @@ import {
   playWinSound,
   playLoseSound,
   stopAllSounds,
+  releaseBattleAudio,
   setGameplaySfxArmed,
 } from '../services/audioService';
 import { usePlayerStore } from './playerStore';
@@ -597,7 +598,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
   
   restartGame: () => {
-    void stopAllSounds();
+    void releaseBattleAudio();
     const {
       unlockedTowers,
       unlockedSpeeds,

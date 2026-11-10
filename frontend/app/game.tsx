@@ -56,7 +56,7 @@ import {
 import { gameApi, analyticsApi, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { findPath, wouldBlockPath } from '../src/utils/pathfinding';
 import { getDailyChallenge } from '../src/constants/challenges';
-import { playSfx, stopAllSounds, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx, playMusic } from '../src/services/audioService';
+import { playSfx, releaseBattleAudio, setGameplaySfxArmed, cleanupGameplayAudioAfterSession, canPlayUiSfx, playMusic } from '../src/services/audioService';
 import { selectBattleTrack } from '../src/logic/audioMix';
 import { isCellOnArenaRoute } from '../src/constants/arenaMaps';
 import {
@@ -2655,14 +2655,14 @@ export default function GameScreen() {
       pauseGame();
       setShowExitWarning(true);
     } else {
-      void stopAllSounds();
+      void releaseBattleAudio();
       router.replace('/');
     }
   }, [isPlaying, isGameOver, currentWave, pauseGame, router]);
 
   // Save and go to shop
   const handleGoToShop = useCallback(() => {
-    void stopAllSounds();
+    void releaseBattleAudio();
     // Save game state before navigating to shop
     saveGameState();
     setShowExitWarning(false);
@@ -2671,7 +2671,7 @@ export default function GameScreen() {
 
   const handleConfirmExit = useCallback(async () => {
     setShowExitWarning(false);
-    void stopAllSounds();
+    void releaseBattleAudio();
     // Save game state for resume
     saveGameState();
     await handleSaveCoins(getCurrentCoins());
@@ -3090,7 +3090,7 @@ export default function GameScreen() {
   return (
     <GameRuntimeErrorBoundary
       onRecover={() => {
-        void stopAllSounds();
+        void releaseBattleAudio();
         router.replace('/');
       }}
     >
