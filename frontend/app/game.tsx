@@ -88,8 +88,8 @@ import { SIM_STEP_MS, consumeSimSteps, scaledStepMs } from '../src/logic/simCloc
 import { needsPathChoice, resolveTowerStats, TOWER_PATHS, type TowerPath } from '../src/logic/combat';
 
 /** Compact tower-button row. The upgrade panel overlays the board and does not grow this. */
-/** Button row. The home-indicator inset is added in the screen so this stays the visible tray on SE. */
-const TRAY_BUTTON_HEIGHT = 104;
+/** Button row, measured from the SE tray (prices plus the button padding). */
+const TRAY_BUTTON_HEIGHT = 84;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -3284,12 +3284,8 @@ export default function GameScreen() {
         </View>
       ) : null}
 
-      <View style={[styles.traySlot, { height: trayHeight }]} pointerEvents="box-none">
-        <View style={{ width: renderedBoardWidth, height: '100%' }}>
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-            <Image source={uiArt.panel} resizeMode="stretch" style={StyleSheet.absoluteFill} />
-          </View>
-          <View style={{ height: TRAY_BUTTON_HEIGHT }}>
+      <View style={[styles.traySlot, { height: trayHeight, paddingBottom: trayInset }]} pointerEvents="box-none">
+        <View style={{ width: renderedBoardWidth, height: TRAY_BUTTON_HEIGHT }}>
           <TowerPanel
             onSelect={selectTower}
             selectedType={selectedTowerType}
@@ -3302,7 +3298,6 @@ export default function GameScreen() {
             onTowerDragEnd={handleTowerDragEnd}
             onTowerDragFinalize={handleTowerDragFinalize}
           />
-          </View>
         </View>
       </View>
       </View>
@@ -3898,7 +3893,7 @@ const styles = StyleSheet.create({
   },
   towerPanel: {
     width: '100%',
-    maxHeight: 118,
+    height: '100%',
     backgroundColor: 'transparent',
     overflow: 'hidden',
   },
