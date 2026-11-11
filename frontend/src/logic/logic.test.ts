@@ -127,31 +127,62 @@ describe('removed speed refund', () => {
     assert.deepEqual(legacySpeedOwnership([1, 2]), { owned2: true, owned3: false, owned5: false, refund: 30 });
     assert.deepEqual(legacySpeedOwnership([1, 3]), { owned2: false, owned3: true, owned5: false, refund: 80 });
     assert.deepEqual(legacySpeedOwnership([1, 5]), { owned2: false, owned3: false, owned5: true, refund: 150 });
-    assert.equal(legacySpeedOwnership([1, 2, 3, 5]).refund, 260);
+    assert.equal(legacySpeedOwnership([1, 2, 3, 5]).refund, 30 + 80 + 150);
     assert.equal(legacySpeedOwnership([1, 10]).refund, 150);
-    const contact = `Questions? ${SUPPORT_EMAIL}`;
-    assert.equal(
-      speedRefundNotice(true, true, true, 260),
-      `3x and 5x speed were removed and 2x is now free. The 260 gems you spent were returned to you. ${contact}`
-    );
-    assert.equal(
-      speedRefundNotice(true, false, false, 30),
-      `2x is now free. The 30 gems you spent were returned to you. ${contact}`
-    );
-    assert.equal(
-      speedRefundNotice(false, true, false, 80),
-      `3x speed was removed. The 80 gems you spent were returned to you. ${contact}`
-    );
-    assert.equal(
-      speedRefundNotice(false, true, true, 230),
-      `3x and 5x speed were removed. The 230 gems you spent were returned to you. ${contact}`
-    );
-    assert.equal(
-      speedRefundNotice(true, true, false, 110),
-      `3x speed was removed and 2x is now free. The 110 gems you spent were returned to you. ${contact}`
-    );
     assert.equal(speedRefundNotice(false, false, false, 0), null);
-    assert.equal(speedRefundNotice(true, true, true, 260)?.includes('refund'), false);
+  });
+
+  it('tells a 2x-only player that 2x is free and their 30 gems were returned', () => {
+    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 2] });
+    assert.equal(due.pay2, true);
+    assert.equal(due.pay3, false);
+    assert.equal(due.pay5, false);
+    assert.equal(due.refund, 30);
+    const text = speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund);
+    assert.equal(
+      text,
+      `2x is now free. The ${due.refund} gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`
+    );
+    assert.equal(text?.includes('3x'), false);
+    assert.equal(text?.includes('5x'), false);
+    assert.equal(text?.includes('removed'), false);
+  });
+
+  it('tells a 3x-only player that 3x was removed and their 80 gems were returned', () => {
+    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 3] });
+    assert.equal(due.refund, 80);
+    assert.equal(
+      speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund),
+      `3x speed was removed. The ${due.refund} gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`
+    );
+  });
+
+  it('tells a 5x-only player that 5x was removed and their 150 gems were returned', () => {
+    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 5] });
+    assert.equal(due.pay2, false);
+    assert.equal(due.pay5, true);
+    assert.equal(due.refund, 150);
+    const text = speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund);
+    assert.equal(
+      text,
+      `5x speed was removed. The ${due.refund} gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`
+    );
+    assert.equal(text?.includes('2x'), false);
+    assert.equal(text?.includes('3x'), false);
+  });
+
+  it('adds 30 for 2x when 3x and 5x were also owned', () => {
+    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 2, 3, 5] });
+    assert.equal(due.pay2, true);
+    assert.equal(due.pay3, true);
+    assert.equal(due.pay5, true);
+    assert.equal(due.refund, 30 + 80 + 150);
+    const text = speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund);
+    assert.equal(
+      text,
+      `3x and 5x speed were removed and 2x is now free. The ${due.refund} gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`
+    );
+    assert.equal(text?.includes('refund'), false);
   });
 
   it('pays the 23007 flags after the speed list was clamped to 2x', () => {
