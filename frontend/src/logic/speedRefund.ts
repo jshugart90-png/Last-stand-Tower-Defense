@@ -1,4 +1,6 @@
-/** Gem-shop speeds. 2x is free now. 3x and 5x are gone. Gems are bought with real money, so each is refunded once. */
+import { SUPPORT_EMAIL } from '../constants/legal';
+
+/** Gem-shop speeds. 2x is free now. 3x and 5x are gone. Gems spent on them are returned once. */
 export const LEGACY_SPEED_2X_GEMS = 30;
 export const LEGACY_SPEED_3X_GEMS = 80;
 export const LEGACY_SPEED_5X_GEMS = 150;
@@ -59,13 +61,19 @@ export function speedRefundNotice(
   owned2: boolean,
   owned3: boolean,
   owned5: boolean,
-  refund: number
+  gemsReturned: number
 ): string | null {
-  if (refund <= 0) return null;
+  if (gemsReturned <= 0) return null;
   const removed = [owned3 ? '3x' : '', owned5 ? '5x' : ''].filter(Boolean);
-  if (owned2 && removed.length > 0) {
-    return `${removed.join(' and ')} speed was removed, and 2x is now free. ${refund} gems were refunded.`;
+  let lead: string;
+  if (removed.length > 0 && owned2) {
+    const verb = removed.length > 1 ? 'were' : 'was';
+    lead = `${removed.join(' and ')} speed ${verb} removed and 2x is now free.`;
+  } else if (owned2) {
+    lead = '2x is now free.';
+  } else {
+    const verb = removed.length > 1 ? 'were' : 'was';
+    lead = `${removed.join(' and ')} speed ${verb} removed.`;
   }
-  if (owned2) return `2x speed is now free. ${refund} gems were refunded.`;
-  return `${removed.join(' and ')} speed was removed. ${refund} gems were refunded.`;
+  return `${lead} The ${gemsReturned} gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`;
 }

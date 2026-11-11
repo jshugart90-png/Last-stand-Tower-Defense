@@ -4,9 +4,11 @@ import { mixEqualPower, musicGain, selectBattleTrack, sfxGain } from './audioMix
 import { parseShotRoute } from './shotUrl';
 import { GAME_CONFIG, clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
 import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, SIM_STEP_MS, consumeSimSteps, scaledStepMs } from './simClock';
+import { SUPPORT_EMAIL } from '../constants/legal';
 import { legacySpeedOwnership, legacySpeedRefundDue, speedRefundNotice } from './speedRefund';
 import { runAcceptanceSessions } from './waveLoadSim';
 import {
+  ARENA_IAP_CAMPAIGN_MAP_IDS,
   ARENA_TIER_PRODUCT_IDS,
   LEGACY_ARENA_PRODUCT_ID,
   applyArenaProduct,
@@ -14,11 +16,14 @@ import {
   arenaTierShopState,
   changeArenaSizeDuringSavedRun,
   clampSelectedArenaSize,
+  fieldsUnlockedByLegacyExpansions,
+  fieldsUnlockedByTier,
   gridForArenaSize,
   nextArenaTierForSale,
   ownedAfterRestore,
   selectedAfterUnlock,
   shouldApplyPendingArenaPurchase,
+  tiersIncludedForLegacyOwner,
 } from './arenaSize';
 import {
   computeHitDamage,
@@ -124,12 +129,29 @@ describe('removed speed refund', () => {
     assert.deepEqual(legacySpeedOwnership([1, 5]), { owned2: false, owned3: false, owned5: true, refund: 150 });
     assert.equal(legacySpeedOwnership([1, 2, 3, 5]).refund, 260);
     assert.equal(legacySpeedOwnership([1, 10]).refund, 150);
+    const contact = `Questions? ${SUPPORT_EMAIL}`;
     assert.equal(
       speedRefundNotice(true, true, true, 260),
-      '3x and 5x speed was removed, and 2x is now free. 260 gems were refunded.'
+      `3x and 5x speed were removed and 2x is now free. The 260 gems you spent were returned to you. ${contact}`
     );
-    assert.equal(speedRefundNotice(true, false, false, 30), '2x speed is now free. 30 gems were refunded.');
+    assert.equal(
+      speedRefundNotice(true, false, false, 30),
+      `2x is now free. The 30 gems you spent were returned to you. ${contact}`
+    );
+    assert.equal(
+      speedRefundNotice(false, true, false, 80),
+      `3x speed was removed. The 80 gems you spent were returned to you. ${contact}`
+    );
+    assert.equal(
+      speedRefundNotice(false, true, true, 230),
+      `3x and 5x speed were removed. The 230 gems you spent were returned to you. ${contact}`
+    );
+    assert.equal(
+      speedRefundNotice(true, true, false, 110),
+      `3x speed was removed and 2x is now free. The 110 gems you spent were returned to you. ${contact}`
+    );
     assert.equal(speedRefundNotice(false, false, false, 0), null);
+    assert.equal(speedRefundNotice(true, true, true, 260)?.includes('refund'), false);
   });
 
   it('pays the 23007 flags after the speed list was clamped to 2x', () => {
@@ -204,7 +226,7 @@ describe('arena size', () => {
     );
     assert.equal(ownedAfterRestore(3, [ARENA_TIER_PRODUCT_IDS[1]]), 3);
     assert.equal(ownedAfterRestore(1, [LEGACY_ARENA_PRODUCT_ID]), 1);
-    assert.equal(ownedAfterRestore(0, [LEGACY_ARENA_PRODUCT_ID, 'com.laststanddefense.premium_bundle']), 0);
+    assert.equal(ownedAfterRestore(0, [LEGACY_ARENA_PRODUCT_ID, 'com.laststanddefense.premium_bundle']), 1);
   });
 
   it('keeps an old expansion level when the selected size was never stored', () => {
@@ -248,6 +270,43 @@ describe('arena size', () => {
     assert.equal(arenaTierLockMessage(3, 1), null);
     assert.equal(ownedAfterRestore(0, [ARENA_TIER_PRODUCT_IDS[3]]), 3);
     assert.equal(applyArenaProduct(0, ARENA_TIER_PRODUCT_IDS[3]), 3);
+  });
+
+  it('keeps legacy expansion fields inside the tiers on launch and restore', () => {
+    assert.deepEqual(ARENA_IAP_CAMPAIGN_MAP_IDS, []);
+    assert.deepEqual(
+      fieldsUnlockedByLegacyExpansions(1).map((field) => field.grid),
+      ['10×14', '12×16']
+    );
+    assert.deepEqual(
+      fieldsUnlockedByTier(1).map((field) => `${field.name} ${field.grid}`),
+      ['Original 10×14', 'Size 1 12×16']
+    );
+    assert.deepEqual(
+      fieldsUnlockedByTier(2).map((field) => field.grid),
+      ['10×14', '12×16', '14×18']
+    );
+    assert.deepEqual(
+      fieldsUnlockedByTier(3).map((field) => field.grid),
+      ['10×14', '12×16', '14×18', '16×20']
+    );
+    assert.deepEqual(tiersIncludedForLegacyOwner(0), []);
+    assert.deepEqual(tiersIncludedForLegacyOwner(1), [1]);
+    assert.deepEqual(tiersIncludedForLegacyOwner(2), [1, 2]);
+    assert.deepEqual(tiersIncludedForLegacyOwner(5), [1, 2, 3]);
+    assert.equal(ownedAfterRestore(2, []), 2);
+    assert.equal(arenaTierShopState(2, 1), 'owned');
+    assert.equal(arenaTierShopState(2, 2), 'owned');
+    assert.equal(nextArenaTierForSale(2), 3);
+    assert.equal(
+      ownedAfterRestore(0, [LEGACY_ARENA_PRODUCT_ID, LEGACY_ARENA_PRODUCT_ID]),
+      2
+    );
+    assert.equal(
+      ownedAfterRestore(4, [LEGACY_ARENA_PRODUCT_ID, ARENA_TIER_PRODUCT_IDS[1]]),
+      4
+    );
+    assert.equal(ownedAfterRestore(1, [ARENA_TIER_PRODUCT_IDS[3]]), 3);
   });
 
   it('grants a pending consumable once per transaction', () => {

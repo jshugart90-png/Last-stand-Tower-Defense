@@ -1441,10 +1441,13 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
             ? Math.min(COIN_INCOME_UPGRADE_MAX, Math.max(0, p.coinIncomeUpgradeLevel))
             : 0,
         currentMapId: p?.currentMapId ?? DEFAULT_MAP_ID,
-        arenaExpansions: ownedArenaTier(typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0),
+        arenaExpansions: ownedAfterRestore(
+          typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0,
+          []
+        ),
         selectedArenaSize: clampSelectedArenaSize(
           p?.selectedArenaSize,
-          ownedArenaTier(typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0)
+          ownedAfterRestore(typeof p?.arenaExpansions === 'number' ? p.arenaExpansions : 0, [])
         ),
         processedIapTransactionIds: Array.isArray(p?.processedIapTransactionIds)
           ? p.processedIapTransactionIds.filter((id) => typeof id === 'string' && id.length > 0).slice(-40)

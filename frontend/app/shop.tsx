@@ -455,11 +455,7 @@ export default function ShopScreen() {
           }
           if (legacy) {
             const tx = String(purchase.transactionId || purchase.originalTransactionIdentifierIOS || purchase.purchaseToken || '');
-            if (tx && !playerStore.hasProcessedIapTransaction(tx)) {
-              playerStore.addArenaExpansion();
-              playerStore.rememberIapTransaction(tx);
-              restoredSomething = true;
-            }
+            if (tx) playerStore.rememberIapTransaction(tx);
           }
           if (tier || legacy) {
             try {
