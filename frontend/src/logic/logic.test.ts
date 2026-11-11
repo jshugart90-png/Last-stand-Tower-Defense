@@ -5,7 +5,7 @@ import { parseShotRoute } from './shotUrl';
 import { GAME_CONFIG, clampGameSpeed, getWaveConfig, getWavePlannedEnemyCount, normalizeUnlockedSpeeds } from '../constants/game';
 import { MAX_PROJECTILES, MAX_SUBSTEPS_PER_FRAME, SIM_STEP_MS, consumeSimSteps, scaledStepMs } from './simClock';
 import { SUPPORT_EMAIL } from '../constants/legal';
-import { legacySpeedOwnership, legacySpeedRefundDue, speedRefundNotice } from './speedRefund';
+import { legacySpeedFlagsFromSave, legacySpeedOwnership, legacySpeedRefundDue, speedRefundNotice } from './speedRefund';
 import { runAcceptanceSessions } from './waveLoadSim';
 import {
   ARENA_IAP_CAMPAIGN_MAP_IDS,
@@ -133,7 +133,7 @@ describe('removed speed refund', () => {
   });
 
   it('tells a 2x-only player that 2x is free and their 30 gems were returned', () => {
-    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 2] });
+    const due = legacySpeedRefundDue({ revision: 0, owned2Flag: true });
     assert.equal(due.pay2, true);
     assert.equal(due.pay3, false);
     assert.equal(due.pay5, false);
@@ -149,7 +149,7 @@ describe('removed speed refund', () => {
   });
 
   it('tells a 3x-only player that 3x was removed and their 80 gems were returned', () => {
-    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 3] });
+    const due = legacySpeedRefundDue({ revision: 0, owned3Flag: true });
     assert.equal(due.refund, 80);
     assert.equal(
       speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund),
@@ -158,7 +158,7 @@ describe('removed speed refund', () => {
   });
 
   it('tells a 5x-only player that 5x was removed and their 150 gems were returned', () => {
-    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 5] });
+    const due = legacySpeedRefundDue({ revision: 0, owned5Flag: true });
     assert.equal(due.pay2, false);
     assert.equal(due.pay5, true);
     assert.equal(due.refund, 150);
@@ -172,7 +172,12 @@ describe('removed speed refund', () => {
   });
 
   it('adds 30 for 2x when 3x and 5x were also owned', () => {
-    const due = legacySpeedRefundDue({ revision: 0, unlockedSpeeds: [1, 2, 3, 5] });
+    const due = legacySpeedRefundDue({
+      revision: 0,
+      owned2Flag: true,
+      owned3Flag: true,
+      owned5Flag: true,
+    });
     assert.equal(due.pay2, true);
     assert.equal(due.pay3, true);
     assert.equal(due.pay5, true);
@@ -185,21 +190,85 @@ describe('removed speed refund', () => {
     assert.equal(text?.includes('refund'), false);
   });
 
-  it('pays the 23007 flags after the speed list was clamped to 2x', () => {
+  it('pays 80 for 3x when they do not own 2x', () => {
+    const seeded = legacySpeedFlagsFromSave({
+      unlockedSpeeds: [1, 2],
+      owned2Flag: false,
+      owned3Flag: true,
+    });
+    assert.equal(seeded.owned2, false);
+    assert.equal(seeded.owned3, true);
     const due = legacySpeedRefundDue({
       revision: 0,
+      owned2Flag: seeded.owned2,
+      owned3Flag: seeded.owned3,
+      owned5Flag: seeded.owned5,
+    });
+    assert.equal(due.pay2, false);
+    assert.equal(due.pay3, true);
+    assert.equal(due.pay5, false);
+    assert.equal(due.refund, 80);
+    const text = speedRefundNotice(due.pay2, due.pay3, due.pay5, due.refund);
+    assert.equal(
+      text,
+      `3x speed was removed. The 80 gems you spent were returned to you. Questions? ${SUPPORT_EMAIL}`
+    );
+    assert.equal(text?.includes('2x'), false);
+    const fiveOnly = legacySpeedFlagsFromSave({
+      unlockedSpeeds: [1, 2],
+      owned5Flag: true,
+    });
+    assert.equal(fiveOnly.owned2, false);
+    assert.equal(
+      legacySpeedRefundDue({
+        revision: 0,
+        owned2Flag: fiveOnly.owned2,
+        owned5Flag: fiveOnly.owned5,
+      }).refund,
+      150
+    );
+    const boughtBoth = legacySpeedFlagsFromSave({ unlockedSpeeds: [1, 2, 3] });
+    assert.equal(boughtBoth.owned2, true);
+    assert.equal(boughtBoth.owned3, true);
+    assert.equal(
+      legacySpeedRefundDue({
+        revision: 0,
+        owned2Flag: boughtBoth.owned2,
+        owned3Flag: boughtBoth.owned3,
+      }).refund,
+      110
+    );
+  });
+
+  it('pays the 23007 flags after the speed list was clamped to 2x', () => {
+    const seeded = legacySpeedFlagsFromSave({
       unlockedSpeeds: [1, 2],
       owned3Flag: true,
       owned5Flag: true,
     });
-    assert.equal(due.pay2, true);
+    const due = legacySpeedRefundDue({
+      revision: 0,
+      owned2Flag: seeded.owned2,
+      owned3Flag: seeded.owned3,
+      owned5Flag: seeded.owned5,
+    });
+    assert.equal(due.pay2, false);
     assert.equal(due.pay3, true);
     assert.equal(due.pay5, true);
-    assert.equal(due.refund, 260);
+    assert.equal(due.refund, 230);
+    assert.equal(
+      legacySpeedRefundDue({
+        revision: 0,
+        owned2Flag: true,
+        owned3Flag: true,
+        owned5Flag: true,
+      }).refund,
+      260
+    );
     assert.equal(
       legacySpeedRefundDue({
         revision: 1,
-        unlockedSpeeds: [1, 2],
+        owned2Flag: true,
         owned3Flag: true,
         owned5Flag: true,
       }).refund,
@@ -208,7 +277,7 @@ describe('removed speed refund', () => {
     assert.equal(
       legacySpeedRefundDue({
         revision: 2,
-        unlockedSpeeds: [1, 2],
+        owned2Flag: true,
         owned3Flag: true,
         owned5Flag: true,
       }).refund,

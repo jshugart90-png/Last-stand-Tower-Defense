@@ -40,7 +40,7 @@ import {
   unionTowerUnlocks,
 } from '../logic/save';
 import { isServerBackedPlayerId, playerApi, isBackendConfigured } from '../hooks/useApi';
-import { legacySpeedRefundDue, speedRefundNotice } from '../logic/speedRefund';
+import { legacySpeedFlagsFromSave, legacySpeedRefundDue, speedRefundNotice } from '../logic/speedRefund';
 import {
   getLocalDayKey,
   getLocalWeekAnchorDayKey,
@@ -1293,7 +1293,6 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
       if (revision >= 2) return;
       const due = legacySpeedRefundDue({
         revision,
-        unlockedSpeeds: state.unlockedSpeeds,
         owned2Flag: state.legacySpeedRefundOwned2,
         owned3Flag: state.legacySpeedRefundOwned3,
         owned5Flag: state.legacySpeedRefundOwned5,
@@ -1509,12 +1508,17 @@ export const usePlayerStore = create<PlayerState & PlayerActions>()(
           : p?.legacySpeedRefundApplied
             ? 1
             : 0;
-      const due = legacySpeedRefundDue({
-        revision,
+      const seeded = legacySpeedFlagsFromSave({
         unlockedSpeeds: p?.unlockedSpeeds,
         owned2Flag: p?.legacySpeedRefundOwned2,
         owned3Flag: p?.legacySpeedRefundOwned3,
         owned5Flag: p?.legacySpeedRefundOwned5,
+      });
+      const due = legacySpeedRefundDue({
+        revision,
+        owned2Flag: seeded.owned2,
+        owned3Flag: seeded.owned3,
+        owned5Flag: seeded.owned5,
       });
       const serverBacked = isServerBackedPlayerId(rehydrated.playerId);
       const { pay2, pay3, pay5, refund } = due;
