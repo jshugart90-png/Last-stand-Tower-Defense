@@ -2,6 +2,9 @@
 
 export const IAP_PRODUCTS = {
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
+  ARENA_SIZE_1: 'com.horseshoeroundme.laststandtowerdefense.arena1',
+  ARENA_SIZE_2: 'com.horseshoeroundme.laststandtowerdefense.arena2',
+  ARENA_SIZE_3: 'com.horseshoeroundme.laststandtowerdefense.arena3',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
   GEMS_100: 'com.laststanddefense.gems_100',
   GEMS_500: 'com.laststanddefense.gems_500',
@@ -11,6 +14,9 @@ export const IAP_PRODUCTS = {
 
 export const IAP_PRICES: Record<string, string> = {
   [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_1]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_2]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_3]: '$2.99',
   [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
   [IAP_PRODUCTS.GEMS_100]: '$0.99',  // 120 gems (2.3 ladder fix)
   [IAP_PRODUCTS.GEMS_500]: '$2.99',
@@ -38,6 +44,10 @@ export const requestPurchase = async (productId: string): Promise<{ success: boo
 };
 
 export const restorePurchases = async (): Promise<any[]> => [];
+
+export const completePurchase = async (_purchase?: any, _productId?: string): Promise<void> => {};
+
+export const setPendingPurchaseHandler = (_handler: ((purchase: any) => void) | null): void => {};
 
 export const endIAPConnection = async (): Promise<void> => {};
 

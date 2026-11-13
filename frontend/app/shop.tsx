@@ -7,20 +7,29 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { usePlayerStore, ARENA_EXPANSION_PRICE_USD } from '../src/stores/playerStore';
+import { usePlayerStore } from '../src/stores/playerStore';
+import {
+  ARENA_TIER_PRICE_USD,
+  arenaTierLockMessage,
+  arenaTierProductId,
+  arenaTierShopState,
+  gridForArenaSize,
+  tierFromArenaProductId,
+  type ArenaTier,
+} from '../src/logic/arenaSize';
+import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
+import { screenshotAutomation } from '../src/logic/proofBattle';
 import { isBackendConfigured, isServerBackedPlayerId } from '../src/hooks/useApi';
 import { syncPurchaseWithBackend } from '../src/utils/iapBackend';
 import {
   TOWERS,
   TowerType,
   TOWER_UNLOCK_PRICES,
-  SPEED_UNLOCK_PRICES,
-  GameSpeed,
-  ALLOWED_GAME_SPEEDS,
   COSMETIC_SKINS,
   SKIN_COLORS,
   STARTING_COINS_UPGRADE_MAX,
@@ -31,6 +40,11 @@ import {
   COIN_INCOME_PER_LEVEL,
   getCoinIncomeUpgradePrice,
   getRunCoinIncomeMultiplier,
+  FORTIFY_UPGRADE_MAX,
+  FORTIFY_HP_PER_LEVEL,
+  getFortifyUpgradePrice,
+  CALIBRATION_UPGRADE_MAX,
+  getCalibrationUpgradePrice,
 } from '../src/constants/game';
 import { 
   IAP_PRODUCTS, GEM_PACK_AMOUNTS, requestPurchase, completePurchase, 
@@ -43,8 +57,8 @@ import {
 } from '../src/constants/storeMessages';
 import { PLAYER_LOGOS } from '../src/constants/logos';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { AdBanner } from '../src/components/AdBanner';
-import { useRewardedGems } from '../src/hooks/useRewardedGems';
+import { TowerPicture } from '../src/art/sprites';
+import { WoodPanel } from '../src/art/nineSlice';
 interface Skin {
   id: string;
   name: string;
@@ -52,34 +66,14 @@ interface Skin {
   color: string;
 }
 
-// Tower icon helper
-const getTowerIcon = (type: TowerType, size = 20, color = TacticalTheme.text) => {
-  switch (type) {
-    case 'machine_gun':
-      return <MaterialCommunityIcons name="pistol" size={size} color={color} />;
-    case 'sniper':
-      return <MaterialCommunityIcons name="crosshairs-gps" size={size} color={color} />;
-    case 'splash':
-      return <MaterialCommunityIcons name="bomb" size={size} color={color} />;
-    case 'freeze':
-      return <MaterialCommunityIcons name="snowflake" size={size} color={color} />;
-    case 'missile':
-      return <MaterialCommunityIcons name="rocket-launch" size={size} color={color} />;
-    case 'laser':
-      return <MaterialCommunityIcons name="flashlight" size={size} color={color} />;
-    default:
-      return <Ionicons name="help" size={size} color={color} />;
-  }
-};
-
 export default function ShopScreen() {
-  const rewardedGems = useRewardedGems();
   const router = useRouter();
-  const params = useLocalSearchParams<{ highlightTower?: string }>();
+  const params = useLocalSearchParams<{ highlightTower?: string; tab?: string | string[] }>();
+  const tabletShop = Dimensions.get('window').width >= 744;
   const playerStore = usePlayerStore();
   const [skins, setSkins] = useState<Skin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState<'towers' | 'speeds' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
+  const [selectedTab, setSelectedTab] = useState<'towers' | 'gems' | 'arena' | 'skins' | 'logos'>('towers');
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const highlightedTower = useMemo(() => {
     const raw = params.highlightTower;
@@ -96,6 +90,15 @@ export default function ShopScreen() {
       setSelectedTab('towers');
     }
   }, [highlightedTower]);
+
+  useEffect(() => {
+    const tab = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+    if (tab !== 'arena') return;
+    setSelectedTab('arena');
+    if (screenshotAutomation()) {
+      usePlayerStore.setState({ arenaExpansions: 1, selectedArenaSize: 0 });
+    }
+  }, [params.tab]);
 
   const loadSkins = () => {
     setSkins(
@@ -249,83 +252,102 @@ export default function ShopScreen() {
     }
   };
 
-  const handlePurchaseSpeed = (speed: GameSpeed) => {
-    const price = SPEED_UNLOCK_PRICES[speed];
-    
-    if (playerStore.isSpeedUnlocked(speed)) {
-      Alert.alert('Already Owned', `You already have ${speed}x speed unlocked!`);
+  const handlePurchaseFortify = () => {
+    const level = playerStore.fortifyUpgradeLevel;
+    if (level >= FORTIFY_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Base fortification is maxed out.');
       return;
     }
-    
+    const price = getFortifyUpgradePrice(level);
     if (playerStore.gems < price) {
-      Alert.alert(
-        'Not Enough Gems',
-        `You need ${price} gems but only have ${playerStore.gems}.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Gems', onPress: () => setSelectedTab('gems') },
-        ]
-      );
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
       return;
     }
-    
-    // Execute purchase directly
-    const success = playerStore.purchaseSpeed(speed);
-    if (success) {
-      Alert.alert('Unlocked!', `${speed}x speed unlocked!`);
-    } else {
-      Alert.alert('Error', 'Unlock failed. Please try again.');
+    if (playerStore.purchaseFortifyUpgrade()) {
+      Alert.alert('Upgraded', `Each run starts with ${FORTIFY_HP_PER_LEVEL} more base health.`);
     }
   };
 
-  // Handle arena expansion (real money via IAP)
-  const handlePurchaseArenaExpansion = async () => {
+  const handlePurchaseCalibration = () => {
+    const level = playerStore.calibrationUpgradeLevel;
+    if (level >= CALIBRATION_UPGRADE_MAX) {
+      Alert.alert('Max level', 'Calibration is maxed out.');
+      return;
+    }
+    const price = getCalibrationUpgradePrice(level);
+    if (playerStore.gems < price) {
+      Alert.alert('Not enough gems', `Need ${price} gems.`);
+      return;
+    }
+    if (playerStore.purchaseCalibrationUpgrade()) {
+      Alert.alert('Upgraded', 'All towers deal 2% more damage.');
+    }
+  };
+
+  const handlePurchaseArenaTier = async (tier: ArenaTier) => {
+    const sale = arenaTierShopState(playerStore.arenaExpansions, tier);
+    if (sale === 'owned') {
+      playerStore.setSelectedArenaSize(tier);
+      return;
+    }
+    if (sale === 'locked') {
+      Alert.alert('Locked', arenaTierLockMessage(playerStore.arenaExpansions, tier) ?? 'Unlock the previous size first');
+      return;
+    }
+    const productId = arenaTierProductId(tier);
+    const price = ARENA_TIER_PRICE_USD.toFixed(2);
+    const grid = gridForArenaSize(tier);
     Alert.alert(
-      'Arena Expansion - $2.99',
-      `Purchase arena expansion for $${ARENA_EXPANSION_PRICE_USD}?\n\nThis will add 1 row of cells to each side of your battlefield.\n\nCurrent expansions: ${playerStore.arenaExpansions}`,
+      `Arena Size ${tier} — $${price}`,
+      `Unlocks Free Play fields from the original up to ${grid.cols}×${grid.rows}. You can switch back to a smaller field any time.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: `Buy for $${ARENA_EXPANSION_PRICE_USD}`,
+          text: `Buy for $${price}`,
           onPress: async () => {
-            if (isIAPAvailable() && isIAPInitialized()) {
-              // Real IAP flow
-              setPurchaseLoading(true);
-              try {
-                const result = await requestPurchase(IAP_PRODUCTS.ARENA_EXPANSION);
-                if (result.success && result.purchase) {
-                  const playerId = playerStore.playerId;
-                  try {
-                    if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
-                      await syncPurchaseWithBackend({
-                        playerId,
-                        itemType: 'arena_expansion',
-                        itemId: IAP_PRODUCTS.ARENA_EXPANSION,
-                        receipt: result.receipt,
-                        purchaseToken: result.purchaseToken,
-                        transactionId: result.transactionId,
-                      });
-                    }
-                    playerStore.addArenaExpansion();
-                    await completePurchase(result.purchase, IAP_PRODUCTS.ARENA_EXPANSION);
-                  } catch {
-                    Alert.alert(
-                      'Purchase Recorded',
-                      'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
-                    );
-                    return;
-                  }
-                  Alert.alert('Success!', `Arena expanded! Total expansions: ${playerStore.arenaExpansions + 1}`);
-                } else if (result.error && result.error !== 'Purchase cancelled') {
-                  Alert.alert('Purchase Failed', result.error);
-                }
-              } catch {
-                Alert.alert('Error', 'Purchase failed. Please try again.');
-              } finally {
-                setPurchaseLoading(false);
-              }
-            } else {
+            if (!(isIAPAvailable() && isIAPInitialized())) {
               Alert.alert(STORE_UNAVAILABLE_TITLE, STORE_UNAVAILABLE_BODY);
+              return;
+            }
+            setPurchaseLoading(true);
+            try {
+              const result = await requestPurchase(productId);
+              if (result.success && result.purchase) {
+                const playerId = playerStore.playerId;
+                let synced = true;
+                try {
+                  if (playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+                    await syncPurchaseWithBackend({
+                      playerId,
+                      itemType: 'arena_expansion',
+                      itemId: productId,
+                      receipt: result.receipt,
+                      purchaseToken: result.purchaseToken,
+                      transactionId: result.transactionId,
+                    });
+                  }
+                } catch {
+                  synced = false;
+                }
+                playerStore.unlockArenaTier(tier);
+                if (result.transactionId) playerStore.rememberIapTransaction(result.transactionId);
+                await completePurchase(result.purchase, productId);
+                if (!synced) {
+                  Alert.alert(
+                    'Purchase Recorded',
+                    'The field size is unlocked on this device. Server sync failed — use Restore Purchases if you reinstall.',
+                  );
+                } else {
+                  const ownedGrid = gridForArenaSize(usePlayerStore.getState().selectedArenaSize);
+                  Alert.alert('Unlocked', `Free Play can use a ${ownedGrid.cols}×${ownedGrid.rows} field.`);
+                }
+              } else if (result.error && result.error !== 'Purchase cancelled') {
+                Alert.alert('Purchase Failed', result.error);
+              }
+            } catch {
+              Alert.alert('Error', 'Purchase failed. Please try again.');
+            } finally {
+              setPurchaseLoading(false);
             }
           },
         },
@@ -334,15 +356,15 @@ export default function ShopScreen() {
   };
 
 
-  // Handle Premium Bundle (removes ads permanently) — real money via IAP
+  // Commander Bundle — real money via IAP. Product id stays the same.
   const handlePurchasePremium = async () => {
     if (playerStore.premium) {
-      Alert.alert('Already Premium', 'Ads are already removed on this account.');
+      Alert.alert('Already a Commander', 'The coin bonus and Champion Gold skin are already on this account.');
       return;
     }
     Alert.alert(
-      'Premium — Remove Ads',
-      'Remove banner and full-screen ads permanently for $4.99?\n\nRewarded "watch a video" bonuses stay available whenever you want them.',
+      'Commander Bundle — $4.99',
+      'Permanent +15% coins from battles, and the Champion Gold skin unlocks. The game is ad-free for everyone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -368,14 +390,14 @@ export default function ShopScreen() {
                     playerStore.setPremium(true);
                     await completePurchase(result.purchase, IAP_PRODUCTS.PREMIUM_BUNDLE);
                   } catch {
-                    playerStore.setPremium(true); // store purchase succeeded; never keep showing ads
+                    playerStore.setPremium(true);
                     Alert.alert(
                       'Purchase Recorded',
                       'Your purchase succeeded in the store, but we could not sync it to the server. Try Restore Purchases in the Shop.',
                     );
                     return;
                   }
-                  Alert.alert('Welcome to Premium!', 'Ads are now removed. Thanks for supporting the game!');
+                  Alert.alert('Welcome, Commander', 'Battles pay 15% more coins, and Champion Gold is unlocked.');
                 } else if (result.error && result.error !== 'Purchase cancelled') {
                   Alert.alert('Purchase Failed', result.error);
                 }
@@ -400,14 +422,47 @@ export default function ShopScreen() {
       try {
         const purchases = await restorePurchases();
         let restoredSomething = false;
+        const productIds = purchases
+          .map((purchase: { productId?: string; id?: string }) => String(purchase.productId || purchase.id || ''))
+          .filter((id: string) => id.length > 0);
+        const ownedBefore = playerStore.arenaExpansions;
+        const owned = playerStore.restoreArenaProducts(productIds);
+        if (owned > ownedBefore) restoredSomething = true;
 
         for (const purchase of purchases) {
-          if (purchase.productId === IAP_PRODUCTS.ARENA_EXPANSION) {
-            playerStore.addArenaExpansion();
-            restoredSomething = true;
-          } else if (purchase.productId === IAP_PRODUCTS.PREMIUM_BUNDLE) {
+          const productId = String(purchase.productId || purchase.id || '');
+          if (productId === IAP_PRODUCTS.PREMIUM_BUNDLE) {
+            if (!playerStore.premium) restoredSomething = true;
             playerStore.setPremium(true);
-            restoredSomething = true;
+          }
+          const tier = tierFromArenaProductId(productId);
+          const legacy = productId === IAP_PRODUCTS.ARENA_EXPANSION;
+          if (!tier && !legacy && productId !== IAP_PRODUCTS.PREMIUM_BUNDLE) continue;
+          const playerId = playerStore.playerId;
+          if ((tier || productId === IAP_PRODUCTS.PREMIUM_BUNDLE) && playerId && isServerBackedPlayerId(playerId) && isBackendConfigured()) {
+            try {
+              await syncPurchaseWithBackend({
+                playerId,
+                itemType: tier ? 'arena_expansion' : 'premium',
+                itemId: productId,
+                receipt: purchase.transactionReceipt,
+                purchaseToken: purchase.purchaseToken,
+                transactionId: purchase.transactionId,
+              });
+            } catch {
+              // Local unlock already applied. The next restore can retry the server.
+            }
+          }
+          if (legacy) {
+            const tx = String(purchase.transactionId || purchase.originalTransactionIdentifierIOS || purchase.purchaseToken || '');
+            if (tx) playerStore.rememberIapTransaction(tx);
+          }
+          if (tier || legacy) {
+            try {
+              await completePurchase(purchase, productId);
+            } catch {
+              // Finish is best-effort. The unlock is already stored.
+            }
           }
         }
 
@@ -499,8 +554,8 @@ export default function ShopScreen() {
           highlightedTower === towerType && styles.towerCardHighlighted,
         ]}
       >
-        <View style={[styles.towerIconLarge, { backgroundColor: tower.color }]}>
-          {getTowerIcon(towerType, 28)}
+        <View style={styles.towerIconLarge}>
+          <TowerPicture type={towerType} level={Math.min(2, upgradeLevel)} size={56} />
         </View>
         
         <View style={styles.towerInfo}>
@@ -530,46 +585,6 @@ export default function ShopScreen() {
             </TouchableOpacity>
           )}
         </View>
-      </View>
-    );
-  };
-
-  // Render speed unlock card
-  const renderSpeedCard = (speed: GameSpeed) => {
-    const price = SPEED_UNLOCK_PRICES[speed];
-    const isUnlocked = playerStore.isSpeedUnlocked(speed);
-    const canAfford = playerStore.gems >= price;
-
-    return (
-      <View key={speed} style={styles.speedCard}>
-        <View style={[styles.speedIcon, isUnlocked && styles.speedIconUnlocked]}>
-          <Text style={styles.speedText}>{speed}x</Text>
-        </View>
-        
-        <View style={styles.speedInfo}>
-          <Text style={styles.speedTitle}>{speed}x Speed</Text>
-          <Text style={styles.speedDesc}>
-            {speed === 1 ? 'Normal speed' : `${speed} times faster gameplay`}
-          </Text>
-        </View>
-        
-        {price === 0 ? (
-          <View style={styles.freeTag}>
-            <Text style={styles.freeText}>FREE</Text>
-          </View>
-        ) : isUnlocked ? (
-          <View style={styles.ownedTag}>
-            <Ionicons name="checkmark-circle" size={24} color="#2ECC71" />
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.buySpeedButton, !canAfford && styles.disabledButton]}
-            onPress={() => handlePurchaseSpeed(speed)}
-          >
-            <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
-            <Text style={styles.buttonText}>{price}</Text>
-          </TouchableOpacity>
-        )}
       </View>
     );
   };
@@ -625,7 +640,7 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <WoodPanel style={styles.header} cap={18}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -634,7 +649,7 @@ export default function ShopScreen() {
           <FontAwesome5 name="gem" size={16} color={TacticalTheme.gem} />
           <Text style={styles.coinsText}>{playerStore.gems}</Text>
         </View>
-      </View>
+      </WoodPanel>
 
       {/* Tabs */}
       <View style={styles.tabs}>
@@ -652,14 +667,6 @@ export default function ShopScreen() {
         >
           <Text style={[styles.tabText, selectedTab === 'gems' && styles.tabTextActive]}>
             Gems
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, selectedTab === 'speeds' && styles.tabActive]}
-          onPress={() => setSelectedTab('speeds')}
-        >
-          <Text style={[styles.tabText, selectedTab === 'speeds' && styles.tabTextActive]}>
-            Speed
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -688,7 +695,13 @@ export default function ShopScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[
+          styles.contentContainer,
+          tabletShop && selectedTab === 'arena' && styles.arenaTabletCenter,
+        ]}
+      >
         {/* Towers Tab */}
         {selectedTab === 'towers' && (
           <View>
@@ -760,6 +773,55 @@ export default function ShopScreen() {
               </View>
             </View>
 
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Base fortification</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +{FORTIFY_HP_PER_LEVEL} base health per level. Current bonus{' '}
+                {playerStore.fortifyUpgradeLevel * FORTIFY_HP_PER_LEVEL}.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.fortifyUpgradeLevel}/{FORTIFY_UPGRADE_MAX}
+                </Text>
+                {playerStore.fortifyUpgradeLevel >= FORTIFY_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseFortify}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getFortifyUpgradePrice(playerStore.fortifyUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.startingCoinsCard}>
+              <Text style={styles.startingCoinsTitle}>Calibration</Text>
+              <Text style={styles.startingCoinsDesc}>
+                +2% damage for every tower, every run.
+              </Text>
+              <View style={styles.startingCoinsRow}>
+                <Text style={styles.startingCoinsMeta}>
+                  Level {playerStore.calibrationUpgradeLevel}/{CALIBRATION_UPGRADE_MAX}
+                </Text>
+                {playerStore.calibrationUpgradeLevel >= CALIBRATION_UPGRADE_MAX ? (
+                  <View style={styles.ownedTag}>
+                    <Text style={styles.ownedText}>Max</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.startingCoinsBuy} onPress={handlePurchaseCalibration}>
+                    <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
+                    <Text style={styles.buttonText}>
+                      {getCalibrationUpgradePrice(playerStore.calibrationUpgradeLevel)}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.sectionTitle}>Unlock & Upgrade Towers</Text>
             <Text style={styles.sectionSubtitle}>
               Unlock towers and upgrade stats. Higher upgrade levels increase that tower&apos;s cost in battle.
@@ -777,57 +839,26 @@ export default function ShopScreen() {
               Purchase gems to unlock towers, upgrades, and more
             </Text>
 
-            {/* Premium: remove ads (hidden once owned) */}
+            {/* Commander Bundle — same product id as before. */}
             {!playerStore.premium && (
               <TouchableOpacity
                 style={styles.premiumCard}
                 onPress={handlePurchasePremium}
                 disabled={purchaseLoading}
                 accessibilityRole="button"
-                accessibilityLabel="Remove ads permanently for $4.99"
+                accessibilityLabel="Commander bundle for $4.99"
               >
                 <View style={styles.premiumIconWrap}>
                   <MaterialCommunityIcons name="crown" size={26} color="#d4af37" />
                 </View>
                 <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Remove Ads — Premium</Text>
+                  <Text style={styles.rewardedTitle}>Commander Bundle</Text>
                   <Text style={styles.rewardedSubtitle}>
-                    No banners, no full-screen ads. Forever.
+                    +15% battle coins and the Champion Gold skin. Same $4.99 product as before.
                   </Text>
                 </View>
                 <View style={styles.premiumPriceTag}>
                   <Text style={styles.premiumPriceText}>$4.99</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
-            {/* Free gems: rewarded video */}
-            {rewardedGems.adsReady && (
-              <TouchableOpacity
-                style={[styles.rewardedCard, !rewardedGems.available && styles.rewardedCardDisabled]}
-                onPress={() => { void rewardedGems.watch(); }}
-                disabled={!rewardedGems.available}
-                accessibilityRole="button"
-                accessibilityLabel={`Watch a video for ${rewardedGems.gemsPerAd} gems`}
-              >
-                <View style={styles.rewardedIconWrap}>
-                  <Ionicons name="play-circle" size={28} color={TacticalTheme.accent} />
-                </View>
-                <View style={styles.rewardedTextWrap}>
-                  <Text style={styles.rewardedTitle}>Watch a video</Text>
-                  <Text style={styles.rewardedSubtitle}>
-                    {rewardedGems.busy
-                      ? 'Loading video…'
-                      : rewardedGems.cooldownSeconds > 0
-                        ? `Next free gems in ${rewardedGems.cooldownSeconds}s`
-                        : rewardedGems.available
-                          ? `Earn ${rewardedGems.gemsPerAd} free gems`
-                          : 'Video loading — try again in a moment'}
-                  </Text>
-                </View>
-                <View style={styles.rewardedGemTag}>
-                  <FontAwesome5 name="gem" size={12} color={TacticalTheme.gem} />
-                  <Text style={styles.rewardedGemText}>+{rewardedGems.gemsPerAd}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -927,49 +958,61 @@ export default function ShopScreen() {
           </View>
         )}
 
-        {/* Speed Tab */}
-        {selectedTab === 'speeds' && (
-          <View>
-            <Text style={styles.sectionTitle}>Game Speed</Text>
-            <Text style={styles.sectionSubtitle}>
-              Unlocks are purchased with gems only (earned in-game or from the Gems tab)
-            </Text>
-            
-            {ALLOWED_GAME_SPEEDS.map(renderSpeedCard)}
-          </View>
-        )}
-
         {/* Arena Tab */}
         {selectedTab === 'arena' && (
           <View>
-            <Text style={styles.sectionTitle}>Arena Expansion</Text>
+            <Text style={styles.sectionTitle}>Arena Size</Text>
             <Text style={styles.sectionSubtitle}>
-              Expand your battlefield for more tower placement options
+              Buy the next size. It unlocks that field and every smaller one.
             </Text>
-            
-            <View style={styles.arenaCard}>
+
+            <View style={styles.arenaCard} testID="arena-picker">
               <View style={styles.arenaInfo}>
                 <MaterialCommunityIcons name="arrow-expand-all" size={48} color="#9B59B6" />
                 <View style={styles.arenaDetails}>
-                  <Text style={styles.arenaTitle}>Expand Arena</Text>
+                  <Text style={styles.arenaTitle}>Free Play field</Text>
                   <Text style={styles.arenaDesc}>
-                    Current expansions: {playerStore.arenaExpansions}
+                    Owned: {playerStore.arenaExpansions === 0 ? 'Original' : `up to Size ${playerStore.arenaExpansions}`}
                   </Text>
                   <Text style={styles.arenaDesc}>
-                    Grid size: {10 + playerStore.arenaExpansions * 2} x {14 + playerStore.arenaExpansions * 2}
+                    Selected: {gridForArenaSize(playerStore.selectedArenaSize).cols}×{gridForArenaSize(playerStore.selectedArenaSize).rows}
                   </Text>
                 </View>
               </View>
-              
-              <TouchableOpacity
-                style={styles.arenaButton}
-                onPress={handlePurchaseArenaExpansion}
-              >
-                <Text style={styles.arenaPriceText}>${ARENA_EXPANSION_PRICE_USD}</Text>
-              </TouchableOpacity>
-              
+              <ArenaSizePicker
+                owned={playerStore.arenaExpansions}
+                selected={playerStore.selectedArenaSize}
+                onSelect={(size) => playerStore.setSelectedArenaSize(size)}
+              />
+              {([1, 2, 3] as ArenaTier[]).map((tier) => {
+                const sale = arenaTierShopState(playerStore.arenaExpansions, tier);
+                if (sale === 'owned') return null;
+                const grid = gridForArenaSize(tier);
+                if (sale === 'locked') {
+                  return (
+                    <View key={tier} testID={`arena-locked-${tier}`} style={styles.arenaLocked}>
+                      <Text style={styles.arenaLockedText}>
+                        Arena Size {tier} · {arenaTierLockMessage(playerStore.arenaExpansions, tier)}
+                      </Text>
+                    </View>
+                  );
+                }
+                return (
+                  <TouchableOpacity
+                    key={tier}
+                    testID={`arena-buy-${tier}`}
+                    style={styles.arenaButton}
+                    onPress={() => handlePurchaseArenaTier(tier)}
+                    disabled={purchaseLoading}
+                  >
+                    <Text style={styles.arenaPriceText}>
+                      Arena Size {tier} · {grid.cols}×{grid.rows} · ${ARENA_TIER_PRICE_USD.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
               <Text style={styles.realMoneyNote}>
-                * Real money purchase (In-App Purchase)
+                Each size is a one-time purchase. Restore brings them back.
               </Text>
             </View>
             
@@ -1030,9 +1073,6 @@ export default function ShopScreen() {
 
         {selectedTab === 'logos' && renderLogoCard()}
       </ScrollView>
-
-      {/* Bottom banner ad (hidden for premium / ad-free players) */}
-      <AdBanner placement="shop" />
     </SafeAreaView>
   );
 }
@@ -1048,17 +1088,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: TacticalTheme.panel,
-    borderBottomWidth: 1,
-    borderBottomColor: TacticalTheme.border,
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+  },
+  headerImage: {
+    borderRadius: 0,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    color: TacticalTheme.text,
+    color: '#F5E6C8',
     fontSize: 20,
     fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   coinsDisplay: {
     flexDirection: 'row',
@@ -1102,7 +1147,16 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 16,
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     paddingBottom: 32,
+  },
+  arenaTabletCenter: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    maxWidth: 800,
+    paddingVertical: 28,
   },
   premiumCard: {
     flexDirection: 'row',
@@ -1135,30 +1189,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 14,
   },
-  rewardedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: TacticalTheme.panel,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: TacticalTheme.accent,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-    gap: 12,
-  },
-  rewardedCardDisabled: {
-    opacity: 0.55,
-    borderColor: TacticalTheme.border,
-  },
-  rewardedIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: TacticalTheme.panelAlt,
-  },
   rewardedTextWrap: { flex: 1 },
   rewardedTitle: {
     color: TacticalTheme.white,
@@ -1169,20 +1199,6 @@ const styles = StyleSheet.create({
     color: TacticalTheme.textMuted,
     fontSize: 12,
     marginTop: 2,
-  },
-  rewardedGemTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: TacticalTheme.panelAlt,
-  },
-  rewardedGemText: {
-    color: TacticalTheme.gem,
-    fontWeight: '800',
-    fontSize: 13,
   },
   sectionTitle: {
     color: TacticalTheme.text,
@@ -1228,6 +1244,10 @@ const styles = StyleSheet.create({
   startingCoinsBuy: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-end',
+    marginLeft: 'auto',
+    minWidth: 72,
     gap: 6,
     backgroundColor: TacticalTheme.accent,
     paddingHorizontal: 14,
@@ -1283,11 +1303,11 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   towerIconLarge: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
+    width: 56,
+    height: 64,
+    justifyContent: 'flex-end',
     alignItems: 'center',
+    overflow: 'visible',
   },
   towerInfo: {
     flex: 1,
@@ -1425,13 +1445,30 @@ const styles = StyleSheet.create({
   arenaButton: {
     backgroundColor: '#2ECC71',
     paddingVertical: 14,
+    paddingHorizontal: 10,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 8,
   },
   arenaPriceText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  arenaLocked: {
+    backgroundColor: '#3a2a22',
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  arenaLockedText: {
+    color: '#b7a08a',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   realMoneyNote: {
     color: '#888',

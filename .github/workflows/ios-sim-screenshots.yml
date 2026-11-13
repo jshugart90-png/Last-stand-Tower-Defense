@@ -1,0 +1,89 @@
+name: iOS simulator screenshots
+
+# Release simulator build and portrait screenshots. Not an App Store upload.
+# The bundle sets EXPO_PUBLIC_PROOF_BATTLE=1 so deep links can open demo screens.
+# Store builds do not set that flag.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cursor/td-quality-revamp-5b68]
+    paths: ['.ci/sim-shots-trigger']
+
+jobs:
+  screenshots:
+    name: iOS simulator screenshots
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install JavaScript dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Enable screenshot deep links
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          umask 077
+          printf 'EXPO_PUBLIC_PROOF_BATTLE=1\n' > .env
+          echo "EXPO_PUBLIC_PROOF_BATTLE=1" >> "$GITHUB_ENV"
+
+      - name: Prebuild the iOS project
+        working-directory: frontend
+        run: npx expo prebuild --platform ios --no-install --non-interactive
+
+      - name: Install CocoaPods
+        working-directory: frontend/ios
+        run: pod install
+
+      - name: Build a Release simulator app
+        working-directory: frontend/ios
+        run: |
+          set -euo pipefail
+          WS="$(ls -d *.xcworkspace | head -n 1)"
+          SCHEME="$(xcodebuild -workspace "$WS" -list -json | python3 -c 'import json,sys; data=json.load(sys.stdin); schemes=data.get("workspace", data.get("project", {})).get("schemes", []); named=[s for s in schemes if "LastStand" in s]; print(named[0] if named else "")')"
+          echo "Workspace: $WS"
+          echo "Scheme: $SCHEME"
+          test -n "$SCHEME"
+          xcodebuild \
+            -workspace "$WS" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/sim-dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+          APP="$(find "$RUNNER_TEMP/sim-dd/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -type d | head -n 1)"
+          test -d "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          echo "Built $APP"
+
+      - name: Capture screenshots
+        run: bash scripts/capture-sim-shots.sh
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-screenshots
+          path: ${{ runner.temp }}/sim-screenshots
+          if-no-files-found: error

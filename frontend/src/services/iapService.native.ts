@@ -1,7 +1,11 @@
 import * as ExpoIAP from 'expo-iap';
 
 export const IAP_PRODUCTS = {
+  /** Legacy consumable. Not sold. A pending transaction is still finished. */
   ARENA_EXPANSION: 'com.laststanddefense.arena_expansion',
+  ARENA_SIZE_1: 'com.horseshoeroundme.laststandtowerdefense.arena1',
+  ARENA_SIZE_2: 'com.horseshoeroundme.laststandtowerdefense.arena2',
+  ARENA_SIZE_3: 'com.horseshoeroundme.laststandtowerdefense.arena3',
   PREMIUM_BUNDLE: 'com.laststanddefense.premium_bundle',
   GEMS_100: 'com.laststanddefense.gems_100',
   GEMS_500: 'com.laststanddefense.gems_500',
@@ -11,6 +15,9 @@ export const IAP_PRODUCTS = {
 
 export const IAP_PRICES: Record<string, string> = {
   [IAP_PRODUCTS.ARENA_EXPANSION]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_1]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_2]: '$2.99',
+  [IAP_PRODUCTS.ARENA_SIZE_3]: '$2.99',
   [IAP_PRODUCTS.PREMIUM_BUNDLE]: '$4.99',
   [IAP_PRODUCTS.GEMS_100]: '$0.99',  // 120 gems (2.3 ladder fix)
   [IAP_PRODUCTS.GEMS_500]: '$2.99',
@@ -42,6 +49,18 @@ let purchaseErrorSub: { remove: () => void } | null = null;
 let pendingPurchaseResolve: ((purchase: any) => void) | null = null;
 let pendingPurchaseReject: ((error: Error) => void) | null = null;
 let pendingProductId: string | null = null;
+let pendingPurchaseHandler: ((purchase: any) => void) | null = null;
+
+const NEW_ARENA_SKU_PREFIX = 'com.horseshoeroundme.laststandtowerdefense.arena';
+
+function isNewArenaSku(productId: string): boolean {
+  return productId.startsWith(NEW_ARENA_SKU_PREFIX);
+}
+
+/** Leftover transactions that arrive when nobody is waiting on a buy button. */
+export const setPendingPurchaseHandler = (handler: ((purchase: any) => void) | null): void => {
+  pendingPurchaseHandler = handler;
+};
 
 function clearPendingPurchase() {
   pendingPurchaseResolve = null;
@@ -89,10 +108,14 @@ export const initializeIAP = async (): Promise<boolean> => {
     await ExpoIAP.initConnection();
 
     purchaseUpdatedSub = ExpoIAP.purchaseUpdatedListener((purchase) => {
-      if (!pendingPurchaseResolve) return;
       const expected = pendingProductId;
       const actual = purchase?.productId || purchase?.id;
+      if (!pendingPurchaseResolve) {
+        pendingPurchaseHandler?.(purchase);
+        return;
+      }
       if (expected && actual && actual !== expected) {
+        pendingPurchaseHandler?.(purchase);
         return;
       }
       pendingPurchaseResolve(purchase);
@@ -116,18 +139,27 @@ export const initializeIAP = async (): Promise<boolean> => {
   }
 };
 
-export const getProducts = async (): Promise<any[]> => {
-  if (!iapInitialized) return [];
-
+async function fetchProductList(skus: string[]): Promise<any[]> {
   try {
-    const skus = Object.values(IAP_PRODUCTS);
     const products = await (ExpoIAP as any).fetchProducts({ skus, type: 'in-app' });
     return products || [];
   } catch {
+    const products = await (ExpoIAP as any).getProducts({ skus });
+    return products || [];
+  }
+}
+
+export const getProducts = async (): Promise<any[]> => {
+  if (!iapInitialized) return [];
+
+  const skus = Object.values(IAP_PRODUCTS);
+  try {
+    return await fetchProductList(skus);
+  } catch {
+    // Arena Size 1–3 may not exist in App Store Connect yet. Keep the live catalog.
+    const onSale = skus.filter((id) => !isNewArenaSku(id));
     try {
-      const skus = Object.values(IAP_PRODUCTS);
-      const products = await (ExpoIAP as any).getProducts({ skus });
-      return products || [];
+      return await fetchProductList(onSale);
     } catch {
       return [];
     }
@@ -174,6 +206,7 @@ export const requestPurchase = async (productId: string): Promise<PurchaseResult
 export const completePurchase = async (purchase: any, productId: string): Promise<void> => {
   if (!iapInitialized || !purchase) return;
   const isGemPack = Object.prototype.hasOwnProperty.call(GEM_PACK_AMOUNTS, productId);
+  // Arena Size 1–3 are non-consumable. The old expansion id stays consumable.
   const isConsumable = productId === IAP_PRODUCTS.ARENA_EXPANSION || isGemPack;
   await ExpoIAP.finishTransaction({ purchase, isConsumable });
 };

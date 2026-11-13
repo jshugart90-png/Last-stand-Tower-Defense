@@ -8,7 +8,6 @@ import {
   SKIN_COLORS,
   SPAWN_POINT,
   BASE_POSITION,
-  getInfiniteUpgradeStats,
   getInfiniteUpgradeCost,
   TargetingMode,
   GameSpeed,
@@ -19,6 +18,7 @@ import {
   STARTING_COINS_BONUS_PER_LEVEL,
   getRunCoinIncomeMultiplier,
   targetWavePerformanceGems,
+  FORTIFY_HP_PER_LEVEL,
 } from '../constants/game';
 import { isServerBackedPlayerId } from '../hooks/useApi';
 import { findPath, wouldBlockPath } from '../utils/pathfinding';
@@ -26,19 +26,38 @@ import {
   getArenaMap,
   sliceRouteFromPosition,
   isCellOnArenaRoute,
+  manhattanPath,
   CLASSIC_MAP_ID,
   type ArenaMapTheme,
 } from '../constants/arenaMaps';
+import { gridForArenaSize } from '../logic/arenaSize';
+import { MAX_BURSTS, MAX_FLOAT_TEXTS, MAX_PROJECTILES } from '../logic/simClock';
 import {
   playWeaponFireSound,
   playProjectileImpact,
   playEnemyDeathBurst,
   playBaseDamageSound,
   playWaveStartFanfare,
+  playBuildSound,
+  playUpgradeSound,
+  playWinSound,
+  playLoseSound,
   stopAllSounds,
+  releaseBattleAudio,
   setGameplaySfxArmed,
 } from '../services/audioService';
 import { usePlayerStore } from './playerStore';
+import { getDifficultyModifiers, PREMIUM_COIN_MULT } from '../logic/difficulty';
+import {
+  canTargetEnemy,
+  computeHitDamage,
+  nearestOtherIds,
+  needsPathChoice,
+  normalizeTowerPath,
+  resolveTowerStats,
+  type TowerPath,
+} from '../logic/combat';
+import { mergeNumericRecord } from '../logic/save';
 
 /** Cleared on new runs / game end so dismiss callbacks never stack or fire after teardown. */
 let bonusPopupDismissTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,8 +70,32 @@ function clearBonusPopupDismissTimer() {
 }
 
 function scaleRunCoinsFromKill(baseReward: number): number {
-  const lv = usePlayerStore.getState().coinIncomeUpgradeLevel ?? 0;
-  return Math.max(1, Math.floor(baseReward * getRunCoinIncomeMultiplier(lv)));
+  const player = usePlayerStore.getState();
+  const lv = player.coinIncomeUpgradeLevel ?? 0;
+  const premium = player.premium ? PREMIUM_COIN_MULT : 1;
+  const reward = getDifficultyModifiers(player.difficultyMode).reward;
+  return Math.max(1, Math.floor(baseReward * getRunCoinIncomeMultiplier(lv) * premium * reward));
+}
+
+function startingBaseHealth(): number {
+  const lv = usePlayerStore.getState().fortifyUpgradeLevel ?? 0;
+  return GAME_CONFIG.BASE_HEALTH + Math.max(0, lv) * FORTIFY_HP_PER_LEVEL;
+}
+
+export interface FloatText {
+  id: string;
+  x: number;
+  y: number;
+  text: string;
+  born: number;
+}
+
+export interface Burst {
+  id: string;
+  x: number;
+  y: number;
+  born: number;
+  color: string;
 }
 
 export interface Position {
@@ -69,6 +112,7 @@ export interface PlacedTower {
   skin: string;
   targetingMode: TargetingMode;
   totalCostSpent: number;
+  path: TowerPath;
   // Laser tower specific
   currentTargetId: string | null;
   damageAccumulator: number; // For laser ramping damage
@@ -92,6 +136,9 @@ export interface Enemy {
   splitOnDeath?: boolean;
   splitCount?: number;
   splitInto?: EnemyType;
+  flying?: boolean;
+  armor?: number;
+  hitFlashUntil?: number;
 }
 
 export interface Projectile {
@@ -107,12 +154,20 @@ export interface Projectile {
   isFreeze?: boolean;
   slowAmount?: number;
   slowDuration?: number;
+  pierce?: number;
+  airMultiplier?: number;
+  groundMultiplier?: number;
+  chain?: number;
 }
 
 export interface LaserBeam {
   towerId: string;
   targetId: string;
   damage: number;
+  pierce: number;
+  airMultiplier: number;
+  groundMultiplier: number;
+  chain: number;
 }
 
 export interface GameState {
@@ -165,6 +220,8 @@ export interface GameState {
   // Game timing
   gameStartTime: number;
   gameSpeed: GameSpeed;
+  /** Simulation clock. Fire rate and slows use this, not the wall clock. */
+  simTimeMs: number;
   waveEndTime: number;
   autoWaveTimer: number;
   
@@ -187,6 +244,14 @@ export interface GameState {
   /** Pre-baked enemy corridor; empty = classic dynamic A* path. */
   arenaRoute: { x: number; y: number }[];
   mapTheme: ArenaMapTheme | null;
+
+  floatTexts: FloatText[];
+  bursts: Burst[];
+  /** Increments when a boss takes damage, so the board can shake once. */
+  bossShake: number;
+  runFlyingKills: number;
+  runArmoredKills: number;
+  runBossKills: number;
 }
 
 interface GameActions {
@@ -218,12 +283,15 @@ interface GameActions {
   selectTower: (type: TowerType | null) => void;
   selectPlacedTower: (tower: PlacedTower | null) => void;
   placeTower: (position: Position) => boolean;
-  upgradeTower: (towerId: string) => boolean;
+  upgradeTower: (towerId: string, path?: TowerPath) => boolean;
   sellTower: (towerId: string) => void;
   setTowerTargeting: (towerId: string, mode: TargetingMode) => void;
   
   // Enemy actions
   spawnEnemy: (type: EnemyType, healthMultiplier: number, speedMultiplier: number) => void;
+  spawnEnemyBatch: (
+    spawns: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[]
+  ) => void;
   
   // Main game tick
   gameTick: (deltaTime: number) => void;
@@ -276,6 +344,8 @@ export interface SavedGameStateForExport {
     skin: string;
     targetingMode: TargetingMode;
     totalCostSpent: number;
+    /** Upgrade branch chosen at level 2. Missing on saves from before paths existed. */
+    path?: TowerPath;
   }[];
   towerPurchaseCount: Record<TowerType, number>;
   gridCols: number;
@@ -294,12 +364,17 @@ export interface ResumePlayerData {
   equippedSkins: Record<string, string>;
 }
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
-
-const MAX_WEAPON_SFX_PER_TICK = 10;
+let idSeq = 0;
+const generateId = () => {
+  idSeq = (idSeq + 1) % 1_000_000_000;
+  return `${Date.now().toString(36)}${idSeq.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+};
 
 const scratchEnemiesInRange: Enemy[] = [];
-const scratchLaserDamage: { id: string; damage: number }[] = [];
+
+function rememberedGameSpeed(): GameSpeed {
+  return clampGameSpeed(usePlayerStore.getState().battleSpeed ?? 1);
+}
 
 const getBlockedCells = (towers: PlacedTower[]): Set<string> => {
   const blocked = new Set<string>();
@@ -335,27 +410,20 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   basePosition: { ...BASE_POSITION },
   unlockedTowers: ['machine_gun'],
   unlockedSpeeds: [1],
-  towerUpgradeLevels: {
-    machine_gun: 0,
-    sniper: 0,
-    splash: 0,
-    freeze: 0,
-    missile: 0,
-    laser: 0,
-  },
+  towerUpgradeLevels: mergeNumericRecord(undefined),
   equippedSkins: {},
   arenaExpansions: 0,
-  towerPurchaseCount: {
-    machine_gun: 0,
-    sniper: 0,
-    splash: 0,
-    freeze: 0,
-    missile: 0,
-    laser: 0,
-  },
+  towerPurchaseCount: mergeNumericRecord(undefined),
+  floatTexts: [],
+  bursts: [],
+      bossShake: 0,
+  runFlyingKills: 0,
+  runArmoredKills: 0,
+  runBossKills: 0,
   doubleDamageUntil: 0,
   gameStartTime: 0,
   gameSpeed: 1,
+  simTimeMs: 0,
   waveEndTime: 0,
   autoWaveTimer: 0,
   selectedTowerType: null,
@@ -372,7 +440,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   startGame: (unlockedTowers, unlockedSpeeds, towerUpgradeLevels, equippedSkins, arenaExpansions, mapId) => {
     const def = getArenaMap(mapId);
     const useArena = def && def.route.length >= 2;
-    const baseConfig = GAME_CONFIG;
     const coinBonus =
       usePlayerStore.getState().startingCoinUpgradeLevel * STARTING_COINS_BONUS_PER_LEVEL;
 
@@ -389,7 +456,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         waveSpawnSlotsTotal: 0,
         waveSpawnSlotsReleased: 0,
         coins: GAME_CONFIG.STARTING_COINS + coinBonus,
-        baseHealth: GAME_CONFIG.BASE_HEALTH,
+        baseHealth: startingBaseHealth(),
         score: 0,
         enemiesKilled: 0,
         towersPlaced: 0,
@@ -397,6 +464,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         enemies: [],
         projectiles: [],
         laserBeams: [],
+        floatTexts: [],
+        bursts: [],
+      bossShake: 0,
+        runFlyingKills: 0,
+        runArmoredKills: 0,
+        runBossKills: 0,
         gridCols: def.gridCols,
         gridRows: def.gridRows,
         cellSize: def.cellSize,
@@ -407,17 +480,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         towerUpgradeLevels,
         equippedSkins,
         arenaExpansions,
-        towerPurchaseCount: {
-          machine_gun: 0,
-          sniper: 0,
-          splash: 0,
-          freeze: 0,
-          missile: 0,
-          laser: 0,
-        },
+        towerPurchaseCount: mergeNumericRecord(undefined),
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
-        gameSpeed: 1,
+        gameSpeed: rememberedGameSpeed(),
+  simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: 0,
         selectedTowerType: null,
@@ -432,9 +499,10 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return;
     }
 
-    const gridCols = baseConfig.GRID_COLS + (arenaExpansions * 2);
-    const gridRows = baseConfig.GRID_ROWS + (arenaExpansions * 2);
-    const cellSize = arenaExpansions > 3 ? 28 : arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    const grid = gridForArenaSize(arenaExpansions);
+    const gridCols = grid.cols;
+    const gridRows = grid.rows;
+    const cellSize = grid.cell;
 
     const spawnPoint = { x: 0, y: 0 };
     const basePosition = {
@@ -453,7 +521,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       waveSpawnSlotsTotal: 0,
       waveSpawnSlotsReleased: 0,
       coins: GAME_CONFIG.STARTING_COINS + coinBonus,
-      baseHealth: GAME_CONFIG.BASE_HEALTH,
+      baseHealth: startingBaseHealth(),
       score: 0,
       enemiesKilled: 0,
       towersPlaced: 0,
@@ -461,6 +529,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemies: [],
       projectiles: [],
       laserBeams: [],
+      floatTexts: [],
+      bursts: [],
+      bossShake: 0,
+      runFlyingKills: 0,
+      runArmoredKills: 0,
+      runBossKills: 0,
       gridCols,
       gridRows,
       cellSize,
@@ -471,17 +545,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towerUpgradeLevels,
       equippedSkins,
       arenaExpansions,
-      towerPurchaseCount: {
-        machine_gun: 0,
-        sniper: 0,
-        splash: 0,
-        freeze: 0,
-        missile: 0,
-        laser: 0,
-      },
+      towerPurchaseCount: mergeNumericRecord(undefined),
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
-      gameSpeed: 1,
+      gameSpeed: rememberedGameSpeed(),
+  simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: 0,
       selectedTowerType: null,
@@ -506,6 +574,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   endGame: () => {
     clearBonusPopupDismissTimer();
     void stopAllSounds();
+    playLoseSound();
     set({ isPlaying: false, isGameOver: true });
   },
 
@@ -517,7 +586,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       isPaused: false,
       isGameOver: false,
       revivedThisRun: true,
-      baseHealth: Math.max(1, Math.floor(GAME_CONFIG.BASE_HEALTH / 2)),
+      baseHealth: Math.max(1, Math.floor(startingBaseHealth() / 2)),
       waveInProgress: false,
       waveSpawnSlotsTotal: 0,
       waveSpawnSlotsReleased: 0,
@@ -525,12 +594,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemies: [],
       projectiles: [],
       laserBeams: [],
+      floatTexts: [],
+      bursts: [],
+      bossShake: 0,
       selectedPlacedTower: null,
     });
   },
   
   restartGame: () => {
-    void stopAllSounds();
+    void releaseBattleAudio();
     const {
       unlockedTowers,
       unlockedSpeeds,
@@ -550,10 +622,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   },
 
   setGameSpeed: (speed) => {
-    const state = get();
     const target = clampGameSpeed(Number(speed));
-    if (!state.unlockedSpeeds.includes(target)) return;
-    if (state.gameSpeed === target) return;
+    usePlayerStore.getState().setBattleSpeed(target);
+    if (get().gameSpeed === target) return;
     set({ gameSpeed: target });
   },
 
@@ -579,11 +650,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const incomeLv = usePlayerStore.getState().coinIncomeUpgradeLevel ?? 0;
     const rawBonus = getWaveCompletionBonus(state.currentWave);
+    const premium = usePlayerStore.getState().premium ? PREMIUM_COIN_MULT : 1;
+    const reward = getDifficultyModifiers(usePlayerStore.getState().difficultyMode).reward;
     const bonus = Math.max(
       0,
-      Math.floor(rawBonus * getRunCoinIncomeMultiplier(incomeLv))
+      Math.floor(rawBonus * getRunCoinIncomeMultiplier(incomeLv) * premium * reward)
     );
-
     const w = state.currentWave;
     const newWaveGemTotal = targetWavePerformanceGems(w);
     const waveGemDelta = Math.max(0, newWaveGemTotal - state.runGemsFromWavePart);
@@ -617,7 +689,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       }
     }, 2000);
 
-    void stopAllSounds();
+    playWinSound();
   },
 
   dismissBonusPopup: () => {
@@ -649,13 +721,14 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       skin,
       targetingMode: 'first',
       totalCostSpent: cost,
+      path: 'none',
       currentTargetId: null,
       damageAccumulator: 0,
     };
 
     const newPurchaseCount = {
-      ...state.towerPurchaseCount,
-      [state.selectedTowerType]: state.towerPurchaseCount[state.selectedTowerType] + 1,
+      ...mergeNumericRecord(state.towerPurchaseCount),
+      [state.selectedTowerType]: (state.towerPurchaseCount[state.selectedTowerType] || 0) + 1,
     };
 
     // Get all towers including the new one for path recalculation
@@ -664,6 +737,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     // Recalculate paths for ALL existing enemies
     const updatedEnemies = state.enemies.map((enemy) => {
+      if (enemy.flying) return enemy;
       const currentGridX = Math.round(enemy.position.x);
       const currentGridY = Math.round(enemy.position.y);
       let newPath: { x: number; y: number }[] | null = null;
@@ -704,29 +778,43 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       selectedTowerType: null,
     }));
 
+    playBuildSound();
     return true;
   },
 
-  upgradeTower: (towerId) => {
+  upgradeTower: (towerId, chosenPath) => {
     const state = get();
     const tower = state.towers.find(t => t.id === towerId);
     if (!tower) return false;
 
+    const currentPath = normalizeTowerPath(tower.path);
+    if (needsPathChoice(tower.level, currentPath)) {
+      if (chosenPath !== 'alpha' && chosenPath !== 'beta') return false;
+    }
+
     const cost = state.getUpgradeCost(tower);
     if (state.coins < cost) return false;
+    const nextPath =
+      chosenPath === 'alpha' || chosenPath === 'beta' ? chosenPath : currentPath;
 
     set(s => ({
       towers: s.towers.map(t =>
         t.id === towerId 
-          ? { ...t, level: t.level + 1, totalCostSpent: t.totalCostSpent + cost } 
+          ? { ...t, level: t.level + 1, path: nextPath, totalCostSpent: t.totalCostSpent + cost } 
           : t
       ),
       coins: s.coins - cost,
       selectedPlacedTower: s.selectedPlacedTower?.id === towerId 
-        ? { ...s.selectedPlacedTower, level: s.selectedPlacedTower.level + 1, totalCostSpent: s.selectedPlacedTower.totalCostSpent + cost }
+        ? {
+            ...s.selectedPlacedTower,
+            level: s.selectedPlacedTower.level + 1,
+            path: nextPath,
+            totalCostSpent: s.selectedPlacedTower.totalCostSpent + cost,
+          }
         : s.selectedPlacedTower,
     }));
 
+    playUpgradeSound();
     return true;
   },
 
@@ -760,8 +848,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const state = get();
     const enemyDef = ENEMIES[type];
     
+    const flying = Boolean((enemyDef as { flying?: boolean }).flying);
     let path: { x: number; y: number }[];
-    if (state.arenaRoute.length >= 2) {
+    if (flying && state.arenaRoute.length < 2) {
+      path = manhattanPath(state.spawnPoint, state.basePosition, true);
+    } else if (state.arenaRoute.length >= 2) {
       path = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
     } else {
       const blockedCells = getBlockedCells(state.towers);
@@ -791,12 +882,14 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       coinReward: enemyDef.coinReward,
       spawnTime: Date.now(),
       path,
-      damageReduction: (enemyDef as any).damageReduction,
-      healPerSecond: (enemyDef as any).healPerSecond,
-      auraRange: (enemyDef as any).auraRange,
-      splitOnDeath: (enemyDef as any).splitOnDeath,
-      splitCount: (enemyDef as any).splitCount,
-      splitInto: (enemyDef as any).splitInto,
+      damageReduction: (enemyDef as { damageReduction?: number }).damageReduction,
+      healPerSecond: (enemyDef as { healPerSecond?: number }).healPerSecond,
+      auraRange: (enemyDef as { auraRange?: number }).auraRange,
+      splitOnDeath: (enemyDef as { splitOnDeath?: boolean }).splitOnDeath,
+      splitCount: (enemyDef as { splitCount?: number }).splitCount,
+      splitInto: (enemyDef as { splitInto?: EnemyType }).splitInto,
+      flying,
+      armor: (enemyDef as { armor?: number }).armor ?? 0,
     };
 
     set((s) => ({
@@ -808,6 +901,69 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }));
   },
 
+  /** One store update for every enemy that becomes due in a single simulation step. */
+  spawnEnemyBatch: (spawns: { type: EnemyType; healthMultiplier: number; speedMultiplier: number }[]) => {
+    if (spawns.length === 0) return;
+    const state = get();
+    const born: Enemy[] = [];
+    let sharedGround: { x: number; y: number }[] | null = null;
+    let sharedFly: { x: number; y: number }[] | null = null;
+    const groundPath = () => {
+      if (sharedGround) return sharedGround;
+      if (state.arenaRoute.length >= 2) {
+        sharedGround = state.arenaRoute.map((p) => ({ x: p.x, y: p.y }));
+        return sharedGround;
+      }
+      const blockedCells = getBlockedCells(state.towers);
+      const computed =
+        findPath(state.spawnPoint, state.basePosition, state.gridCols, state.gridRows, blockedCells) ?? null;
+      sharedGround = computed && computed.length >= 2 ? computed : [];
+      return sharedGround;
+    };
+    for (const spawn of spawns) {
+      const enemyDef = ENEMIES[spawn.type];
+      const flying = Boolean((enemyDef as { flying?: boolean }).flying);
+      let path: { x: number; y: number }[];
+      if (flying && state.arenaRoute.length < 2) {
+        if (!sharedFly) sharedFly = manhattanPath(state.spawnPoint, state.basePosition, true);
+        path = sharedFly;
+      } else {
+        path = groundPath();
+        if (path.length < 2) continue;
+      }
+      born.push({
+        id: generateId(),
+        type: spawn.type,
+        position: { x: path[0].x, y: path[0].y },
+        health: Math.floor(enemyDef.baseHealth * spawn.healthMultiplier),
+        maxHealth: Math.floor(enemyDef.baseHealth * spawn.healthMultiplier),
+        speed: enemyDef.baseSpeed * spawn.speedMultiplier,
+        pathIndex: 0,
+        slowedUntil: 0,
+        coinReward: enemyDef.coinReward,
+        spawnTime: Date.now(),
+        path,
+        damageReduction: (enemyDef as { damageReduction?: number }).damageReduction,
+        healPerSecond: (enemyDef as { healPerSecond?: number }).healPerSecond,
+        auraRange: (enemyDef as { auraRange?: number }).auraRange,
+        splitOnDeath: (enemyDef as { splitOnDeath?: boolean }).splitOnDeath,
+        splitCount: (enemyDef as { splitCount?: number }).splitCount,
+        splitInto: (enemyDef as { splitInto?: EnemyType }).splitInto,
+        flying,
+        armor: (enemyDef as { armor?: number }).armor ?? 0,
+      });
+    }
+    if (born.length === 0) return;
+    // One path for the whole batch. Searching again per enemy is what made 2x hitch and then die.
+    set((s) => ({
+      enemies: [...s.enemies, ...born],
+      waveSpawnSlotsReleased:
+        s.waveInProgress && s.waveSpawnSlotsTotal > 0
+          ? Math.min(s.waveSpawnSlotsTotal, s.waveSpawnSlotsReleased + born.length)
+          : s.waveSpawnSlotsReleased,
+    }));
+  },
+
   // Main game tick - NO COMBO SYSTEM
   gameTick: (deltaTime) => {
     const state = get();
@@ -815,7 +971,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     try {
     const now = Date.now();
-    const adjustedDelta = deltaTime * state.gameSpeed;
+    const speed = clampGameSpeed(state.gameSpeed);
+    if (state.gameSpeed !== speed) {
+      set({ gameSpeed: speed });
+    }
+    // One application of speed. The frame loop does not also multiply the step count.
+    const adjustedDelta = deltaTime * speed;
+    const simNow = (state.simTimeMs ?? 0) + adjustedDelta;
 
     // Update auto wave timer (only after wave 1). Always persist decremented value — a prior
     // `>= 100` throttle compared delta to the *unchanged* store value, so at 1x–2x speed the
@@ -838,7 +1000,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     let baseDamage = 0;
 
     const updatedEnemies = state.enemies.map(enemy => {
-      const isSlowed = now < enemy.slowedUntil;
+      const isSlowed = simNow < enemy.slowedUntil;
       const speedMultiplier = isSlowed ? 0.5 : 1;
       const speed = enemy.speed * speedMultiplier;
       
@@ -901,7 +1063,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     // ====== TOWER FIRING ======
     const newProjectiles: Projectile[] = [];
     const newLaserBeams: LaserBeam[] = [];
-    let sfxPlayed = 0;
 
     const shopUpgradeLevels = state.towerUpgradeLevels;
 
@@ -909,21 +1070,17 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const towerDef = TOWERS[tower.type];
 
       const shopBonus = shopUpgradeLevels[tower.type] || 0;
-      let stats = getInfiniteUpgradeStats(towerDef.baseStats, tower.level);
+      const calibration = usePlayerStore.getState().calibrationUpgradeLevel ?? 0;
+      const stats = resolveTowerStats(
+        tower.type,
+        towerDef.baseStats,
+        tower.level,
+        shopBonus,
+        normalizeTowerPath(tower.path),
+        calibration
+      );
 
-      if (shopBonus > 0) {
-        const shopMultiplier = Math.pow(1.05, shopBonus);
-        stats = {
-          ...stats,
-          damage: Math.floor(stats.damage * shopMultiplier),
-          range: stats.range * (1 + shopBonus * 0.02),
-        };
-      }
-
-      if (now - tower.lastFireTime < stats.fireRate / state.gameSpeed) {
-        if (tower.type === 'laser') {
-          return { ...tower, currentTargetId: null, damageAccumulator: 0 };
-        }
+      if (simNow - tower.lastFireTime < stats.fireRate) {
         return tower;
       }
 
@@ -932,6 +1089,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const ty = tower.position.y;
       scratchEnemiesInRange.length = 0;
       for (const enemy of enemiesForTowers) {
+        if (!canTargetEnemy(!!enemy.flying, stats.airMultiplier, stats.groundMultiplier)) continue;
         const dx = enemy.position.x - tx;
         const dy = enemy.position.y - ty;
         if (dx * dx + dy * dy <= rangeSq) {
@@ -980,35 +1138,33 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       
       // Handle laser tower specially
       if (tower.type === 'laser') {
-        const laserStats = stats as any;
         let newDamageAccumulator = tower.damageAccumulator;
-        
-        // If same target, increase damage
+
         if (tower.currentTargetId === target.id) {
-          newDamageAccumulator += laserStats.damageRampUp || 0.5;
+          newDamageAccumulator += stats.damageRampUp || 0.5;
         } else {
           newDamageAccumulator = 0;
         }
-        
-        // Cap the damage multiplier
-        const maxMultiplier = laserStats.maxDamageMultiplier || 10;
+
+        const maxMultiplier = stats.maxDamageMultiplier || 10;
         const damageMultiplier = Math.min(1 + newDamageAccumulator, maxMultiplier);
         const laserDamage = Math.floor(stats.damage * damageMultiplier);
-        
+
         newLaserBeams.push({
           towerId: tower.id,
           targetId: target.id,
           damage: laserDamage,
+          pierce: stats.pierce,
+          airMultiplier: stats.airMultiplier,
+          groundMultiplier: stats.groundMultiplier,
+          chain: stats.chain,
         });
 
-        if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
-          sfxPlayed += 1;
-          void playWeaponFireSound('laser');
-        }
+        void playWeaponFireSound('laser');
 
         return {
           ...tower,
-          lastFireTime: now,
+          lastFireTime: simNow,
           currentTargetId: target.id,
           damageAccumulator: newDamageAccumulator,
         };
@@ -1023,31 +1179,43 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         speed: stats.projectileSpeed,
         towerId: tower.id,
         towerType: tower.type,
-        isSplash: tower.type === 'splash' || tower.type === 'missile',
-        splashRadius: (stats as any).splashRadius,
+        isSplash: tower.type === 'splash' || tower.type === 'missile' || tower.type === 'flak',
+        splashRadius: stats.splashRadius,
         isFreeze: tower.type === 'freeze',
-        slowAmount: (stats as any).slowAmount,
-        slowDuration: (stats as any).slowDuration,
+        slowAmount: stats.slowAmount,
+        slowDuration: stats.slowDuration,
+        pierce: stats.pierce,
+        airMultiplier: stats.airMultiplier,
+        groundMultiplier: stats.groundMultiplier,
+        chain: stats.chain,
       };
 
       newProjectiles.push(projectile);
-      if (sfxPlayed < MAX_WEAPON_SFX_PER_TICK) {
-        sfxPlayed += 1;
-        void playWeaponFireSound(tower.type);
-      }
-      return { ...tower, lastFireTime: now };
+      void playWeaponFireSound(tower.type);
+      return { ...tower, lastFireTime: simNow };
     });
 
     // ====== PROCESS LASER BEAMS (instant damage) ======
-    scratchLaserDamage.length = 0;
-    for (const beam of newLaserBeams) {
-      scratchLaserDamage.push({ id: beam.targetId, damage: beam.damage });
-    }
+    type HitPacket = {
+      id: string;
+      damage: number;
+      pierce: number;
+      airMultiplier: number;
+      groundMultiplier: number;
+      chain: number;
+      slow?: { amount: number; duration: number };
+    };
 
     // ====== MOVE PROJECTILES ======
     const projectilesToRemove = new Set<string>();
-    const enemyDamage: { id: string; damage: number; slow?: { amount: number; duration: number } }[] =
-      scratchLaserDamage.slice();
+    const enemyDamage: HitPacket[] = newLaserBeams.map((beam) => ({
+      id: beam.targetId,
+      damage: beam.damage,
+      pierce: beam.pierce,
+      airMultiplier: beam.airMultiplier,
+      groundMultiplier: beam.groundMultiplier,
+      chain: beam.chain,
+    }));
     const enemyById = new Map<string, Enemy>();
     for (const enemy of updatedEnemies) {
       enemyById.set(enemy.id, enemy);
@@ -1075,16 +1243,28 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
             const edx = e.position.x - target.position.x;
             const edy = e.position.y - target.position.y;
             if (edx * edx + edy * edy <= splashRadiusSq) {
-              enemyDamage.push({ id: e.id, damage: proj.damage });
+              if (!canTargetEnemy(!!e.flying, proj.airMultiplier ?? 1, proj.groundMultiplier ?? 1)) continue;
+              enemyDamage.push({
+                id: e.id,
+                damage: proj.damage,
+                pierce: proj.pierce ?? 0,
+                airMultiplier: proj.airMultiplier ?? 1,
+                groundMultiplier: proj.groundMultiplier ?? 1,
+                chain: 0,
+              });
             }
           }
         } else {
-          enemyDamage.push({ 
-            id: target.id, 
+          enemyDamage.push({
+            id: target.id,
             damage: proj.damage,
-            slow: proj.isFreeze && proj.slowAmount && proj.slowDuration 
+            pierce: proj.pierce ?? 0,
+            airMultiplier: proj.airMultiplier ?? 1,
+            groundMultiplier: proj.groundMultiplier ?? 1,
+            chain: proj.chain ?? 0,
+            slow: proj.isFreeze && proj.slowAmount && proj.slowDuration
               ? { amount: proj.slowAmount, duration: proj.slowDuration }
-              : undefined
+              : undefined,
           });
         }
         
@@ -1106,45 +1286,113 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const doubleDamage = now < state.doubleDamageUntil;
     const splitSpawns: Enemy[] = [];
 
-    type SlowPayload = { amount: number; duration: number };
-    const damageAgg = new Map<string, { totalDamage: number; slow?: SlowPayload }>();
-    for (const d of enemyDamage) {
-      let entry = damageAgg.get(d.id);
-      if (!entry) {
-        entry = { totalDamage: 0 };
-        damageAgg.set(d.id, entry);
-      }
-      entry.totalDamage += d.damage;
-      if (d.slow) {
-        if (!entry.slow || d.slow.duration > entry.slow.duration) {
-          entry.slow = d.slow;
-        }
+    const chainExtra: HitPacket[] = [];
+    for (const packet of enemyDamage) {
+      if (packet.chain <= 0) continue;
+      const origin = updatedEnemies.find((e) => e.id === packet.id);
+      if (!origin) continue;
+      const ids = nearestOtherIds(
+        origin.position,
+        origin.id,
+        enemiesForTowers.map((e) => ({ id: e.id, x: e.position.x, y: e.position.y })),
+        packet.chain,
+        2.4
+      );
+      for (const id of ids) {
+        chainExtra.push({ ...packet, id, damage: packet.damage * 0.55, chain: 0, slow: undefined });
       }
     }
+    if (chainExtra.length) enemyDamage.push(...chainExtra);
+
+    type SlowPayload = { amount: number; duration: number };
+    const damageAgg = new Map<string, { dealt: number; slow?: SlowPayload }>();
+    for (const packet of enemyDamage) {
+      const enemy = updatedEnemies.find((e) => e.id === packet.id);
+      if (!enemy) continue;
+      const dealt = computeHitDamage({
+        raw: packet.damage,
+        flying: !!enemy.flying,
+        airMultiplier: packet.airMultiplier,
+        groundMultiplier: packet.groundMultiplier,
+        armor: enemy.armor ?? 0,
+        pierce: packet.pierce,
+        damageReduction: enemy.damageReduction ?? 0,
+        doubleDamage,
+      });
+      let entry = damageAgg.get(packet.id);
+      if (!entry) {
+        entry = { dealt: 0 };
+        damageAgg.set(packet.id, entry);
+      }
+      entry.dealt += dealt;
+      if (packet.slow) {
+        if (!entry.slow || packet.slow.duration > entry.slow.duration) entry.slow = packet.slow;
+      }
+    }
+
+    const allowFx = !usePlayerStore.getState().performanceMode && (usePlayerStore.getState().vfxQuality ?? 2) > 0;
+    const nextFloats: FloatText[] = allowFx
+      ? state.floatTexts.filter((f) => now - f.born < 700).slice(-MAX_FLOAT_TEXTS)
+      : [];
+    const nextBursts: Burst[] = allowFx
+      ? state.bursts.filter((b) => now - b.born < 640).slice(-MAX_BURSTS)
+      : [];
+    let flyingKills = 0;
+    let armoredKills = 0;
+    let bossKills = 0;
+    let bossHit = false;
 
     const finalEnemies = updatedEnemies
       .filter((e) => !exploding.has(e.id))
       .map((enemy) => {
         const agg = damageAgg.get(enemy.id);
-        if (!agg) return enemy;
-
-        let totalDamage = agg.totalDamage;
-        if (doubleDamage) totalDamage *= 2;
-        if (enemy.damageReduction) {
-          totalDamage *= (1 - enemy.damageReduction);
-        }
-
         const healAmount = healedByAura.get(enemy.id) || 0;
-        const newHealth = Math.min(enemy.maxHealth, enemy.health + healAmount - totalDamage);
+        if (!agg && healAmount <= 0) return enemy;
+
+        const dealt = agg?.dealt ?? 0;
+        const newHealth = Math.min(enemy.maxHealth, enemy.health + healAmount - dealt);
 
         let slowedUntil = enemy.slowedUntil;
-        if (agg.slow) {
-          slowedUntil = Math.max(slowedUntil, now + agg.slow.duration);
+        if (agg?.slow) {
+          slowedUntil = Math.max(slowedUntil, simNow + agg.slow.duration);
+        }
+
+        if (enemy.type === 'boss' && dealt > 0) bossHit = true;
+        if (allowFx && dealt >= 4 && nextFloats.length < MAX_FLOAT_TEXTS) {
+          nextFloats.push({
+            id: generateId(),
+            x: enemy.position.x,
+            y: enemy.position.y,
+            text: String(Math.max(1, Math.round(dealt))),
+            born: now,
+          });
         }
 
         if (newHealth <= 0) {
           enemiesKilledThisTick++;
-          coinsEarned += scaleRunCoinsFromKill(enemy.coinReward);
+          if (enemy.type === 'flying') flyingKills += 1;
+          else if (enemy.type === 'armored') armoredKills += 1;
+          else if (enemy.type === 'boss') bossKills += 1;
+          const gained = scaleRunCoinsFromKill(enemy.coinReward);
+          coinsEarned += gained;
+          if (allowFx && nextFloats.length < MAX_FLOAT_TEXTS) {
+            nextFloats.push({
+              id: generateId(),
+              x: enemy.position.x,
+              y: enemy.position.y - 0.35,
+              text: `+${gained}`,
+              born: now,
+            });
+          }
+          if (allowFx && nextBursts.length < MAX_BURSTS) {
+            nextBursts.push({
+              id: generateId(),
+              x: enemy.position.x,
+              y: enemy.position.y,
+              born: now,
+              color: ENEMIES[enemy.type].color,
+            });
+          }
           if (enemy.splitOnDeath && enemy.splitInto && enemy.splitCount) {
             const splitDef = ENEMIES[enemy.splitInto];
             const blockedCells = getBlockedCells(state.towers);
@@ -1177,13 +1425,20 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
                 splitOnDeath: false,
                 splitCount: 0,
                 splitInto: undefined,
+                flying: Boolean((splitDef as { flying?: boolean }).flying),
+                armor: (splitDef as { armor?: number }).armor ?? 0,
               });
             }
           }
           return null;
         }
 
-        return { ...enemy, health: newHealth, slowedUntil };
+        return {
+          ...enemy,
+          health: newHealth,
+          slowedUntil,
+          hitFlashUntil: dealt > 0 ? now + 140 : enemy.hitFlashUntil,
+        };
       })
       .filter(Boolean) as Enemy[];
 
@@ -1192,6 +1447,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     if (isGameOver) {
       void stopAllSounds();
+      playLoseSound();
     } else {
       if (baseDamage > 0) {
         void playBaseDamageSound();
@@ -1206,9 +1462,13 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       sel === null ? null : updatedTowers.find((t) => t.id === sel.id) ?? null;
 
     set({
+      simTimeMs: simNow,
       enemies: [...finalEnemies, ...splitSpawns],
       towers: updatedTowers,
-      projectiles: updatedProjectiles.filter((p) => !projectilesToRemove.has(p.id)),
+      projectiles: (() => {
+        const live = updatedProjectiles.filter((p) => !projectilesToRemove.has(p.id));
+        return live.length > MAX_PROJECTILES ? live.slice(live.length - MAX_PROJECTILES) : live;
+      })(),
       laserBeams: newLaserBeams,
       baseHealth: newBaseHealth,
       isGameOver,
@@ -1217,9 +1477,15 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       score: state.score + coinsEarned,
       enemiesKilled: state.enemiesKilled + enemiesKilledThisTick,
       selectedPlacedTower: nextSelected,
+      floatTexts: nextFloats,
+      bursts: nextBursts,
+      bossShake: bossHit ? state.bossShake + 1 : state.bossShake,
+      runFlyingKills: state.runFlyingKills + flyingKills,
+      runArmoredKills: state.runArmoredKills + armoredKills,
+      runBossKills: state.runBossKills + bossKills,
     });
-    } catch {
-      /* abort this tick only */
+    } catch (err) {
+      console.warn('[gameTick]', err);
     }
   },
 
@@ -1229,6 +1495,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       const newHealth = s.baseHealth - damage;
       if (newHealth <= 0) {
         void stopAllSounds();
+        playLoseSound();
         return { baseHealth: 0, isGameOver: true, isPlaying: false };
       }
       return { baseHealth: newHealth };
@@ -1303,7 +1570,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   getTowerCost: (type) => {
     const state = get();
     const baseCost = TOWERS[type].baseCost;
-    const purchaseCount = state.towerPurchaseCount[type];
+    const purchaseCount = state.towerPurchaseCount[type] || 0;
     const curve = Math.floor(baseCost * Math.pow(GAME_CONFIG.TOWER_COST_INCREASE, purchaseCount));
     const shopLv = state.towerUpgradeLevels[type] ?? 0;
     const mult = 1 + shopLv * GAME_CONFIG.SHOP_LEVEL_COST_MULT;
@@ -1364,8 +1631,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         skin: t.skin,
         targetingMode: t.targetingMode,
         totalCostSpent: t.totalCostSpent,
+        path: normalizeTowerPath(t.path),
       })),
-      towerPurchaseCount: { ...state.towerPurchaseCount },
+      towerPurchaseCount: mergeNumericRecord(state.towerPurchaseCount),
       gridCols: state.gridCols,
       gridRows: state.gridRows,
       arenaExpansions: state.arenaExpansions,
@@ -1376,9 +1644,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   
   // Resume from saved game
   resumeFromSavedGame: (savedGame, playerData) => {
-    const baseConfig = GAME_CONFIG;
     const restoredTowers: PlacedTower[] = savedGame.towers.map((t) => ({
       ...t,
+      path: normalizeTowerPath(t.path),
       lastFireTime: 0,
       currentTargetId: null,
       damageAccumulator: 0,
@@ -1407,6 +1675,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         enemies: [],
         projectiles: [],
         laserBeams: [],
+        floatTexts: [],
+        bursts: [],
+      bossShake: 0,
         gridCols: def.gridCols,
         gridRows: def.gridRows,
         cellSize: def.cellSize,
@@ -1417,10 +1688,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
         towerUpgradeLevels: playerData.towerUpgradeLevels,
         equippedSkins: playerData.equippedSkins,
         arenaExpansions: savedGame.arenaExpansions,
-        towerPurchaseCount: savedGame.towerPurchaseCount,
+        towerPurchaseCount: mergeNumericRecord(savedGame.towerPurchaseCount),
         doubleDamageUntil: 0,
         gameStartTime: Date.now(),
-        gameSpeed: 1,
+        gameSpeed: rememberedGameSpeed(),
+  simTimeMs: 0,
         waveEndTime: 0,
         autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
         selectedTowerType: null,
@@ -1435,8 +1707,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return;
     }
 
-    const cellSize =
-      savedGame.arenaExpansions > 3 ? 28 : savedGame.arenaExpansions > 1 ? 30 : baseConfig.CELL_SIZE;
+    const cellSize = gridForArenaSize(savedGame.arenaExpansions).cell;
 
     const spawnPoint = { x: 0, y: 0 };
     const basePosition = {
@@ -1462,6 +1733,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       enemies: [],
       projectiles: [],
       laserBeams: [],
+      floatTexts: [],
+      bursts: [],
+      bossShake: 0,
       gridCols: savedGame.gridCols,
       gridRows: savedGame.gridRows,
       cellSize,
@@ -1472,10 +1746,11 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       towerUpgradeLevels: playerData.towerUpgradeLevels,
       equippedSkins: playerData.equippedSkins,
       arenaExpansions: savedGame.arenaExpansions,
-      towerPurchaseCount: savedGame.towerPurchaseCount,
+      towerPurchaseCount: mergeNumericRecord(savedGame.towerPurchaseCount),
       doubleDamageUntil: 0,
       gameStartTime: Date.now(),
-      gameSpeed: 1,
+      gameSpeed: rememberedGameSpeed(),
+  simTimeMs: 0,
       waveEndTime: 0,
       autoWaveTimer: GAME_CONFIG.WAVE_DELAY,
       selectedTowerType: null,

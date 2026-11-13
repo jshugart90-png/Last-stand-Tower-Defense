@@ -25,7 +25,7 @@ on:
 jobs:
   testflight:
     name: iOS TestFlight
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 120
     env:
       ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -40,6 +40,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # App Store Connect requires the iOS 26 SDK (Xcode 26+) for uploads.
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Require App Store Connect secrets
         run: |

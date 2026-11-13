@@ -142,6 +142,34 @@ export const createDefaultAchievements = (): Achievement[] => [
     rewardGems: 50,
     unlocked: false,
   },
+  {
+    id: 'wing_clipper',
+    label: 'Wing Clipper',
+    description: 'Shoot down 30 flying enemies.',
+    rewardGems: 25,
+    unlocked: false,
+  },
+  {
+    id: 'plate_breaker',
+    label: 'Plate Breaker',
+    description: 'Destroy 25 armored enemies.',
+    rewardGems: 30,
+    unlocked: false,
+  },
+  {
+    id: 'boss_slayer',
+    label: 'Boss Slayer',
+    description: 'Defeat 3 bosses.',
+    rewardGems: 40,
+    unlocked: false,
+  },
+  {
+    id: 'last_stand_hold',
+    label: 'Hold the Line',
+    description: 'Reach wave 12 on Last Stand difficulty.',
+    rewardGems: 60,
+    unlocked: false,
+  },
 ];
 
 export const createDefaultWeeklyMissions = (): WeeklyMission[] => [

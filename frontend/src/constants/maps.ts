@@ -34,16 +34,18 @@ const MAP_ORDER = [
   'void_switchback',
   'iron_widow',
   'dusk_causeway',
+  'cinder_ridge',
+  'gale_bastion',
 ] as const;
 
-const GEM_COSTS = [0, 40, 100, 200, 325, 475, 650, 850, 1075, 1350, 1700]; // 2.3: halved — 13.5k total was ~1,300 runs
+const GEM_COSTS = [0, 40, 100, 200, 325, 475, 650, 850, 1075, 1350, 1700, 2100, 2550]; // 2.3: halved — 13.5k total was ~1,300 runs
 /** Min best wave on the *previous* map to unlock the next map (index aligned with GAME_MAPS). */
 /**
  * WG[i] unlocks GAME_MAPS[i] when best wave on GAME_MAPS[i - 1] is ≥ WG[i].
  * One entry per transition (Free Play → … → 10th arena). Penultimate pair uses 50 then 55 then 60 on the last unlock.
  */
 /** Wave targets along MAP_ORDER: 20↑…55 then 60 for the last arena unlock (WG[8] uses 50 for the 50+ step). */
-const WAVE_GATES: readonly number[] = [0, 20, 25, 30, 35, 40, 45, 50, 50, 55, 60];
+const WAVE_GATES: readonly number[] = [0, 20, 25, 30, 35, 40, 45, 50, 50, 55, 60, 65, 70];
 
 const difficultyByIndex = (i: number): MapDifficulty => {
   if (i <= 2) return 'standard';

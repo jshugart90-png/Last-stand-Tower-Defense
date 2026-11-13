@@ -1,671 +1,595 @@
 /**
- * Cinematic SFX: layered procedural WAV + expo-av mixing.
- * — iOS silent switch: playsInSilentModeIOS true (SFX still audible in silent mode).
- * — User mute: soundEnabled + sfxVolume in player store.
+ * CC0 music files plus original procedural SFX and two Kenney CC0 UI taps.
+ * Sources and licenses: frontend/assets/audio/LICENSES.md.
+ *
+ * iOS silent switch: playsInSilentModeIOS is true, so the game is audible with
+ * the ringer off. The in-game mute and sliders are the controls. Music pauses
+ * when the app is backgrounded and resumes on the next active transition.
  */
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import { AppState, type AppStateStatus } from 'react-native';
 import { Buffer } from 'buffer';
 import type { TowerType } from '../constants/game';
 import { usePlayerStore } from '../stores/playerStore';
+import { mixEqualPower, musicGain, sfxGain } from '../logic/audioMix';
 
 export type SfxName = 'mission' | 'combo' | 'chest' | 'record';
+export type MusicTrack = 'menu' | 'battle' | 'battle2' | 'boss' | 'defeat';
 
-const SAMPLE_RATE = 44100;
+const SAMPLE_RATE = 22050;
 const BYTES_PER_SAMPLE = 2;
 
+type Slot = { sound: Audio.Sound; track: MusicTrack; base64Key: string };
+
 const cache = new Map<string, Audio.Sound>();
-const pools = new Map<string, { sounds: Audio.Sound[]; i: number }>();
 let audioReady = false;
 let audioInitPromise: Promise<void> | null = null;
-
-/** When false, combat SFX (weapons, impacts, deaths, base, wave horn) do not start. */
 let gameplaySfxArmed = false;
-/** Set after a native gameplay playback failure — no combat SFX until `stopAllSounds` clears it. */
-let gameplayNativeHardOff = false;
-/** Incremented to cancel pending `playEnemyDeathBurst` timeouts. */
-let deathBurstGeneration = 0;
+let appStateBound = false;
+let storeBound = false;
+let musicSuspended = false;
+let currentTrack: MusicTrack | null = null;
+let slotA: Slot | null = null;
+let slotB: Slot | null = null;
+let activeSlot: 'a' | 'b' = 'a';
+let fadeTimer: ReturnType<typeof setInterval> | null = null;
+let musicToken = 0;
+let lastLoseAt = 0;
 
-/** Single shared pool for all high-rate combat SFX (iOS: few `Sound` instances). */
-const COMBAT_POOL_KEY = 'combat_pool';
-/** Target 6–8 concurrent combat voices; one WAV file on disk, round-robin instances. */
-const COMBAT_POOL_SIZE = 7;
+const sampleCache = new Map<string, Float32Array>();
 
-/** Procedural buffers built once per process (never per play). */
-let cachedCombatImpact: Float32Array | null = null;
-let cachedSniperCrack: Float32Array | null = null;
-let cachedFreezeLaunch: Float32Array | null = null;
-let cachedWaveHorn: Float32Array | null = null;
-let cachedUiTones: Partial<Record<SfxName, Float32Array>> | null = null;
-
-function getCachedCombatImpact(): Float32Array {
-  if (!cachedCombatImpact) cachedCombatImpact = buildBulletImpact();
-  return cachedCombatImpact;
-}
-
-function getCachedSniperCrack(): Float32Array {
-  if (!cachedSniperCrack) cachedSniperCrack = buildSniperCrack();
-  return cachedSniperCrack;
-}
-
-function getCachedFreezeLaunch(): Float32Array {
-  if (!cachedFreezeLaunch) cachedFreezeLaunch = buildFreezeLaunch();
-  return cachedFreezeLaunch;
-}
-
-function getCachedWaveHorn(): Float32Array {
-  if (!cachedWaveHorn) cachedWaveHorn = buildWaveHorn();
-  return cachedWaveHorn;
-}
-
-function getCachedUiTones(): Record<SfxName, Float32Array> {
-  if (!cachedUiTones) {
-    cachedUiTones = {
-      mission: buildUiTone(740, 120, true),
-      combo: buildUiTone(1040, 140, true),
-      chest: buildUiTone(620, 160, true),
-      record: buildUiTone(1180, 130, true),
-    };
-  }
-  return cachedUiTones as Record<SfxName, Float32Array>;
-}
-
-function disableGameplaySfxAfterNativeError(): void {
-  if (gameplayNativeHardOff) return;
-  gameplayNativeHardOff = true;
-  gameplaySfxArmed = false;
-  deathBurstGeneration += 1;
-  lastAppliedVolume.clear();
-  deathRateWindowStart = 0;
-  deathRateWindowCount = 0;
-  void silenceAllLoadedSounds().catch(() => {});
-}
-
-/** Skip native bridge work when master switch is off (strict, sync). */
-function isSoundMasterOff(): boolean {
-  try {
-    return !usePlayerStore.getState().soundEnabled;
-  } catch {
-    return true;
-  }
-}
-
-/** Last setVolumeAsync value per logical slot — avoids redundant native calls. */
-const lastAppliedVolume = new Map<string, number>();
-const VOLUME_SKIP_EPSILON = 0.025;
-
-/** Gameplay / pooled SFX — any rejection disables native combat audio until `stopAllSounds`. */
-function deferGameplaySfx(op: () => Promise<unknown>): void {
-  queueMicrotask(() => {
-    void (async () => {
-      try {
-        if (gameplayNativeHardOff) return;
-        await op();
-      } catch {
-        disableGameplaySfxAfterNativeError();
-      }
-    })();
-  });
-}
-
-/** UI stingers — never disables combat path; failures are swallowed. */
-function deferUiSfx(op: () => Promise<unknown>): void {
-  queueMicrotask(() => {
-    void (async () => {
-      try {
-        await op();
-      } catch {
-        /* ignore */
-      }
-    })();
-  });
-}
-
-function getSfxGain(): number {
+function playerAudio() {
   const s = usePlayerStore.getState();
-  if (!s.soundEnabled) return 0;
-  return Math.max(0, Math.min(1, s.sfxVolume));
+  return {
+    sfx: sfxGain(s.soundEnabled, s.sfxVolume),
+    music: musicGain(s.musicEnabled, s.musicVolume),
+  };
 }
-
-function isGameplaySoundKey(key: string): boolean {
-  return !key.startsWith('ui_');
-}
-
-async function silenceAllLoadedSounds(): Promise<void> {
-  const tasks: Promise<unknown>[] = [];
-  for (const sound of cache.values()) {
-    tasks.push(
-      sound.stopAsync().catch(() => {})
-    );
-  }
-  for (const pool of pools.values()) {
-    for (const sound of pool.sounds) {
-      tasks.push(
-        sound.stopAsync().catch(() => {})
-      );
-    }
-  }
-  await Promise.all(tasks);
-}
-
-/** Stops every loaded SFX instance, invalidates staggered death timers, and disarms gameplay audio. */
-export async function stopAllSounds(): Promise<void> {
-  deathBurstGeneration++;
-  gameplaySfxArmed = false;
-  lastAppliedVolume.clear();
-  deathRateWindowStart = 0;
-  deathRateWindowCount = 0;
-  try {
-    await silenceAllLoadedSounds();
-  } catch {
-    /* ignore */
-  } finally {
-    gameplayNativeHardOff = false;
-  }
-}
-
-/** Enable/disable combat SFX. Setting false stops playback and pending death-burst schedules. */
-export function setGameplaySfxArmed(armed: boolean): void {
-  gameplaySfxArmed = armed;
-  if (!armed) {
-    deathBurstGeneration++;
-    lastAppliedVolume.clear();
-    void silenceAllLoadedSounds();
-  }
-}
-
-export function isGameplaySfxArmed(): boolean {
-  return gameplaySfxArmed;
-}
-
-function shouldPlaySfx(): boolean {
-  return getSfxGain() > 0.001;
-}
-
-const write16 = (view: DataView, offset: number, value: number) =>
-  view.setInt16(offset, value, true);
-const write32 = (view: DataView, offset: number, value: number) =>
-  view.setUint32(offset, value, true);
 
 function softClip(x: number): number {
   const t = Math.max(-1, Math.min(1, x));
-  return t - (t * t * t) / 3; // tanh-ish
+  return t - (t * t * t) / 3;
 }
 
-function whiteNoise(): number {
+function noise(): number {
   return Math.random() * 2 - 1;
 }
 
 function float32ToWavBase64(samples: Float32Array): string {
   let peak = 0.0001;
-  for (let i = 0; i < samples.length; i++) {
-    peak = Math.max(peak, Math.abs(samples[i]));
-  }
-  const norm = 0.92 / peak;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  const norm = 0.9 / peak;
   const dataSize = samples.length * BYTES_PER_SAMPLE;
-  const totalSize = 44 + dataSize;
-  const buffer = new ArrayBuffer(totalSize);
+  const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
-
-  view.setUint8(0, 0x52);
-  view.setUint8(1, 0x49);
-  view.setUint8(2, 0x46);
-  view.setUint8(3, 0x46);
-  write32(view, 4, 36 + dataSize);
-  view.setUint8(8, 0x57);
-  view.setUint8(9, 0x41);
-  view.setUint8(10, 0x56);
-  view.setUint8(11, 0x45);
-  view.setUint8(12, 0x66);
-  view.setUint8(13, 0x6d);
-  view.setUint8(14, 0x74);
-  view.setUint8(15, 0x20);
-  write32(view, 16, 16);
+  const ascii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  write32(view, 24, SAMPLE_RATE);
-  write32(view, 28, SAMPLE_RATE * BYTES_PER_SAMPLE);
+  view.setUint32(24, SAMPLE_RATE, true);
+  view.setUint32(28, SAMPLE_RATE * BYTES_PER_SAMPLE, true);
   view.setUint16(32, BYTES_PER_SAMPLE, true);
   view.setUint16(34, 16, true);
-  view.setUint8(36, 0x64);
-  view.setUint8(37, 0x61);
-  view.setUint8(38, 0x74);
-  view.setUint8(39, 0x61);
-  write32(view, 40, dataSize);
-
+  ascii(36, 'data');
+  view.setUint32(40, dataSize, true);
   for (let i = 0; i < samples.length; i++) {
-    const v = softClip(samples[i] * norm) * 32767;
-    write16(view, 44 + i * 2, v);
+    view.setInt16(44 + i * 2, softClip(samples[i] * norm) * 32767, true);
   }
-
   return Buffer.from(new Uint8Array(buffer)).toString('base64');
 }
 
-// ——— Layered generators ———
-
-function buildSniperCrack(): Float32Array {
-  const ms = 220;
-  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const t = i / SAMPLE_RATE;
-    const env = Math.exp(-t * 38);
-    const snap =
-      Math.sin(2 * Math.PI * 920 * t) * 0.45 +
-      Math.sin(2 * Math.PI * 1840 * t) * 0.25 * env;
-    const air = whiteNoise() * 0.35 * env;
-    out[i] = (snap + air) * Math.pow(1 - i / n, 0.2);
-  }
-  return out;
-}
-
-function buildFreezeLaunch(): Float32Array {
-  const ms = 95;
-  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const env = Math.pow(1 - i / n, 0.8);
-    const t = i / SAMPLE_RATE;
-    out[i] =
-      whiteNoise() * 0.22 * env +
-      Math.sin(2 * Math.PI * 880 * t) * 0.25 * env +
-      Math.sin(2 * Math.PI * 1320 * t) * 0.12 * env;
-  }
-  return out;
-}
-
-function buildBulletImpact(): Float32Array {
-  const ms = 110;
-  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const t = i / SAMPLE_RATE;
-    const env = Math.exp(-t * 55);
-    out[i] =
-      Math.sin(2 * Math.PI * 680 * t) * 0.35 * env +
-      Math.sin(2 * Math.PI * 1220 * t) * 0.18 * env +
-      whiteNoise() * 0.22 * env;
-  }
-  return out;
-}
-
-function buildWaveHorn(): Float32Array {
-  const ms = 820;
-  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
-  const out = new Float32Array(n);
-  const notes = [
-    { f: 196, len: 0.22, start: 0 },
-    { f: 246.94, len: 0.22, start: 0.24 },
-    { f: 293.66, len: 0.34, start: 0.48 },
-  ];
-  for (const note of notes) {
-    const start = Math.floor(note.start * SAMPLE_RATE);
-    const len = Math.floor(note.len * SAMPLE_RATE);
-    for (let i = 0; i < len && start + i < n; i++) {
-      const t = i / SAMPLE_RATE;
-      const env =
-        Math.sin((Math.PI * i) / len) *
-        (0.55 + 0.15 * Math.sin(2 * Math.PI * 5 * t));
-      const br =
-        Math.sin(2 * Math.PI * note.f * t) * 0.55 +
-        Math.sin(2 * Math.PI * note.f * 2 * t) * 0.22 +
-        Math.sin(2 * Math.PI * note.f * 3 * t) * 0.1;
-      out[start + i] += br * env;
-    }
-  }
-  return out;
-}
-
-function buildUiTone(freq: number, ms: number, bright = false): Float32Array {
+function tone(freq: number, ms: number, bright = false): Float32Array {
   const n = Math.floor((SAMPLE_RATE * ms) / 1000);
   const out = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const t = i / SAMPLE_RATE;
     const env = Math.pow(1 - i / n, bright ? 0.35 : 0.55);
     let s = Math.sin(2 * Math.PI * freq * t) * 0.55;
-    if (bright) s += Math.sin(2 * Math.PI * freq * 2.02 * t) * 0.2;
+    if (bright) s += Math.sin(2 * Math.PI * freq * 2 * t) * 0.18;
     out[i] = s * env;
   }
   return out;
 }
 
-async function writeAndLoadSound(
-  fileKey: string,
-  base64: string,
-  baseVolume: number
-): Promise<Audio.Sound | null> {
-  try {
-    const uri = `${FileSystem.cacheDirectory}sfx_${fileKey}.wav`;
-    await FileSystem.writeAsStringAsync(uri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const { sound } = await Audio.Sound.createAsync(
-      { uri },
-      { shouldPlay: false, volume: baseVolume, isLooping: false }
-    );
-    return sound;
-  } catch {
-    return null;
+function noiseBurst(ms: number, freq: number, amount: number): Float32Array {
+  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SAMPLE_RATE;
+    const env = Math.exp(-t * (ms < 80 ? 40 : 18));
+    out[i] =
+      Math.sin(2 * Math.PI * freq * t) * 0.45 * env +
+      Math.sin(2 * Math.PI * freq * 1.5 * t) * 0.15 * env +
+      noise() * amount * env;
+  }
+  return out;
+}
+
+function sweep(fromHz: number, toHz: number, ms: number, noiseAmt: number): Float32Array {
+  const n = Math.floor((SAMPLE_RATE * ms) / 1000);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = i / Math.max(1, n - 1);
+    const freq = fromHz + (toHz - fromHz) * p;
+    const env = Math.sin(Math.PI * p) * (1 - p * 0.25);
+    out[i] = Math.sin(2 * Math.PI * freq * (i / SAMPLE_RATE)) * 0.55 * env + noise() * noiseAmt * env;
+  }
+  return out;
+}
+
+function buildShot(kind: 'mg' | 'sniper' | 'splash' | 'freeze' | 'missile' | 'laser' | 'tesla' | 'flak' | 'cannon'): Float32Array {
+  switch (kind) {
+    case 'sniper':
+      return noiseBurst(180, 980, 0.22);
+    case 'cannon':
+      return noiseBurst(280, 70, 0.55);
+    case 'missile':
+      return sweep(180, 740, 220, 0.18);
+    case 'splash':
+      return noiseBurst(200, 160, 0.5);
+    case 'freeze':
+      return sweep(1400, 520, 140, 0.04);
+    case 'laser':
+      return tone(1480, 70, true);
+    case 'tesla':
+      return noiseBurst(90, 1800, 0.22);
+    case 'flak':
+      return noiseBurst(70, 1100, 0.32);
+    default:
+      return noiseBurst(55, 620, 0.22);
   }
 }
 
-async function ensureSoundFromFloat(
-  key: string,
-  samples: Float32Array,
-  baseVolume: number
-): Promise<Audio.Sound | null> {
-  const existing = cache.get(key);
-  if (existing) {
-    return existing;
-  }
-  let base64 = '';
-  try {
-    base64 = float32ToWavBase64(samples);
-  } catch {
-    return null;
-  }
-  const s = await writeAndLoadSound(key, base64, baseVolume);
-  if (s) cache.set(key, s);
-  return s;
+function buildImpact(): Float32Array {
+  return noiseBurst(100, 360, 0.32);
 }
 
-async function ensurePoolFromFloat(
-  poolKey: string,
-  samples: Float32Array,
-  baseVolume: number,
-  count: number
-): Promise<void> {
-  if (pools.has(poolKey)) return;
-  try {
-    const base64 = float32ToWavBase64(samples);
-    const uri = `${FileSystem.cacheDirectory}sfx_${poolKey}.wav`;
-    await FileSystem.writeAsStringAsync(uri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    const sounds: Audio.Sound[] = [];
-    for (let i = 0; i < count; i++) {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: false, volume: baseVolume, isLooping: false }
-      );
-      sounds.push(sound);
+function buildDeath(): Float32Array {
+  return noiseBurst(160, 140, 0.42);
+}
+
+function buildDeathPop(): Float32Array {
+  return tone(520, 90, true);
+}
+
+function buildDeathCrunch(): Float32Array {
+  return noiseBurst(120, 90, 0.62);
+}
+
+function buildBuild(): Float32Array {
+  return tone(520, 90, true);
+}
+
+function buildUpgrade(): Float32Array {
+  const a = tone(660, 80, true);
+  const b = tone(880, 110, true);
+  const out = new Float32Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+function brass(out: Float32Array, start: number, len: number, freq: number, amp: number) {
+  for (let i = 0; i < len && start + i < out.length; i++) {
+    const t = i / SAMPLE_RATE;
+    const env = Math.sin(Math.PI * Math.min(1, i / (len * 0.2))) * Math.pow(1 - i / len, 0.45);
+    let s = 0;
+    const weights = [1, 0.55, 0.32, 0.18, 0.1];
+    for (let h = 0; h < weights.length; h++) {
+      s += Math.sin(2 * Math.PI * freq * (h + 1) * t) * weights[h];
     }
-    pools.set(poolKey, { sounds, i: 0 });
-  } catch {
-    /* ignore pool init failure */
+    out[start + i] += s * env * amp;
   }
 }
 
-async function applyVolumeThenReplay(sound: Audio.Sound, slotKey: string, finalVolume: number): Promise<void> {
-  const prev = lastAppliedVolume.get(slotKey);
-  if (prev === undefined || Math.abs(prev - finalVolume) >= VOLUME_SKIP_EPSILON) {
-    await sound.setVolumeAsync(finalVolume);
-    lastAppliedVolume.set(slotKey, finalVolume);
-  }
-  await sound.replayAsync();
+function buildWave(): Float32Array {
+  const n = Math.floor(SAMPLE_RATE * 0.95);
+  const out = new Float32Array(n);
+  brass(out, 0, Math.floor(SAMPLE_RATE * 0.42), 349.23, 0.22);
+  brass(out, Math.floor(SAMPLE_RATE * 0.08), Math.floor(SAMPLE_RATE * 0.5), 523.25, 0.16);
+  brass(out, Math.floor(SAMPLE_RATE * 0.48), Math.floor(SAMPLE_RATE * 0.4), 659.25, 0.14);
+  return out;
 }
 
-async function playSoundKeyAsync(key: string, baseVolume: number): Promise<boolean> {
-  try {
-    const ready = await ensureAudioReady();
-    if (!ready) return false;
-    if (gameplayNativeHardOff && isGameplaySoundKey(key)) return false;
-    if (!gameplaySfxArmed && isGameplaySoundKey(key)) return false;
-    if (!shouldPlaySfx()) return false;
-    const gain = getSfxGain();
-    let sound: Audio.Sound | null | undefined = cache.get(key);
-    if (!sound && key.startsWith('ui_')) {
-      const fallback = key.replace('ui_', '') as SfxName;
-      const built = getCachedUiTones()[fallback];
-      if (!built) return false;
-      sound = await ensureSoundFromFloat(key, built, 1);
-    }
-    if (!sound) return false;
-    if (!gameplaySfxArmed && isGameplaySoundKey(key)) return false;
-    const finalVolume = baseVolume * gain;
-    await applyVolumeThenReplay(sound, `key:${key}`, finalVolume);
-    return true;
-  } catch {
-    if (isGameplaySoundKey(key)) {
-      disableGameplaySfxAfterNativeError();
-    }
-    return false;
-  }
+function buildWin(): Float32Array {
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  const n = Math.floor(SAMPLE_RATE * 1.15);
+  const out = new Float32Array(n);
+  notes.forEach((f, idx) => {
+    brass(out, Math.floor(idx * 0.16 * SAMPLE_RATE), Math.floor(0.34 * SAMPLE_RATE), f, 0.16);
+  });
+  const chord = Math.floor(0.62 * SAMPLE_RATE);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 523.25, 0.12);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 659.25, 0.1);
+  brass(out, chord, Math.floor(0.48 * SAMPLE_RATE), 783.99, 0.1);
+  return out;
 }
 
-async function playPooledAsync(poolKey: string, baseVolume: number): Promise<boolean> {
-  try {
-    if (gameplayNativeHardOff) return false;
-    const ready = await ensureAudioReady();
-    if (!ready) return false;
-    if (!shouldPlaySfx()) return false;
-    if (!gameplaySfxArmed) return false;
-    const gain = getSfxGain();
-    const p = pools.get(poolKey);
-    if (!p) return false;
-    const idx = p.i % p.sounds.length;
-    const snd = p.sounds[idx];
-    p.i++;
-    if (!gameplaySfxArmed) return false;
-    const finalVolume = baseVolume * gain;
-    await applyVolumeThenReplay(snd, `pool:${poolKey}:${idx}`, finalVolume);
-    return true;
-  } catch {
-    disableGameplaySfxAfterNativeError();
-    return false;
-  }
+function buildLose(): Float32Array {
+  const n = Math.floor(SAMPLE_RATE * 1.25);
+  const out = new Float32Array(n);
+  brass(out, 0, Math.floor(0.22 * SAMPLE_RATE), 90, 0.2);
+  const notes = [392, 349.23, 293.66, 220];
+  notes.forEach((f, idx) => {
+    brass(out, Math.floor(idx * 0.22 * SAMPLE_RATE), Math.floor(0.36 * SAMPLE_RATE), f, 0.14);
+  });
+  return out;
 }
 
-async function playCombatPooled(baseVolume: number): Promise<boolean> {
-  return playPooledAsync(COMBAT_POOL_KEY, baseVolume);
+/** Defeat sting only. The four looping beds are CC0 recordings. */
+function buildMusic(track: MusicTrack): Float32Array {
+  const n = Math.floor(SAMPLE_RATE * (track === 'defeat' ? 4 : 0.2));
+  const out = new Float32Array(n);
+  if (track !== 'defeat') return out;
+  const fall = [196, 174.61, 146.83, 130.81, 110];
+  fall.forEach((freq, idx) => {
+    brass(out, Math.floor(idx * 0.7 * SAMPLE_RATE), Math.floor(SAMPLE_RATE * 0.8), freq, 0.12);
+  });
+  return out;
 }
 
-let lastLaserFireAt = 0;
-let lastMgFireAt = 0;
+function samplesFor(key: string): Float32Array {
+  const hit = sampleCache.get(key);
+  if (hit) return hit;
+  let built: Float32Array;
+  if (key.startsWith('music_')) built = buildMusic(key.slice(6) as MusicTrack);
+  else if (key.startsWith('shot_')) built = buildShot(key.slice(5) as 'mg');
+  else if (key === 'impact') built = buildImpact();
+  else if (key === 'death') built = buildDeath();
+  else if (key === 'death_b') built = buildDeathPop();
+  else if (key === 'death_c') built = buildDeathCrunch();
+  else if (key === 'build') built = buildBuild();
+  else if (key === 'upgrade') built = buildUpgrade();
+  else if (key === 'wave') built = buildWave();
+  else if (key === 'win') built = buildWin();
+  else if (key === 'lose') built = buildLose();
+  else if (key === 'ui_mission') built = tone(740, 120, true);
+  else if (key === 'ui_combo') built = tone(1040, 140, true);
+  else if (key === 'ui_chest') built = tone(620, 160, true);
+  else built = tone(1180, 130, true);
+  sampleCache.set(key, built);
+  return built;
+}
 
-/** Global cap so mass kills cannot flood the native audio bridge. */
-const DEATH_PLAY_WINDOW_MS = 1000;
-/** ~9 enemy-death voices per second max (native bridge budget). */
-const DEATH_MAX_PLAYS_PER_WINDOW = 9;
-let deathRateWindowStart = 0;
-let deathRateWindowCount = 0;
+const FILE_SFX: Record<string, number> = {
+  ui_mission: require('../../assets/kenney/sfx/click.wav'),
+  ui_combo: require('../../assets/kenney/sfx/tap.wav'),
+  ui_chest: require('../../assets/kenney/sfx/click.wav'),
+  ui_record: require('../../assets/kenney/sfx/tap.wav'),
+  build: require('../../assets/kenney/sfx/click.wav'),
+  upgrade: require('../../assets/kenney/sfx/tap.wav'),
+};
 
-function tryConsumeDeathPlaySlot(): boolean {
-  const t = Date.now();
-  if (t - deathRateWindowStart >= DEATH_PLAY_WINDOW_MS) {
-    deathRateWindowStart = t;
-    deathRateWindowCount = 0;
-  }
-  if (deathRateWindowCount >= DEATH_MAX_PLAYS_PER_WINDOW) return false;
-  deathRateWindowCount += 1;
+const FILE_MUSIC: Partial<Record<MusicTrack, number>> = {
+  menu: require('../../assets/audio/menu.m4a'),
+  battle: require('../../assets/audio/battle.m4a'),
+  battle2: require('../../assets/audio/battle2.m4a'),
+  boss: require('../../assets/audio/boss.m4a'),
+};
+
+function bundledAudio(key: string): number | undefined {
+  const sfx = FILE_SFX[key];
+  if (sfx) return sfx;
+  if (key.startsWith('music_')) return FILE_MUSIC[key.slice(6) as MusicTrack];
+  return undefined;
+}
+
+/** One native Sound per key. Concurrent plays share this promise instead of creating another. */
+const loadPromises = new Map<string, Promise<Audio.Sound | null>>();
+/** Bumped when battle audio is torn down so an in-flight load cannot repopulate the pool. */
+let battleGeneration = 0;
+
+function isBattleAudioKey(key: string): boolean {
+  if (key.startsWith('ui_')) return false;
+  if (key === 'music_menu') return false;
   return true;
 }
 
-async function playWeaponFireSoundAsync(towerType: TowerType): Promise<void> {
-  if (gameplayNativeHardOff) return;
-  if (!gameplaySfxArmed) return;
-  if (!shouldPlaySfx()) return;
-  if (towerType === 'splash' || towerType === 'missile') return;
-  const map: Partial<Record<TowerType, string>> = {
-    sniper: 'weapon_sniper',
-    freeze: 'weapon_freeze_launch',
-  };
-  const k = map[towerType];
-  if (!k) return;
-  const vol = towerType === 'sniper' ? 0.9 : 0.72;
-  await playSoundKeyAsync(k, vol);
+const SFX_VOLUME: Record<string, number> = {
+  shot_mg: 0.7,
+  shot_sniper: 0.85,
+  shot_splash: 0.7,
+  shot_freeze: 0.7,
+  shot_missile: 0.7,
+  shot_laser: 0.7,
+  shot_tesla: 0.7,
+  shot_flak: 0.7,
+  shot_cannon: 0.7,
+  impact: 0.75,
+  death: 0.75,
+  death_b: 0.75,
+  death_c: 0.75,
+  wave: 0.8,
+  build: 0.7,
+  upgrade: 0.75,
+  win: 0.8,
+  lose: 0.85,
+  ui_mission: 0.68,
+  ui_combo: 0.68,
+  ui_chest: 0.68,
+  ui_record: 0.72,
+};
+
+function loadSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
+  const id = `${loop ? 'L' : 'S'}:${key}`;
+  const pending = loadPromises.get(id);
+  if (pending) return pending;
+  const created = createSound(key, loop);
+  loadPromises.set(id, created);
+  return created;
 }
 
-/** Weapon discharge — splash/missile only use impact (explosion), not this */
-export function playWeaponFireSound(towerType: TowerType): void {
+async function createSound(key: string, loop: boolean): Promise<Audio.Sound | null> {
+  const generation = battleGeneration;
+  const battle = isBattleAudioKey(key);
+  const base = SFX_VOLUME[key] ?? 1;
+  const volume = loop ? 0 : Math.max(0, Math.min(1, base * playerAudio().sfx));
+  const file = bundledAudio(key);
+  const adopt = async (sound: Audio.Sound): Promise<Audio.Sound | null> => {
+    if (battle && generation !== battleGeneration) {
+      try {
+        await sound.unloadAsync();
+      } catch {
+        /* already gone */
+      }
+      return null;
+    }
+    cache.set(key, sound);
+    return sound;
+  };
+  if (file) {
+    try {
+      const { sound } = await Audio.Sound.createAsync(file, {
+        shouldPlay: false,
+        volume,
+        isLooping: loop,
+      });
+      return adopt(sound);
+    } catch {
+      if (key.startsWith('music_')) return null;
+    }
+  }
   try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    if (towerType === 'splash' || towerType === 'missile') return;
-
-    if (towerType === 'laser') {
-      const now = Date.now();
-      if (now - lastLaserFireAt < 88) return;
-      lastLaserFireAt = now;
-      deferGameplaySfx(() => playCombatPooled(0.92));
-      return;
+    const base64 = float32ToWavBase64(samplesFor(key));
+    let uri = `data:audio/wav;base64,${base64}`;
+    const dir = FileSystem.cacheDirectory;
+    if (dir) {
+      const fileUri = `${dir}ls_${key}.wav`;
+      await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      uri = fileUri;
     }
-
-    if (towerType === 'machine_gun') {
-      const now = Date.now();
-      if (now - lastMgFireAt < 38) return;
-      lastMgFireAt = now;
-      deferGameplaySfx(() => playCombatPooled(0.88));
-      return;
-    }
-
-    deferGameplaySfx(() => playWeaponFireSoundAsync(towerType));
+    const { sound } = await Audio.Sound.createAsync(
+      { uri },
+      { shouldPlay: false, volume, isLooping: loop }
+    );
+    return adopt(sound);
   } catch {
-    disableGameplaySfxAfterNativeError();
+    return null;
   }
 }
 
-/** Projectile reached target */
-export function playProjectileImpact(proj: {
-  isSplash?: boolean;
-  isFreeze?: boolean;
-  towerType: TowerType;
-}): void {
+export function preloadGameplaySounds(): void {
+  if (playerAudio().sfx <= 0.001) return;
+  void ensureAudioReady().then((ready) => {
+    if (!ready || playerAudio().sfx <= 0.001) return;
+    for (const key of Object.keys(SFX_VOLUME)) void loadSound(key, false);
+    for (const track of ['battle', 'battle2', 'boss'] as MusicTrack[]) {
+      void loadSound(`music_${track}`, true);
+    }
+  });
+}
+
+async function ensureAudioReady(): Promise<boolean> {
+  if (audioReady) return true;
+  await initializeAudio();
+  return audioReady;
+}
+
+function clearFade() {
+  if (fadeTimer) {
+    clearInterval(fadeTimer);
+    fadeTimer = null;
+  }
+}
+
+async function applySlotVolume(slot: Slot | null, linear: number) {
+  if (!slot) return;
   try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    deferGameplaySfx(async () => {
-      if (!gameplaySfxArmed) return;
-      if (proj.isSplash || proj.towerType === 'missile' || proj.towerType === 'splash') {
-        await playCombatPooled(0.94);
-      } else if (proj.isFreeze || proj.towerType === 'freeze') {
-        await playCombatPooled(0.95);
+    await slot.sound.setVolumeAsync(Math.max(0, Math.min(1, linear * playerAudio().music)));
+  } catch {
+    /* a single volume miss should not mute the game */
+  }
+}
+
+async function pauseSlot(slot: Slot | null) {
+  if (!slot) return;
+  try {
+    await slot.sound.pauseAsync();
+  } catch {
+    /* ignore */
+  }
+}
+
+async function playSlot(slot: Slot | null) {
+  if (!slot) return;
+  try {
+    await slot.sound.playAsync();
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function playMusic(track: MusicTrack): Promise<void> {
+  const token = ++musicToken;
+  currentTrack = track;
+  if (musicSuspended) return;
+  if (playerAudio().music <= 0.001) {
+    await pauseSlot(slotA);
+    await pauseSlot(slotB);
+    return;
+  }
+  const ready = await ensureAudioReady();
+  if (!ready || token !== musicToken) return;
+  const sound = await loadSound(`music_${track}`, track !== 'defeat');
+  if (!sound || token !== musicToken) return;
+  const outgoing = activeSlot === 'a' ? slotA : slotB;
+  const incomingSlotName = activeSlot === 'a' ? 'b' : 'a';
+  const previousIncoming = incomingSlotName === 'a' ? slotA : slotB;
+  if (previousIncoming && previousIncoming.sound !== sound) {
+    try {
+      await previousIncoming.sound.unloadAsync();
+    } catch {
+      /* ignore */
+    }
+  }
+  const incoming: Slot = { sound, track, base64Key: track };
+  if (incomingSlotName === 'a') slotA = incoming;
+  else slotB = incoming;
+  try {
+    await sound.setIsLoopingAsync(track !== 'defeat');
+    await sound.setPositionAsync(0);
+    await sound.setVolumeAsync(0);
+    await sound.playAsync();
+  } catch {
+    return;
+  }
+  clearFade();
+  const started = Date.now();
+  const duration = 700;
+  fadeTimer = setInterval(() => {
+    const t = Math.min(1, (Date.now() - started) / duration);
+    const mix = mixEqualPower(t);
+    void applySlotVolume(outgoing, mix.outgoing);
+    void applySlotVolume(incoming, mix.incoming);
+    if (t >= 1) {
+      clearFade();
+      activeSlot = incomingSlotName;
+      if (outgoing && outgoing.sound !== incoming.sound) {
+        void outgoing.sound.pauseAsync().catch(() => {});
+      }
+    }
+  }, 70);
+}
+
+export async function stopMusic(): Promise<void> {
+  musicToken += 1;
+  currentTrack = null;
+  clearFade();
+  await pauseSlot(slotA);
+  await pauseSlot(slotB);
+}
+
+async function resumeCurrentMusic() {
+  if (!currentTrack || playerAudio().music <= 0.001) return;
+  const slot = activeSlot === 'a' ? slotA : slotB;
+  if (slot && slot.track === currentTrack) {
+    await applySlotVolume(slot, 1);
+    await playSlot(slot);
+    return;
+  }
+  await playMusic(currentTrack);
+}
+
+let appliedSfx = -1;
+
+function stopLoadedSfx(): void {
+  for (const [key, sound] of cache) {
+    if (key.startsWith('music_')) continue;
+    void sound.stopAsync().catch(() => {});
+    void sound.setVolumeAsync(0).catch(() => {});
+  }
+}
+
+function restoreLoadedSfx(gain: number): void {
+  for (const [key, sound] of cache) {
+    if (key.startsWith('music_')) continue;
+    const base = SFX_VOLUME[key] ?? 0.7;
+    void sound.setVolumeAsync(Math.max(0, Math.min(1, base * gain))).catch(() => {});
+  }
+}
+
+function bindLifecycle() {
+  if (!appStateBound) {
+    appStateBound = true;
+    AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') {
+        musicSuspended = false;
+        void refreshAudioModeOnForeground().then(async () => {
+          const { useGameStore } = await import('../stores/gameStore');
+          const game = useGameStore.getState();
+          if (game.isPlaying && !game.isGameOver) {
+            gameplaySfxArmed = true;
+          }
+          await resumeCurrentMusic();
+        });
       } else {
-        await playCombatPooled(0.62);
+        musicSuspended = true;
+        clearFade();
+        void releaseBattleAudio();
       }
     });
-  } catch {
-    disableGameplaySfxAfterNativeError();
   }
+  bindSoundToggle();
 }
 
-function playEnemyDeathOneShot(): void {
-  try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    deferGameplaySfx(async () => {
-      if (!gameplaySfxArmed) return;
-      if (!tryConsumeDeathPlaySlot()) return;
-      await playCombatPooled(0.78);
-    });
-  } catch {
-    disableGameplaySfxAfterNativeError();
-  }
-}
-
-/** Staggered stings when many enemies die the same tick (capped + rate limited). */
-export function playEnemyDeathBurst(killCount: number): void {
-  try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed || killCount <= 0) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    const gen = deathBurstGeneration;
-    const layers = Math.min(2, killCount);
-    for (let i = 0; i < layers; i++) {
-      const delay = i * 56;
-      setTimeout(() => {
-        if (gen !== deathBurstGeneration) return;
-        if (!gameplaySfxArmed) return;
-        playEnemyDeathOneShot();
-      }, delay);
+function bindSoundToggle() {
+  if (storeBound) return;
+  storeBound = true;
+  usePlayerStore.subscribe((state) => {
+    const sfx = sfxGain(state.soundEnabled, state.sfxVolume);
+    if (appliedSfx > 0.001 && sfx <= 0.001) {
+      stopLoadedSfx();
+    } else if (sfx > 0.001 && sfx !== appliedSfx) {
+      restoreLoadedSfx(sfx);
     }
-  } catch {
-    disableGameplaySfxAfterNativeError();
-  }
+    appliedSfx = sfx;
+
+    const gain = musicGain(state.musicEnabled, state.musicVolume);
+    const slot = activeSlot === 'a' ? slotA : slotB;
+    if (gain <= 0.001) {
+      void pauseSlot(slotA);
+      void pauseSlot(slotB);
+      return;
+    }
+    if (currentTrack && (!slot || musicSuspended)) return;
+    void applySlotVolume(slot, 1);
+    if (currentTrack) void playSlot(slot);
+  });
 }
 
-export function playBaseDamageSound(): void {
-  try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    deferGameplaySfx(() => playCombatPooled(0.85));
-  } catch {
-    disableGameplaySfxAfterNativeError();
-  }
-}
-
-export function playWaveStartFanfare(): void {
-  try {
-    if (gameplayNativeHardOff) return;
-    if (!gameplaySfxArmed) return;
-    if (isSoundMasterOff()) return;
-    if (getSfxGain() <= 0.001) return;
-    deferGameplaySfx(() => playSoundKeyAsync('wave_horn', 0.82));
-  } catch {
-    disableGameplaySfxAfterNativeError();
-  }
-}
+bindSoundToggle();
 
 export const initializeAudio = async (): Promise<void> => {
   if (audioReady) return;
   if (audioInitPromise) return audioInitPromise;
   audioInitPromise = (async () => {
-  try {
-    await Audio.setIsEnabledAsync(true);
-    await Audio.setAudioModeAsync({
-      // Force SFX to work even when iOS hardware silent switch is on.
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: false,
-      staysActiveInBackground: false,
-      interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-      interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-    });
-
-    /** One shared combat WAV + small round-robin pool; rare stingers stay single cached `Sound`s. */
-    await ensurePoolFromFloat(COMBAT_POOL_KEY, getCachedCombatImpact(), 1, COMBAT_POOL_SIZE);
-    await ensureSoundFromFloat('weapon_sniper', getCachedSniperCrack(), 1);
-    await ensureSoundFromFloat('weapon_freeze_launch', getCachedFreezeLaunch(), 1);
-    await ensureSoundFromFloat('wave_horn', getCachedWaveHorn(), 1);
-
-    const ui = getCachedUiTones();
-    for (const k of Object.keys(ui) as SfxName[]) {
-      await ensureSoundFromFloat(`ui_${k}`, ui[k], 1);
+    try {
+      await Audio.setIsEnabledAsync(true);
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+      audioReady = true;
+      bindLifecycle();
+    } catch {
+      audioReady = false;
+    } finally {
+      audioInitPromise = null;
     }
-
-    audioReady = true;
-  } catch {
-    audioReady = false;
-  } finally {
-    audioInitPromise = null;
-  }
   })();
   return audioInitPromise;
-};
-
-export const ensureAudioReady = async (): Promise<boolean> => {
-  if (audioReady) return true;
-  if (audioInitPromise) {
-    try {
-      await audioInitPromise;
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!audioReady) {
-    await initializeAudio();
-  }
-  return audioReady;
 };
 
 export const refreshAudioModeOnForeground = async (): Promise<void> => {
@@ -680,31 +604,215 @@ export const refreshAudioModeOnForeground = async (): Promise<void> => {
       playThroughEarpieceAndroid: false,
     });
   } catch {
-    /* ignore; next playback attempt will retry full init if needed */
+    /* next play retries init */
   }
 };
 
-/** True when UI stingers are allowed — use in React to skip `playSfx` entirely when muted. */
-export function canPlayUiSfx(): boolean {
-  try {
-    if (isSoundMasterOff()) return false;
-    return getSfxGain() > 0.001;
-  } catch {
-    return false;
+/** One live replay per sample. Volume was set when the Sound was created. */
+const replayBusy = new Set<string>();
+const lastPlayAt = new Map<string, number>();
+let soundWindowStart = 0;
+let soundWindowCount = 0;
+const MAX_SOUNDS_PER_SECOND = 20;
+const MIN_SOUND_GAP_MS = 50;
+
+function budgetAllows(key: string, now: number): boolean {
+  const gap = key === 'impact' ? 80 : MIN_SOUND_GAP_MS;
+  if (now - (lastPlayAt.get(key) ?? 0) < gap) return false;
+  if (now - soundWindowStart >= 1000) {
+    soundWindowStart = now;
+    soundWindowCount = 0;
   }
+  return soundWindowCount < MAX_SOUNDS_PER_SECOND;
 }
 
-/** Call when leaving the game screen or ending a run — stops SFX and cancels pending death bursts. */
+function requestReplay(key: string, _baseVolume: number, combat: boolean): void {
+  if (replayBusy.has(key)) return;
+  if (combat && !gameplaySfxArmed) return;
+  if (playerAudio().sfx <= 0.001) return;
+  const now = Date.now();
+  if (!budgetAllows(key, now)) return;
+  lastPlayAt.set(key, now);
+  soundWindowCount += 1;
+  replayBusy.add(key);
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        if (combat && !gameplaySfxArmed) return;
+        const ready = await ensureAudioReady();
+        if (!ready) return;
+        const sound = await loadSound(key, false);
+        if (!sound) return;
+        if (playerAudio().sfx <= 0.001) return;
+        if (combat && !gameplaySfxArmed) return;
+        await sound.replayAsync();
+      } catch {
+        /* drop this voice only */
+      } finally {
+        replayBusy.delete(key);
+      }
+    })();
+  });
+}
+
+export function setGameplaySfxArmed(armed: boolean): void {
+  gameplaySfxArmed = armed;
+  if (armed) preloadGameplaySounds();
+}
+
+/** Voices currently loading or playing. Extra shots of the same sample do not add one. */
+export function activeAudioVoices(): number {
+  return replayBusy.size;
+}
+
+/** Test hook. Clears the per-second budget without dropping the loaded Sound cache. */
+export function resetAudioBudgetForTests(): void {
+  replayBusy.clear();
+  lastPlayAt.clear();
+  soundWindowStart = 0;
+  soundWindowCount = 0;
+}
+
+export function isGameplaySfxArmed(): boolean {
+  return gameplaySfxArmed;
+}
+
+export async function stopAllSounds(): Promise<void> {
+  gameplaySfxArmed = false;
+  const tasks: Promise<unknown>[] = [];
+  for (const sound of cache.values()) tasks.push(sound.stopAsync().catch(() => {}));
+  await Promise.all(tasks);
+}
+
+/**
+ * Stop and unload every battle Sound, and drop in-flight loads.
+ * Safe to call again: a second call finds an empty battle pool.
+ */
+export async function releaseBattleAudio(): Promise<void> {
+  battleGeneration += 1;
+  gameplaySfxArmed = false;
+  musicToken += 1;
+  clearFade();
+  replayBusy.clear();
+  lastPlayAt.clear();
+  soundWindowStart = 0;
+  soundWindowCount = 0;
+
+  const doomed = new Set<Audio.Sound>();
+  const pending: Promise<Audio.Sound | null>[] = [];
+  for (const [key, sound] of cache) {
+    if (!isBattleAudioKey(key)) continue;
+    doomed.add(sound);
+    cache.delete(key);
+  }
+  for (const [id, promise] of loadPromises) {
+    const key = id.slice(2);
+    if (!isBattleAudioKey(key)) continue;
+    pending.push(promise);
+    loadPromises.delete(id);
+  }
+  for (const slot of [slotA, slotB]) {
+    if (slot && slot.track !== 'menu') doomed.add(slot.sound);
+  }
+  if (slotA && slotA.track !== 'menu') slotA = null;
+  if (slotB && slotB.track !== 'menu') slotB = null;
+
+  await Promise.all(pending.map((promise) => promise.then(() => undefined).catch(() => undefined)));
+  await Promise.all(
+    [...doomed].map(async (sound) => {
+      try {
+        await sound.stopAsync();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        await sound.unloadAsync();
+      } catch {
+        /* already unloaded */
+      }
+    })
+  );
+}
+
 export async function cleanupGameplayAudioAfterSession(): Promise<void> {
-  await stopAllSounds();
+  await releaseBattleAudio();
+  if (playerAudio().music > 0.001) await playMusic('menu');
 }
 
-/** UI / reward stingers — reads soundEnabled + sfxVolume from player store */
+export function canPlayUiSfx(): boolean {
+  return playerAudio().sfx > 0.001;
+}
+
 export function playSfx(name: SfxName): void {
-  try {
-    if (!canPlayUiSfx()) return;
-    deferUiSfx(() => playSoundKeyAsync(`ui_${name}`, name === 'record' ? 0.72 : 0.68));
-  } catch {
-    /* ignore */
+  if (!canPlayUiSfx()) return;
+  requestReplay(`ui_${name}`, name === 'record' ? 0.72 : 0.68, false);
+}
+
+const SHOT_KEY: Record<TowerType, string> = {
+  machine_gun: 'shot_mg',
+  sniper: 'shot_sniper',
+  splash: 'shot_splash',
+  freeze: 'shot_freeze',
+  missile: 'shot_missile',
+  laser: 'shot_laser',
+  tesla: 'shot_tesla',
+  flak: 'shot_flak',
+  cannon: 'shot_cannon',
+};
+
+export function playWeaponFireSound(towerType: TowerType): void {
+  if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
+  requestReplay(SHOT_KEY[towerType], SFX_VOLUME[SHOT_KEY[towerType]] ?? 0.7, true);
+}
+
+export function playProjectileImpact(proj: { towerType: TowerType }): void {
+  if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
+  const loud = proj.towerType === 'splash' || proj.towerType === 'missile' || proj.towerType === 'cannon' || proj.towerType === 'flak';
+  requestReplay('impact', loud ? 0.8 : 0.55, true);
+}
+
+export function playEnemyDeathBurst(killCount: number): void {
+  if (!gameplaySfxArmed || killCount <= 0 || playerAudio().sfx <= 0.001) return;
+  const key = killCount % 3 === 1 ? 'death_b' : killCount % 3 === 2 ? 'death_c' : 'death';
+  const layers = Math.min(2, killCount);
+  for (let i = 0; i < layers; i++) {
+    setTimeout(() => {
+      if (!gameplaySfxArmed) return;
+      requestReplay(i === 0 ? key : 'death', 0.75, true);
+    }, i * 50);
   }
+}
+
+export function playBaseDamageSound(): void {
+  if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
+  requestReplay('impact', 0.9, true);
+}
+
+export function playWaveStartFanfare(): void {
+  if (!gameplaySfxArmed || playerAudio().sfx <= 0.001) return;
+  requestReplay('wave', 0.8, true);
+}
+
+export function playBuildSound(): void {
+  if (playerAudio().sfx <= 0.001) return;
+  requestReplay('build', 0.7, false);
+}
+
+export function playUpgradeSound(): void {
+  if (playerAudio().sfx <= 0.001) return;
+  requestReplay('upgrade', 0.75, false);
+}
+
+export function playWinSound(): void {
+  if (playerAudio().sfx <= 0.001) return;
+  requestReplay('win', 0.8, false);
+}
+
+export function playLoseSound(): void {
+  const now = Date.now();
+  if (now - lastLoseAt < 1500) return;
+  lastLoseAt = now;
+  if (playerAudio().sfx <= 0.001) return;
+  requestReplay('lose', 0.85, false);
+  void playMusic('defeat');
 }

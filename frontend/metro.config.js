@@ -22,4 +22,25 @@ config.cacheStores = [
 // Reduce the number of workers to decrease resource usage
 config.maxWorkers = 2;
 
+// Zustand 5's ESM build uses `import.meta.env`. Expo web serves the bundle as a
+// classic script, so that syntax throws before the app can start. The CJS build
+// (the react-native export) does not. Native already prefers that condition.
+const defaultResolveRequest = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'web' && (moduleName === 'zustand' || moduleName.startsWith('zustand/'))) {
+    return context.resolveRequest(
+      {
+        ...context,
+        unstable_conditionNames: ['react-native', 'require', 'browser', 'default'],
+      },
+      moduleName,
+      platform
+    );
+  }
+  if (defaultResolveRequest) {
+    return defaultResolveRequest(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
+
 module.exports = config;

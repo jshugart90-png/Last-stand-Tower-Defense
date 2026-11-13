@@ -1,13 +1,13 @@
 export const TacticalTheme = {
-  bg: '#07090d',
-  bgElevated: '#0d1117',
-  panel: '#131922',
-  panelAlt: '#171f2a',
-  border: '#2a313d',
-  borderStrong: '#3a4454',
-  text: '#e7ebf2',
-  textMuted: '#9aa4b2',
-  textSubtle: '#7f8998',
+  bg: '#1a120c',
+  bgElevated: '#24180f',
+  panel: '#2c1d12',
+  panelAlt: '#3a2818',
+  border: '#6e5130',
+  borderStrong: '#8a6840',
+  text: '#f4ead8',
+  textMuted: '#cbb896',
+  textSubtle: '#a89070',
   accent: '#cf2f2f',
   accentPress: '#b42828',
   accentSoft: '#7f2323',
@@ -33,9 +33,9 @@ export const TacticalTheme = {
   selectionGlow: '#e87373',
   selectionGlowStrong: '#cf2f2f',
   /** Deep card surfaces — replaces blue-tinted #16213e / #1f2c4a. */
-  surfaceDeep: '#131922',
-  surfaceDeepAlt: '#171f2a',
-  surfaceElevated: '#1c2430',
+  surfaceDeep: '#2a1c12',
+  surfaceDeepAlt: '#342214',
+  surfaceElevated: '#3d2a18',
 } as const;
 
 export type TacticalColorKey = keyof typeof TacticalTheme;

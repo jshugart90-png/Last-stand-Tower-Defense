@@ -26,7 +26,7 @@ import {
 } from '../src/hooks/useApi';
 import { TacticalTheme } from '../src/theme/colors';
 import { PlayerLogoBadge } from '../src/components/PlayerLogoBadge';
-import { showPrivacyOptions, useAdsStatus } from '../src/services/adsService';
+import { ArenaSizePicker } from '../src/components/ArenaSizePicker';
 
 const appVersionLabel =
   Constants.expoConfig?.version != null && String(Constants.expoConfig.version).length > 0
@@ -34,7 +34,6 @@ const appVersionLabel =
     : 'Last Stand Tower Defense';
 
 export default function SettingsScreen() {
-  const adPrivacyOptionsAvailable = useAdsStatus((st) => st.privacyOptionsAvailable);
   const router = useRouter();
   const playerStore = usePlayerStore();
   const [changeNameOpen, setChangeNameOpen] = useState(false);
@@ -213,6 +212,9 @@ export default function SettingsScreen() {
               disabled={!playerStore.musicEnabled}
             />
           </View>
+          <Text style={styles.settingHint}>
+            Game audio plays even when the iPhone silent switch is on. These switches are the mute. Music pauses if you leave the app.
+          </Text>
         </View>
 
         {/* Feedback Section */}
@@ -322,9 +324,16 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Arena Expansions</Text>
-            <Text style={styles.infoValue}>{playerStore.arenaExpansions}</Text>
+            <Text style={styles.infoLabel}>Arena sizes owned</Text>
+            <Text style={styles.infoValue}>
+              {playerStore.arenaExpansions === 0 ? 'Original' : `Up to Size ${playerStore.arenaExpansions}`}
+            </Text>
           </View>
+          <ArenaSizePicker
+            owned={playerStore.arenaExpansions}
+            selected={playerStore.selectedArenaSize}
+            onSelect={(size) => playerStore.setSelectedArenaSize(size)}
+          />
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Unlocked Towers</Text>
@@ -383,15 +392,6 @@ export default function SettingsScreen() {
             <Text style={styles.actionButtonText}>Support</Text>
             <Ionicons name="chevron-forward" size={20} color="#666" />
           </TouchableOpacity>
-
-          {/* Shown only where GDPR/UMP consent applies (EEA/UK/Switzerland). */}
-          {adPrivacyOptionsAvailable && (
-            <TouchableOpacity style={styles.actionButton} onPress={() => { void showPrivacyOptions(); }}>
-              <Ionicons name="options" size={24} color="#9B59B6" />
-              <Text style={styles.actionButtonText}>Ad Privacy Options</Text>
-              <Ionicons name="chevron-forward" size={20} color="#666" />
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Danger Zone */}
