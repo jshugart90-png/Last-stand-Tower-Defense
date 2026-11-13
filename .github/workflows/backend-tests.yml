@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   backend-tests:
@@ -20,7 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install test dependency
-        run: pip install aiohttp
+        run: pip install aiohttp requests
 
       - name: Run backend test suite
         run: |

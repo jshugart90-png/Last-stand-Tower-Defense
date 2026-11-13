@@ -30,6 +30,8 @@ class GemEconomyTester:
         self.session = None
         self.test_results = []
         self.player_id = None
+        self.starting_gems = 0
+        self.gems_earned = 0
         
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -84,11 +86,11 @@ class GemEconomyTester:
         
         if status == 200 and "_id" in response and response["nickname"] == "GemEcon":
             self.player_id = response["_id"]
-            initial_gems = response.get("gems", 0)
+            self.starting_gems = int(response.get("gems", 0) or 0)
             self.log_result(
                 "Step 1: Create Player", 
                 True, 
-                f"Player created with ID: {self.player_id}, initial gems: {initial_gems}"
+                f"Player created with ID: {self.player_id}, initial gems: {self.starting_gems}"
             )
             return True
         else:
@@ -138,21 +140,24 @@ class GemEconomyTester:
             raw_performance = int(15 * 0.75) + (80 // 20)  # 11 + 4 = 15
             expected_total = int(0.35 * raw_performance)  # 5
             actual_total = int(gem_breakdown.get("total_gems", 0))
-            balance_correct = int(response["new_gem_balance"]) == expected_total
+            self.gems_earned = actual_total
+            expected_balance = self.starting_gems + actual_total
+            actual_balance = int(response["new_gem_balance"])
+            balance_correct = actual_balance == expected_balance
             total_correct = actual_total == expected_total
 
             if total_correct and balance_correct:
                 self.log_result(
                     "Step 2: End Game", 
                     True, 
-                    f"Gem rewards calculated correctly: raw={raw_performance}, total={actual_total}, new_balance={response['new_gem_balance']}"
+                    f"Gem rewards calculated correctly: raw={raw_performance}, total={actual_total}, starting={self.starting_gems}, new_balance={actual_balance}"
                 )
                 return True
             else:
                 self.log_result(
                     "Step 2: End Game", 
                     False, 
-                    f"Gem calculation errors: expected total {expected_total}, got total {actual_total}, balance {response.get('new_gem_balance')}"
+                    f"Gem calculation errors: expected total {expected_total}, got total {actual_total}, expected balance {expected_balance} (starting {self.starting_gems} + earned {actual_total}), got balance {actual_balance}"
                 )
                 return False
         else:
@@ -174,8 +179,8 @@ class GemEconomyTester:
         status, response = await self.make_request("GET", f"/players/{self.player_id}")
         
         if status == 200:
-            actual_gems = response.get("gems", 0)
-            expected_gems = 5
+            actual_gems = int(response.get("gems", 0) or 0)
+            expected_gems = self.starting_gems + self.gems_earned
             
             if actual_gems == expected_gems:
                 self.log_result(
@@ -222,10 +227,10 @@ class GemEconomyTester:
             required_fields = ["gems_granted", "new_gem_balance"]
             missing_fields = [field for field in response if field not in required_fields and field not in ["success", "reward_type"]]
             
-            gems_granted = response.get("gems_granted", 0)
-            new_gem_balance = response.get("new_gem_balance", 0)
+            gems_granted = int(response.get("gems_granted", 0) or 0)
+            new_gem_balance = int(response.get("new_gem_balance", 0) or 0)
             expected_gems_granted = 10
-            expected_new_balance = 15  # 5 + 10
+            expected_new_balance = self.starting_gems + self.gems_earned + expected_gems_granted
             
             if gems_granted == expected_gems_granted and new_gem_balance == expected_new_balance:
                 self.log_result(
@@ -267,7 +272,8 @@ class GemEconomyTester:
             "player_id": self.player_id,
             "item_type": "gems",
             "item_id": "com.laststanddefense.gems_500",
-            "gems_amount": 500
+            "gems_amount": 500,
+            "platform": "ios",
         }
         
         status, response = await self.make_request("POST", "/purchases", data)
