@@ -50,6 +50,8 @@ def test_game_end_new_balance():
             return False
             
         print(f"✅ Player created with ID: {player_id}")
+        starting_gems = int(player_result.get("gems") or 0)
+        print(f"Starting gem balance: {starting_gems}")
         
         # Step 2: Submit game end with specific values
         print("\nStep 2: Submitting game end...")
@@ -80,8 +82,8 @@ def test_game_end_new_balance():
             return False
 
         new_gem_balance = game_result["new_gem_balance"]
-        gems_earned = game_result.get("gems_earned", 0)
-        expected_balance = gems_earned
+        gems_earned = int(game_result.get("gems_earned", 0) or 0)
+        expected_balance = starting_gems + gems_earned
 
         print(f"Expected new_gem_balance: {expected_balance}")
         print(f"Actual new_gem_balance: {new_gem_balance}")
