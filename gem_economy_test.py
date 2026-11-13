@@ -272,7 +272,8 @@ class GemEconomyTester:
             "player_id": self.player_id,
             "item_type": "gems",
             "item_id": "com.laststanddefense.gems_500",
-            "gems_amount": 500
+            "gems_amount": 500,
+            "platform": "ios",
         }
         
         status, response = await self.make_request("POST", "/purchases", data)
